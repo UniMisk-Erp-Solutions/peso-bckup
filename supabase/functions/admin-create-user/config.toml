@@ -1,0 +1,2 @@
+# Browser sends OPTIONS without JWT; caller auth is validated inside the function.
+verify_jwt = false

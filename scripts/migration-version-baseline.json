@@ -1,0 +1,33 @@
+{
+  "_comment": "Approved historical duplicate migration versions. Each entry lists the exact filenames that share a version prefix. The migration checker (check-migration-duplicates.mjs) tolerates these known pairs and blocks any new duplicate not listed here.",
+  "approvedDuplicates": [
+    {
+      "version": "20260529120000",
+      "files": [
+        "20260529120000_manager_assigned_keep_approved_visible.sql",
+        "20260529120000_manager_queue_skipped_tiers.sql"
+      ]
+    },
+    {
+      "version": "20260529140000",
+      "files": [
+        "20260529140000_daily_project_expense_report.sql",
+        "20260529140000_dashboard_expense_summary_rpc.sql"
+      ]
+    },
+    {
+      "version": "20260629120000",
+      "files": [
+        "20260629120000_add_storage_path_to_attachments.sql",
+        "20260629120000_form_field_display_labels.sql"
+      ]
+    },
+    {
+      "version": "20260630120000",
+      "files": [
+        "20260630120000_custom_form_fields_review_fix.sql",
+        "20260630120000_expense_batches_reviewer_select.sql"
+      ]
+    }
+  ]
+}

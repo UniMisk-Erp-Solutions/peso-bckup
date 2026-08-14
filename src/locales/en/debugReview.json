@@ -1,0 +1,174 @@
+{
+  "sidebarTitle": "Debug Review Expenses",
+  "pageTitle": "Debug Review Expenses",
+  "pageDescription": "Independent server-side review queue for validating employee search, complete results and pagination.",
+  "actionsDisabled": "Actions disabled",
+  "readOnlyNotice": "This page is read-only. Verify, approve, reject and correct are intentionally unavailable.",
+  "contractStatus": "Contract status",
+  "contractReady": "Contract ready",
+  "contractRevision": "Schema revision {{revision}}",
+  "backToReview": "Go to Review Expenses",
+
+  "stats": {
+    "assignedToMe": "Assigned to Me",
+    "pendingReview": "Pending Review",
+    "verified": "Verified",
+    "totalAmount": "Total Amount",
+    "scopeNote": "Complete reviewer scope — unchanged by page, page size or filters."
+  },
+
+  "employeeSearch": {
+    "label": "Search employee",
+    "placeholder": "Enter employee name or employee ID",
+    "help": "Employee search runs on the server and never matches transaction numbers.",
+    "search": "Search",
+    "clear": "Clear",
+    "searching": "Searching employees…",
+    "notFound": "No employee found",
+    "notFoundHint": "No employee with visible expenses matches \"{{query}}\".",
+    "multipleFound": "Multiple employees found",
+    "multipleFoundHint": "Select the employee whose expenses you want to load.",
+    "selected": "Selected employee",
+    "select": "Select",
+    "clearEmployee": "Clear employee",
+    "visibleExpenses": "visible expenses",
+    "actionableExpenses": "actionable",
+    "noVisibleExpenses": "This employee has no expenses visible to you.",
+    "matchType": {
+      "exact_employee_id": "Exact employee ID",
+      "exact_employee_name": "Exact name",
+      "name_prefix": "Name starts with",
+      "name_contains": "Name contains",
+      "exact_email": "Exact email",
+      "unknown": "Match"
+    }
+  },
+
+  "generalSearch": {
+    "label": "Search expenses",
+    "placeholder": "Transaction number, title, destination, category or amount",
+    "help": "Expense search runs on the server and does not change the selected employee.",
+    "search": "Search",
+    "clear": "Clear"
+  },
+
+  "filters": {
+    "title": "Filters",
+    "status": "Status",
+    "allStatuses": "All statuses",
+    "category": "Category",
+    "allCategories": "All categories",
+    "sort": "Sort",
+    "timePeriod": "Time period",
+    "actionableOnly": "Actionable only",
+    "customFields": "Custom fields",
+    "reset": "Reset filters",
+    "activeCount": "{{count}} active",
+    "pageSize": "Rows per page",
+    "sorts": {
+      "created_desc": "Date Created — Newest",
+      "created_asc": "Date Created — Oldest",
+      "expense_date_desc": "Expense Date — Newest",
+      "expense_date_asc": "Expense Date — Oldest",
+      "amount_desc": "Amount — High to Low",
+      "amount_asc": "Amount — Low to High"
+    },
+    "periods": {
+      "all": "All Time",
+      "week": "Past Week",
+      "month": "Past Month",
+      "year": "Past Year"
+    }
+  },
+
+  "table": {
+    "select": "Select",
+    "transactionNumber": "Txn #",
+    "employee": "Employee / Employee ID",
+    "title": "Title",
+    "category": "Category",
+    "destination": "Destination",
+    "amount": "Amount",
+    "employeeBalance": "Employee Balance",
+    "status": "Status",
+    "expenseDate": "Expense Date",
+    "dateCreated": "Date Created",
+    "actions": "Status / Actions",
+    "view": "View",
+    "disabled": "Disabled",
+    "resubmitted": "Resubmitted",
+    "corrected": "Corrected",
+    "viewOnly": "View only"
+  },
+
+  "identity": {
+    "unknownEmployee": "Unknown employee",
+    "profileMissing": "Profile missing",
+    "duplicateProfiles": "Duplicate profiles"
+  },
+
+  "pagination": {
+    "previous": "Previous",
+    "next": "Next",
+    "page": "Page {{page}}",
+    "showing": "Showing {{from}}–{{to}} of {{total}} expenses",
+    "showingForEmployee": "Showing {{from}}–{{to}} of {{total}} visible expenses for {{employee}}",
+    "empty": "Showing 0 of 0 expenses"
+  },
+
+  "diagnostics": {
+    "title": "Diagnostics",
+    "show": "Show diagnostics",
+    "hide": "Hide diagnostics",
+    "copy": "Copy redacted diagnostics",
+    "copied": "Diagnostics copied",
+    "redactionNote": "IDs are masked and no credentials are included."
+  },
+
+  "detail": {
+    "title": "Expense detail",
+    "close": "Close",
+    "employee": "Employee",
+    "customFields": "Custom fields",
+    "attachments": "Attachments",
+    "noAttachments": "No attachments",
+    "deletedAttachments": "{{count}} attachment(s) were deleted and are not shown.",
+    "timeline": "Audit timeline",
+    "corrections": "Correction history",
+    "noCorrections": "No corrections recorded",
+    "actionability": "Actionability",
+    "availableActions": "Available actions (informational)",
+    "noActions": "No actions available",
+    "openBatch": "Open batch review",
+    "loading": "Loading expense detail…"
+  },
+
+  "errors": {
+    "title": "Debug review unavailable",
+    "flagDisabled": "The debug review page is disabled.",
+    "flagDisabledHint": "Set VITE_DEBUG_REVIEW_EXPENSES_ENABLED to true in a safe environment to enable it.",
+    "capability": "The debug review database contract is not fully installed.",
+    "capabilityMissing": "Unavailable functions: {{functions}}",
+    "authorization": "You are not authorized to review these expenses.",
+    "authExpired": "Your session has expired. Sign in again to continue.",
+    "network": "Could not reach the debug review queue.",
+    "timeout": "The debug review query took too long to respond.",
+    "validation": "The server response was not in the expected format.",
+    "unknown": "Debug review expenses are temporarily unavailable.",
+    "employeeNotFound": "No employee found for that search.",
+    "employeeNoExpenses": "This employee has no expenses visible to you.",
+    "noMatchingExpenses": "No expenses match the current filters.",
+    "retry": "Try again"
+  },
+
+  "loading": {
+    "capabilities": "Checking database contract…",
+    "page": "Loading expenses…",
+    "filters": "Loading filters…"
+  },
+
+  "empty": {
+    "noEmployeeSelected": "Search for an employee, or search expenses directly.",
+    "noResults": "No expenses match the current filters."
+  }
+}

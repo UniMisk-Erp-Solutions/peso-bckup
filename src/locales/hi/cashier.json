@@ -1,0 +1,66 @@
+{
+  "accountantReadOnlyTitle": "केवल पढ़ने की अनुमति",
+  "accountantReadOnlyDescription": "अकाउंटेंट कैशियर शेष, ट्रांसफर या व्यय जमा उपकरण का उपयोग नहीं कर सकते।",
+  "accountantReadOnlyBadge": "केवल पढ़ने योग्य",
+  "userManagement": {
+    "accountantCashierLabel": "अकाउंटेंट कैशियर (केवल पढ़ने योग्य)",
+    "accountantCashierHint": "स्वीकृत व्यय, ट्रांसफर इतिहास देख सकते हैं और रिपोर्ट डाउनलोड कर सकते हैं। शेष, वापसी या ट्रांसफर बना नहीं सकते।"
+  },
+  "approvedExpenses": {
+    "title": "स्वीकृत व्यय",
+    "description": "स्वीकृत संगठन व्यय ब्राउज़ करें (केवल पढ़ने योग्य)।",
+    "listTitle": "स्वीकृत व्यय",
+    "listDescription": "व्यय विवरण और रसीदें देखने के लिए पंक्ति पर क्लिक करें।",
+    "searchPlaceholder": "शीर्षक, कर्मचारी या श्रेणी से खोजें…",
+    "empty": "कोई स्वीकृत व्यय नहीं मिला।",
+    "showing": "{{total}} में से {{from}}-{{to}} स्वीकृत व्यय दिखाए जा रहे हैं"
+  },
+  "transactions": {
+    "title": "लेन-देन इतिहास",
+    "description": "सभी धन असाइनमेंट और वापसी अनुरोध देखें",
+    "cashierOnly": "यह पृष्ठ केवल कैशियर के लिए सुलभ है।",
+    "moneyAssignments": "धन असाइनमेंट",
+    "moneyAssignmentsDescription": "कर्मचारियों और प्रबंधकों को आपने जो धन सौंपा",
+    "returnRequests": "वापसी अनुरोध",
+    "returnRequestsDescription": "कर्मचारियों से धन वापसी अनुरोध",
+    "noAssignments": "कोई धन असाइनमेंट नहीं मिला",
+    "noReturns": "कोई वापसी अनुरोध नहीं मिला",
+    "recipient": "प्राप्तकर्ता",
+    "amount": "राशि",
+    "assignedDate": "असाइन दिनांक",
+    "returnedDate": "वापसी दिनांक",
+    "status": "स्थिति",
+    "returned": "वापस किया",
+    "active": "सक्रिय",
+    "pending": "लंबित",
+    "approved": "स्वीकृत",
+    "rejected": "अस्वीकृत",
+    "assignmentsTab": "धन असाइनमेंट ({{count}})",
+    "returnsTab": "वापसी अनुरोध ({{count}})",
+    "toast": {
+      "loadFailed": "लेन-देन इतिहास लोड नहीं हो सका।"
+    }
+  },
+  "transferHistory": {
+    "title": "स्थानांतरण इतिहास",
+    "description": "नकद और बैंक स्थानांतरण का पूर्ण इतिहास देखें",
+    "descriptionAccountant": "सभी संगठन नकद और बैंक ट्रांसफर देखें (केवल पढ़ने योग्य)।",
+    "search": "खोजें",
+    "searchPlaceholder": "नाम या प्रकार से खोजें...",
+    "transferType": "स्थानांतरण प्रकार",
+    "role": "भूमिका",
+    "paymentMode": "भुगतान मोड",
+    "sourceBank": "स्रोत बैंक",
+    "allTypes": "सभी प्रकार",
+    "allRoles": "सभी भूमिकाएँ",
+    "allModes": "सभी मोड",
+    "allBanks": "सभी बैंक",
+    "cash": "नकद",
+    "bankTransfer": "बैंक ट्रांसफ़र",
+    "noTransfers": "कोई स्थानांतरण नहीं मिला",
+    "from": "से",
+    "to": "को",
+    "date": "दिनांक",
+    "notes": "टिप्पणियाँ"
+  }
+}

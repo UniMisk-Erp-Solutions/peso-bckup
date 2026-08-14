@@ -1,0 +1,63 @@
+{
+  "title": "સૂચનાઓ",
+  "pageDescription": "તમારા ખર્ચ સબમિશન અને મંજૂરીઓ પર અપડેટ રહો",
+  "markAllRead": "બધાને વાંચેલા તરીકે ચિહ્નિત કરો",
+  "empty": "કોઈ સૂચના નથી",
+  "emptyDescription": "તમે બધી અપડેટથી વાકેફ છો.",
+  "viewExpense": "ખર્ચ જુઓ",
+  "unread": "ન વાંચેલી",
+  "popup": {
+    "close": "સૂચના બંધ કરો",
+    "viewExpense": "ખર્ચ જુઓ"
+  },
+  "loadFailed": "સૂચનાઓ લોડ કરવામાં નિષ્ફળ",
+  "newNotification": "નવી સૂચના",
+  "newNotificationHint": "તમારી પાસે નવી સૂચના છે",
+  "templates": {
+    "balanceUpdated": {
+      "title": "બેલેન્સ અપડેટ",
+      "message": "તમારું બેલેન્સ અપડેટ થયું. {{actor}} દ્વારા તમારા ખાતામાં {{amount}} ઉમેરાયું"
+    },
+    "expenseApproved": {
+      "title": "ખર્ચ મંજૂર",
+      "message": "તમારો ખર્ચ \"{{expenseTitle}}\" ({{amount}}) {{actor}} દ્વારા મંજૂર થયો"
+    },
+    "expenseVerified": {
+      "title": "ખર્ચ ચકાસાયેલ",
+      "message": "તમારો ખર્ચ \"{{expenseTitle}}\" {{actor}} દ્વારા ચકાસાયો"
+    },
+    "expenseRejected": {
+      "title": "ખર્ચ નકારાયેલ",
+      "message": "તમારો ખર્ચ \"{{expenseTitle}}\" {{actor}} દ્વારા નકારાયો",
+      "messageWithReason": "તમારો ખર્ચ \"{{expenseTitle}}\" {{actor}} દ્વારા નકારાયો. કારણ: {{reason}}"
+    },
+    "newExpenseClaim": {
+      "title": "નવો ખર્ચ દાવો",
+      "message": "{{employee}} એ નવો ખર્ચ સબમિટ કર્યો: \"{{expenseTitle}}\""
+    },
+    "expenseVerifiedAwaiting": {
+      "title": "ખર્ચ ચકાસાયેલ — મંજૂરીની રાહ",
+      "message": "{{engineer}} એ {{employee}} નો \"{{expenseTitle}}\" ({{amount}}) ચકાસ્યો. કૃપા કરીને સમીક્ષા કરો અને મંજૂર કરો."
+    },
+    "expenseForwarded": {
+      "title": "ખર્ચ સમીક્ષા માટે મોકલાયો",
+      "message": "{{employee}} નો ખર્ચ \"{{expenseTitle}}\" હવે {{reviewer}} સમીક્ષાની રાહ જોઈ રહ્યો છે."
+    },
+    "transferOfferReceived": {
+      "title": "ટ્રાન્સફર ઓફર મળી",
+      "message": "{{sender}} એ તમને {{amount}} ઓફર કર્યું. કારણ સાથે સ્વીકારો અથવા નકારો."
+    },
+    "transferOfferAccepted": {
+      "title": "ટ્રાન્સફર ઓફર સ્વીકારાઈ",
+      "message": "{{recipient}} એ તમારી {{amount}} ની ટ્રાન્સફર ઓફર સ્વીકારી."
+    },
+    "transferOfferRejected": {
+      "title": "ટ્રાન્સફર ઓફર નકારાઈ",
+      "message": "{{recipient}} એ તમારી {{amount}} ની ટ્રાન્સફર ઓફર નકારી. કારણ: {{reason}}"
+    },
+    "transferOfferCancelled": {
+      "title": "ટ્રાન્સફર ઓફર રદ થઈ",
+      "message": "{{sender}} એ {{amount}} ની ટ્રાન્સફર ઓફર રદ કરી."
+    }
+  }
+}

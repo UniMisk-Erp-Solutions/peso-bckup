@@ -1,0 +1,18 @@
+{
+  "status": "commited",
+  "type": "frontend",
+  "scope": "codebase",
+  "localEndpoint": "http://localhost:4173",
+  "loginUser": "admin@bill.com",
+  "loginPassword": "qwertyui",
+  "executionArgs": {
+    "projectName": "voyage-account",
+    "projectPath": "C:\\Users\\Jay Patel\\Music\\voyage-account",
+    "testIds": [],
+    "additionalInstruction": "Test the complete expense management workflow including user authentication, expense creation, approval process, balance management, and role-based access control. Focus on testing all user roles (Admin, Engineer, Employee, Cashier) and their specific functionalities.",
+    "envs": {
+      "API_KEY": "sk-user-C6lUq6u8Px6Jq7eff86BQfGZq4L2z1e4CjYyBp2Q0lOA6T1KrSgMnqnkyUnPHdnUA5hIt-0PeajfmzC9s1MYqRA6xbwkY1IU5hWtFp-7_fpo6XULYTsXI0RiyRtQmIqdjj0"
+    }
+  },
+  "proxy": "http://10a95777-361d-4256-82e4-273243f7af33:Gyde47DKK7plvVT7Bho0Ze3dJI3Z029P@tun.testsprite.com:8080"
+}

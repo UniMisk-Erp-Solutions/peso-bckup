@@ -1,0 +1,45 @@
+---
+description: SQL file and migration naming — DDMMYY HHMM + descriptive snake_case name
+globs: "**/*.sql"
+alwaysApply: false
+---
+
+# SQL file naming
+
+Use this pattern for **new** SQL files (migrations, one-off fixes, post-restore scripts):
+
+```
+{DDMMYY}_{HHMM}_{snake_case_name}.sql
+```
+
+| Part | Meaning | Example |
+|------|---------|--------|
+| `DDMMYY` | Day, month, year (2-digit year) | 28 May 2026 → `280526` |
+| `HHMM` | 24-hour time, zero-padded | 6:35 PM → `1835` |
+| `snake_case_name` | What it does: main table, RPC, or fix | `manager_visibility_stable_rpc` |
+
+## Examples
+
+```
+280526_1835_manager_visibility_stable_rpc.sql
+300526_1200_fix_public_schema_grants_after_restore.sql
+270526_0530_rewrite_attachment_urls_to_new_project.sql
+```
+
+## Rules
+
+- Use **underscores only** (no spaces in filenames).
+- Name the suffix after the **primary change** (RPC name, policy, or fix), not the ticket id.
+- One logical change per file when possible.
+- **Supabase migrations** (`supabase/migrations/`): new files use this format; do **not** rename existing `YYYYMMDDHHMMSS_*.sql` files unless the user asks.
+- **Ad-hoc scripts** (`scripts/**/*.sql`): same format; optional numeric prefix only for run order (e.g. `scripts/post-restore/`).
+
+## Inside the file
+
+Start with a one-line comment matching the filename:
+
+```sql
+-- 280526_1835_manager_visibility_stable_rpc.sql
+```
+
+When creating or editing SQL, suggest filenames in this format before writing the file.

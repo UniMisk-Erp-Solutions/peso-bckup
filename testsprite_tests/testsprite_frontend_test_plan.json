@@ -1,0 +1,498 @@
+[
+  {
+    "id": "TC001",
+    "title": "Role-based Authentication - Valid Login",
+    "description": "Verify that users with Admin, Engineer, Employee, and Cashier roles can successfully login with valid credentials and access their appropriate dashboards.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to the login page."
+      },
+      {
+        "type": "action",
+        "description": "Enter valid credentials for each role (Admin, Engineer, Employee, Cashier) one by one."
+      },
+      {
+        "type": "action",
+        "description": "Click the login button."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify successful login and redirection to the role-specific dashboard."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify user access is limited to permitted features only."
+      }
+    ]
+  },
+  {
+    "id": "TC002",
+    "title": "Role-based Authentication - Invalid Login",
+    "description": "Verify that login fails with invalid credentials and appropriate error messages are displayed.",
+    "category": "error handling",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to the login page."
+      },
+      {
+        "type": "action",
+        "description": "Enter invalid username or password."
+      },
+      {
+        "type": "action",
+        "description": "Click the login button."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify login failure with clear error message displayed to user."
+      }
+    ]
+  },
+  {
+    "id": "TC003",
+    "title": "Unauthorized Access Prevention",
+    "description": "Ensure users cannot access routes or features outside their assigned roles.",
+    "category": "security",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as each role separately."
+      },
+      {
+        "type": "action",
+        "description": "Attempt to directly navigate to unauthorized routes and access restricted features."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify access is denied and proper error or redirect occurs."
+      }
+    ]
+  },
+  {
+    "id": "TC004",
+    "title": "Expense Report Creation and Submission",
+    "description": "Test that an Employee can create an expense report with multiple line items, upload receipt attachments, and submit the report successfully.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as Employee."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to expense creation page."
+      },
+      {
+        "type": "action",
+        "description": "Fill in required fields and add multiple detailed line items."
+      },
+      {
+        "type": "action",
+        "description": "Upload one or more receipt files."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify form validation accepts correct data and displays uploaded file names."
+      },
+      {
+        "type": "action",
+        "description": "Submit the expense report."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the expense report is saved successfully with status 'Pending Engineer Review' and visible in the employee's expense list."
+      }
+    ]
+  },
+  {
+    "id": "TC005",
+    "title": "Expense Report Creation - Invalid Data Validation",
+    "description": "Verify form validation prevents submission when required fields are missing, or data formats are incorrect.",
+    "category": "error handling",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as Employee."
+      },
+      {
+        "type": "action",
+        "description": "Open expense creation form."
+      },
+      {
+        "type": "action",
+        "description": "Enter invalid values such as negative amounts, empty required fields, or invalid dates."
+      },
+      {
+        "type": "action",
+        "description": "Attempt to submit the form."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify validation error messages are displayed for each invalid input preventing submission."
+      }
+    ]
+  },
+  {
+    "id": "TC006",
+    "title": "Engineer Review - Approve, Modification Request, Reject",
+    "description": "Verify the Engineer role can review submitted expenses, update status to approved, request modifications, or reject with comments.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as Engineer."
+      },
+      {
+        "type": "action",
+        "description": "Open list of expense reports pending engineer review."
+      },
+      {
+        "type": "action",
+        "description": "Open a submitted expense report."
+      },
+      {
+        "type": "action",
+        "description": "Verify detailed line items and attachments can be viewed."
+      },
+      {
+        "type": "action",
+        "description": "Approve the expense."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify status changes to 'Approved by Engineer' and notification is sent."
+      },
+      {
+        "type": "action",
+        "description": "Request modifications with comments on a different expense report."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify status is 'Modification Requested' and employee receives comments."
+      },
+      {
+        "type": "action",
+        "description": "Reject another expense report providing rejection reasons."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify status is 'Rejected by Engineer' with comments visible."
+      }
+    ]
+  },
+  {
+    "id": "TC007",
+    "title": "Admin Final Approval and Expense Deduction",
+    "description": "Test the Admin's ability to review Engineer-approved expenses, give final approval, and trigger automatic deduction from employee's balance.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as Admin."
+      },
+      {
+        "type": "action",
+        "description": "Open the list of expenses approved by Engineer."
+      },
+      {
+        "type": "action",
+        "description": "Review detailed expense report and attachments."
+      },
+      {
+        "type": "action",
+        "description": "Approve the expense."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify expense status changes to 'Final Approved' and employee balance is reduced by the expense amount."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify real-time balance updates are visible on employee and Admin dashboards."
+      }
+    ]
+  },
+  {
+    "id": "TC008",
+    "title": "Admin User Creation and Role Assignment",
+    "description": "Verify that Admin can create new users with assigned roles and set initial balances correctly.",
+    "category": "functional",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as Admin."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to User Management page."
+      },
+      {
+        "type": "action",
+        "description": "Create a new user with all required fields and assign a role."
+      },
+      {
+        "type": "action",
+        "description": "Set initial balance for the created user."
+      },
+      {
+        "type": "action",
+        "description": "Save the new user."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify new user appears in user list with correct role and balance."
+      },
+      {
+        "type": "action",
+        "description": "Attempt to create user with missing required fields."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify form validation prevents user creation and displays error messages."
+      }
+    ]
+  },
+  {
+    "id": "TC009",
+    "title": "Cashier Adding Funds and Balance Deduction",
+    "description": "Ensure Cashier can add funds to other users' accounts and balance deductions from Cashier's account are updated.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as Cashier."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to balance management page."
+      },
+      {
+        "type": "action",
+        "description": "Select a user and add funds to their balance."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the selected user's balance increases by the correct amount."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify Cashier's own balance decreases accordingly."
+      }
+    ]
+  },
+  {
+    "id": "TC010",
+    "title": "File Upload - Receipt Upload and Secure Storage",
+    "description": "Verify that users can upload expense receipt files which are securely stored and accessible only by authorized users.",
+    "category": "security",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as Employee."
+      },
+      {
+        "type": "action",
+        "description": "Create a new expense report and upload multiple files of allowed types and sizes."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify files upload successfully with progress indicator within 5 seconds."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify uploaded files are linked correctly to the expense report."
+      },
+      {
+        "type": "action",
+        "description": "Attempt to access uploaded files as unauthorized user."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify access is denied to unauthorized users."
+      },
+      {
+        "type": "action",
+        "description": "Attempt to upload invalid file types or oversized files."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify validation prevents upload and displays error feedback."
+      }
+    ]
+  },
+  {
+    "id": "TC011",
+    "title": "Form Validation with Zod Schemas",
+    "description": "Ensure that all forms (expense, user management, balance management) enforce data validation using Zod schemas and provide meaningful error feedback.",
+    "category": "error handling",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Access various forms in the system."
+      },
+      {
+        "type": "action",
+        "description": "Enter invalid data such as missing mandatory fields, wrong formats, or out-of-bound values."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify form validation errors appear correctly next to each invalid input."
+      },
+      {
+        "type": "action",
+        "description": "Correct the inputs and re-submit."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify forms accept valid data successfully."
+      }
+    ]
+  },
+  {
+    "id": "TC012",
+    "title": "Real-time Balance Update and Overspending Prevention",
+    "description": "Verify that user balances are updated in real-time on all dashboards and that the system prevents users from submitting expenses that exceed their available balance.",
+    "category": "functional",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as Employee with limited balance."
+      },
+      {
+        "type": "action",
+        "description": "Create an expense exceeding the current balance."
+      },
+      {
+        "type": "action",
+        "description": "Attempt to submit the expense."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify system prevents submission and displays an error about insufficient balance."
+      },
+      {
+        "type": "action",
+        "description": "Submit a valid expense within balance."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify balance updates immediately in employee dashboard and reflects deduction."
+      }
+    ]
+  },
+  {
+    "id": "TC013",
+    "title": "Role-specific Dashboards Display",
+    "description": "Verify each user role sees a dashboard with correct personalized data including expense statuses, notifications, and analytics charts.",
+    "category": "functional",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Login as Admin, Engineer, Employee, and Cashier individually."
+      },
+      {
+        "type": "action",
+        "description": "Navigate to respective dashboards."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify data shown matches role-specific expectations: appropriate expense summaries, notifications, and analytics."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify notifications update dynamically on status changes."
+      }
+    ]
+  },
+  {
+    "id": "TC014",
+    "title": "Comprehensive Error Handling and Logging",
+    "description": "Ensure that system errors, including network failures and unexpected exceptions, are handled gracefully with user feedback and error boundaries without crashing the app and that error information is logged appropriately.",
+    "category": "error handling",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Simulate API failure or server error during critical operations like login, expense submission, or balance update."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify user-friendly error messages are displayed."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify error boundaries prevent app crash and provide recovery options."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify error details are logged for debugging (log files or monitoring system)."
+      }
+    ]
+  },
+  {
+    "id": "TC015",
+    "title": "Performance Validation - Page Load and File Upload",
+    "description": "Verify that page load times do not exceed 3 seconds and file uploads complete within 5 seconds for typical network conditions.",
+    "category": "performance",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Load various key pages: login, dashboard, expense creation, user management."
+      },
+      {
+        "type": "assertion",
+        "description": "Measure and confirm page load time is under 3 seconds."
+      },
+      {
+        "type": "action",
+        "description": "Upload expense receipts of typical sizes via file upload component."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify upload completes within 5 seconds with data correctly saved."
+      }
+    ]
+  },
+  {
+    "id": "TC016",
+    "title": "Responsive UI on Desktop and Mobile",
+    "description": "Verify the application UI renders properly and is fully functional on desktop and major mobile devices.",
+    "category": "ui",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Access the application on desktop browsers of different screen resolutions."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify layout is consistent, controls are accessible, and data displays correctly."
+      },
+      {
+        "type": "action",
+        "description": "Access application on mobile devices (iOS and Android) with different screen sizes."
+      },
+      {
+        "type": "assertion",
+        "description": "Verify responsive design adapts layout, with functional navigation and forms."
+      }
+    ]
+  }
+]

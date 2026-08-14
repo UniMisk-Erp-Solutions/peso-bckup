@@ -1,0 +1,174 @@
+{
+  "sidebarTitle": "ડીબગ ખર્ચ સમીક્ષા",
+  "pageTitle": "ડીબગ ખર્ચ સમીક્ષા",
+  "pageDescription": "કર્મચારી શોધ, સંપૂર્ણ પરિણામો અને પેજિનેશન ચકાસવા માટે સ્વતંત્ર સર્વર-સાઇડ સમીક્ષા કતાર.",
+  "actionsDisabled": "ક્રિયાઓ અક્ષમ",
+  "readOnlyNotice": "આ પૃષ્ઠ ફક્ત-વાંચન છે. ચકાસો, મંજૂર કરો, નકારો અને સુધારો ઇરાદાપૂર્વક અનુપલબ્ધ છે.",
+  "contractStatus": "કોન્ટ્રાક્ટ સ્થિતિ",
+  "contractReady": "કોન્ટ્રાક્ટ તૈયાર",
+  "contractRevision": "સ્કીમા રિવિઝન {{revision}}",
+  "backToReview": "ખર્ચ સમીક્ષા પર જાઓ",
+
+  "stats": {
+    "assignedToMe": "મને સોંપાયેલ",
+    "pendingReview": "સમીક્ષા બાકી",
+    "verified": "ચકાસાયેલ",
+    "totalAmount": "કુલ રકમ",
+    "scopeNote": "સંપૂર્ણ સમીક્ષક વ્યાપ — પૃષ્ઠ, પૃષ્ઠ કદ કે ફિલ્ટરથી અપરિવર્તિત."
+  },
+
+  "employeeSearch": {
+    "label": "કર્મચારી શોધો",
+    "placeholder": "કર્મચારીનું નામ અથવા કર્મચારી ID દાખલ કરો",
+    "help": "કર્મચારી શોધ સર્વર પર ચાલે છે અને ક્યારેય વ્યવહાર નંબર સાથે મેળ ખાતી નથી.",
+    "search": "શોધો",
+    "clear": "સાફ કરો",
+    "searching": "કર્મચારીઓ શોધાઈ રહ્યા છે…",
+    "notFound": "કોઈ કર્મચારી મળ્યો નથી",
+    "notFoundHint": "\"{{query}}\" સાથે મેળ ખાતો કોઈ કર્મચારી નથી જેના ખર્ચ તમને દેખાય.",
+    "multipleFound": "એકથી વધુ કર્મચારીઓ મળ્યા",
+    "multipleFoundHint": "જે કર્મચારીના ખર્ચ લોડ કરવા છે તે પસંદ કરો.",
+    "selected": "પસંદ કરેલ કર્મચારી",
+    "select": "પસંદ કરો",
+    "clearEmployee": "કર્મચારી હટાવો",
+    "visibleExpenses": "દૃશ્યમાન ખર્ચ",
+    "actionableExpenses": "ક્રિયાયોગ્ય",
+    "noVisibleExpenses": "આ કર્મચારીનો કોઈ ખર્ચ તમને દેખાતો નથી.",
+    "matchType": {
+      "exact_employee_id": "ચોક્કસ કર્મચારી ID",
+      "exact_employee_name": "ચોક્કસ નામ",
+      "name_prefix": "નામ આનાથી શરૂ થાય છે",
+      "name_contains": "નામમાં સમાવિષ્ટ",
+      "exact_email": "ચોક્કસ ઈમેલ",
+      "unknown": "મેળ"
+    }
+  },
+
+  "generalSearch": {
+    "label": "ખર્ચ શોધો",
+    "placeholder": "વ્યવહાર નંબર, શીર્ષક, ગંતવ્ય, શ્રેણી અથવા રકમ",
+    "help": "ખર્ચ શોધ સર્વર પર ચાલે છે અને પસંદ કરેલ કર્મચારીને બદલતી નથી.",
+    "search": "શોધો",
+    "clear": "સાફ કરો"
+  },
+
+  "filters": {
+    "title": "ફિલ્ટર",
+    "status": "સ્થિતિ",
+    "allStatuses": "બધી સ્થિતિઓ",
+    "category": "શ્રેણી",
+    "allCategories": "બધી શ્રેણીઓ",
+    "sort": "ક્રમમાં ગોઠવો",
+    "timePeriod": "સમયગાળો",
+    "actionableOnly": "ફક્ત ક્રિયાયોગ્ય",
+    "customFields": "કસ્ટમ ફીલ્ડ",
+    "reset": "ફિલ્ટર રીસેટ કરો",
+    "activeCount": "{{count}} સક્રિય",
+    "pageSize": "પ્રતિ પૃષ્ઠ પંક્તિઓ",
+    "sorts": {
+      "created_desc": "બનાવ્યાની તારીખ — નવીનતમ",
+      "created_asc": "બનાવ્યાની તારીખ — જૂની",
+      "expense_date_desc": "ખર્ચ તારીખ — નવીનતમ",
+      "expense_date_asc": "ખર્ચ તારીખ — જૂની",
+      "amount_desc": "રકમ — વધુથી ઓછી",
+      "amount_asc": "રકમ — ઓછીથી વધુ"
+    },
+    "periods": {
+      "all": "બધો સમય",
+      "week": "ગયું અઠવાડિયું",
+      "month": "ગયો મહિનો",
+      "year": "ગયું વર્ષ"
+    }
+  },
+
+  "table": {
+    "select": "પસંદ કરો",
+    "transactionNumber": "વ્યવહાર #",
+    "employee": "કર્મચારી / કર્મચારી ID",
+    "title": "શીર્ષક",
+    "category": "શ્રેણી",
+    "destination": "ગંતવ્ય",
+    "amount": "રકમ",
+    "employeeBalance": "કર્મચારી બાકી",
+    "status": "સ્થિતિ",
+    "expenseDate": "ખર્ચ તારીખ",
+    "dateCreated": "બનાવ્યાની તારીખ",
+    "actions": "સ્થિતિ / ક્રિયાઓ",
+    "view": "જુઓ",
+    "disabled": "અક્ષમ",
+    "resubmitted": "ફરીથી સબમિટ",
+    "corrected": "સુધારેલ",
+    "viewOnly": "ફક્ત જુઓ"
+  },
+
+  "identity": {
+    "unknownEmployee": "અજ્ઞાત કર્મચારી",
+    "profileMissing": "પ્રોફાઇલ ગુમ",
+    "duplicateProfiles": "ડુપ્લિકેટ પ્રોફાઇલ"
+  },
+
+  "pagination": {
+    "previous": "પાછલું",
+    "next": "આગળનું",
+    "page": "પૃષ્ઠ {{page}}",
+    "showing": "{{total}} માંથી {{from}}–{{to}} ખર્ચ બતાવાય છે",
+    "showingForEmployee": "{{employee}} ના {{total}} દૃશ્યમાન ખર્ચમાંથી {{from}}–{{to}} બતાવાય છે",
+    "empty": "0 માંથી 0 ખર્ચ બતાવાય છે"
+  },
+
+  "diagnostics": {
+    "title": "ડાયગ્નોસ્ટિક્સ",
+    "show": "ડાયગ્નોસ્ટિક્સ બતાવો",
+    "hide": "ડાયગ્નોસ્ટિક્સ છુપાવો",
+    "copy": "સંપાદિત ડાયગ્નોસ્ટિક્સ કૉપિ કરો",
+    "copied": "ડાયગ્નોસ્ટિક્સ કૉપિ થયા",
+    "redactionNote": "ID છુપાવેલ છે અને કોઈ ક્રેડેન્શિયલ સામેલ નથી."
+  },
+
+  "detail": {
+    "title": "ખર્ચ વિગત",
+    "close": "બંધ કરો",
+    "employee": "કર્મચારી",
+    "customFields": "કસ્ટમ ફીલ્ડ",
+    "attachments": "જોડાણો",
+    "noAttachments": "કોઈ જોડાણ નથી",
+    "deletedAttachments": "{{count}} જોડાણ કાઢી નાખવામાં આવ્યાં હતાં અને બતાવાયાં નથી.",
+    "timeline": "ઓડિટ સમયરેખા",
+    "corrections": "સુધારા ઇતિહાસ",
+    "noCorrections": "કોઈ સુધારો નોંધાયેલ નથી",
+    "actionability": "ક્રિયાયોગ્યતા",
+    "availableActions": "ઉપલબ્ધ ક્રિયાઓ (ફક્ત માહિતી)",
+    "noActions": "કોઈ ક્રિયા ઉપલબ્ધ નથી",
+    "openBatch": "બેચ સમીક્ષા ખોલો",
+    "loading": "ખર્ચ વિગત લોડ થઈ રહી છે…"
+  },
+
+  "errors": {
+    "title": "ડીબગ સમીક્ષા અનુપલબ્ધ",
+    "flagDisabled": "ડીબગ સમીક્ષા પૃષ્ઠ અક્ષમ છે.",
+    "flagDisabledHint": "તેને સક્ષમ કરવા સુરક્ષિત વાતાવરણમાં VITE_DEBUG_REVIEW_EXPENSES_ENABLED ને true પર સેટ કરો.",
+    "capability": "ડીબગ સમીક્ષા ડેટાબેઝ કોન્ટ્રાક્ટ સંપૂર્ણપણે સ્થાપિત નથી.",
+    "capabilityMissing": "અનુપલબ્ધ ફંક્શન: {{functions}}",
+    "authorization": "તમે આ ખર્ચની સમીક્ષા કરવા અધિકૃત નથી.",
+    "authExpired": "તમારું સત્ર સમાપ્ત થયું છે. ચાલુ રાખવા ફરીથી સાઇન ઇન કરો.",
+    "network": "ડીબગ સમીક્ષા કતાર સુધી પહોંચી શકાયું નથી.",
+    "timeout": "ડીબગ સમીક્ષા ક્વેરીએ પ્રતિસાદ આપવામાં ખૂબ સમય લીધો.",
+    "validation": "સર્વરનો પ્રતિસાદ અપેક્ષિત ફોર્મેટમાં ન હતો.",
+    "unknown": "ડીબગ ખર્ચ સમીક્ષા હાલ પૂરતી અનુપલબ્ધ છે.",
+    "employeeNotFound": "તે શોધ માટે કોઈ કર્મચારી મળ્યો નથી.",
+    "employeeNoExpenses": "આ કર્મચારીનો કોઈ ખર્ચ તમને દેખાતો નથી.",
+    "noMatchingExpenses": "વર્તમાન ફિલ્ટર સાથે કોઈ ખર્ચ મેળ ખાતો નથી.",
+    "retry": "ફરી પ્રયાસ કરો"
+  },
+
+  "loading": {
+    "capabilities": "ડેટાબેઝ કોન્ટ્રાક્ટ તપાસાઈ રહ્યો છે…",
+    "page": "ખર્ચ લોડ થઈ રહ્યા છે…",
+    "filters": "ફિલ્ટર લોડ થઈ રહ્યા છે…"
+  },
+
+  "empty": {
+    "noEmployeeSelected": "કર્મચારી શોધો, અથવા સીધા ખર્ચ શોધો.",
+    "noResults": "વર્તમાન ફિલ્ટર સાથે કોઈ ખર્ચ મેળ ખાતો નથી."
+  }
+}

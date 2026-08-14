@@ -1,0 +1,37 @@
+---
+description: Never apply or push Supabase migrations — user runs them manually
+alwaysApply: true
+---
+
+# Supabase migrations — manual only
+
+**Do not** apply, push, or run migrations against Supabase on the user's behalf.
+
+This includes:
+- Supabase MCP: `apply_migration`, `execute_sql` for DDL (`ALTER`, `CREATE`, `DROP`, etc.)
+- CLI: `supabase db push`, `supabase migration up`, `supabase link` + remote deploy
+- Any automated execution of files under `supabase/migrations/` or `scripts/post-restore/` on the remote database
+
+The user applies database changes **manually** in the Supabase SQL Editor (or their own process).
+
+## What to do instead
+
+1. **Write** migration SQL locally in `supabase/migrations/` (and `scripts/post-restore/` when needed).
+2. **Tell the user** which file to run and remind them to reload the API schema after DDL (Dashboard → Settings → API → Reload schema).
+3. **Never** call MCP or CLI to execute that SQL on their project unless they explicitly ask in that message.
+
+## Examples
+
+```text
+❌ BAD — applying migration via MCP without explicit request
+apply_migration({ project_id, name, query: "ALTER TABLE ..." })
+
+❌ BAD — running DDL via execute_sql
+execute_sql({ query: "ADD COLUMN IF NOT EXISTS ..." })
+
+✅ GOOD — create local file and instruct user
+"Added supabase/migrations/20260529140000_daily_project_expense_report.sql.
+Run it in Supabase SQL Editor, then reload the API schema."
+```
+
+Read-only Supabase MCP use (e.g. `list_tables`, `list_migrations`) is fine when it does not change the database.

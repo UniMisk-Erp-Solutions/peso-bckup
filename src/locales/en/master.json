@@ -1,0 +1,23 @@
+{
+  "title": "Master Admin",
+  "organizations": "Organizations",
+  "tenantSubdomain": "Tenant subdomain",
+  "features": {
+    "employeeIdLogin": "Employee ID login (tenant subdomain only)",
+    "userEmailAuto": "Auto-generate user emails (vs manual entry)",
+    "managerCorrections": "Allow manager/admin to correct employee expenses (audit trail)",
+    "batchEntry": "Allow batch expense entry (submit multiple expenses in one wizard)",
+    "conditionalDropdown": "Conditional dropdown fields per option",
+    "nestedConditional": "Nested conditional dropdown chains",
+    "teamsEnabled": "Teams (org structure & My Teams dashboard)",
+    "approvalHierarchy": "Approval hierarchy (multi-tier review)",
+    "hierarchyTeamLeader": "Team leader tier",
+    "hierarchyExecutive": "Executive tier",
+    "dailyProjectExpenseReport": "Daily project expense report (employee × project per day)",
+    "transferRecipientAcceptance": "Transfer recipient acceptance (pending offers before credit)",
+    "cashierAccountantMode": "Cashier accountant mode (read-only reports for designated cashiers)",
+    "baseFieldInputCustomization": "Customizable base field inputs (change text/number/dropdown in form builder)",
+    "userActivityInsights": "User Activity Insights (track visible app activity, last seen, inactivity trends)",
+    "employeeTransferHistory": "Employee Balance History (employees can view balance credits recorded to their account)"
+  }
+}

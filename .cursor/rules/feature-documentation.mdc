@@ -1,0 +1,65 @@
+---
+description: Create and update feature docs in Documentations MD for every feature change
+alwaysApply: true
+---
+
+# Feature documentation (Documentations MD)
+
+For **every new feature** or **meaningful change** to existing behavior, maintain documentation in `Documentations MD/`.
+
+## Required workflow
+
+1. **Find or create** a feature doc in `Documentations MD/` (kebab-case, e.g. `expense-batch-review.md`).
+2. **Update that file** with what changed, why, key files, migrations, and test steps.
+3. **Update `Documentations MD/index.md`** — table row + revision log entry (date, author/agent, summary).
+4. Use `Documentations MD/_DOC_TEMPLATE.md` when creating a new doc.
+
+Do **not** skip docs because the change feels small. If it affects users, reviewers, or deploy steps, it gets a doc update.
+
+## Doc content (minimum)
+
+- **Purpose** — what the feature/fix does
+- **Status** — draft | in progress | deployed | superseded
+- **Last updated** — ISO date at top of file
+- **Revision log** — dated entries at bottom of each feature file
+- **Key files** — paths touched
+- **Database** — migrations to run (reference filename only; user runs SQL manually)
+- **Test plan** — how to verify
+
+## Index maintenance
+
+`Documentations MD/index.md` is the single catalog. Always update when adding or materially editing a doc:
+
+| Column | Content |
+|--------|---------|
+| ID | Short slug (e.g. `DOC-014`) |
+| Title | Human-readable name |
+| File | Path under repo root |
+| Last updated | From file header or git |
+| Status | Same as doc status |
+| Summary | One line |
+
+Add a **Revision log** block in `index.md` for each index change.
+
+## Legacy `docs/` folder
+
+Older files may still live in `docs/`. When touching those features, **copy or consolidate** into `Documentations MD/` and note the move in both the index and the legacy file header (`> Superseded by: Documentations MD/...`).
+
+## Examples
+
+```text
+❌ BAD — ship custom form field fix, no doc
+(only code changes)
+
+✅ GOOD — after implementing review dialog fix
+- Update Documentations MD/custom-form-fields-review-display.md (Pass 9 section)
+- Add index row + revision log in Documentations MD/index.md
+```
+
+```text
+❌ BAD — new Reports export feature, doc only in PR description
+
+✅ GOOD
+- Create Documentations MD/reports-csv-export.md from _DOC_TEMPLATE.md
+- Register in index.md as DOC-0xx
+```

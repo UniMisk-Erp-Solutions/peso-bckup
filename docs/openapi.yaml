@@ -1,0 +1,896 @@
+openapi: 3.0.3
+info:
+  title: PesoWise Expense Management API
+  description: |
+    A comprehensive API for managing employee expenses with role-based access control.
+    
+    ## Features
+    - Admin-only user creation
+    - Expense draft/submit workflow
+    - Engineer verification process
+    - Admin approval/rejection
+    - File upload for receipts (PDF, PNG, JPG ≤10MB)
+    - Audit logging for all actions
+    - Backend total computation
+    
+    ## Authentication
+    This API uses Supabase Auth with JWT tokens. Include the token in the Authorization header:
+    ```
+    Authorization: Bearer <your-jwt-token>
+    ```
+    
+    ## Roles
+    - **admin**: Full system access, user management, expense approval
+    - **engineer**: Review and verify assigned expenses
+    - **employee**: Create and submit expense claims
+    
+  version: 1.0.0
+  contact:
+    name: PesoWise Team
+    email: info@unimisk.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://your-supabase-project.supabase.co/rest/v1
+    description: Production server
+  - url: http://localhost:3000
+    description: Development server
+
+security:
+  - BearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      summary: User login
+      description: Authenticate user and return JWT token
+      tags:
+        - Authentication
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  example: securepassword123
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  user:
+                    $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid credentials
+        '401':
+          description: Unauthorized
+
+  /auth/logout:
+    post:
+      summary: User logout
+      description: Invalidate user session
+      tags:
+        - Authentication
+      responses:
+        '200':
+          description: Logout successful
+        '401':
+          description: Unauthorized
+
+  /profiles:
+    get:
+      summary: Get user profiles
+      description: Retrieve user profiles (admin only)
+      tags:
+        - User Management
+      responses:
+        '200':
+          description: List of user profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserProfile'
+        '403':
+          description: Forbidden - Admin access required
+
+  /user_roles:
+    post:
+      summary: Create user role
+      description: Assign role to user (admin only)
+      tags:
+        - User Management
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+                - role
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                  example: 123e4567-e89b-12d3-a456-426614174000
+                role:
+                  $ref: '#/components/schemas/AppRole'
+      responses:
+        '201':
+          description: Role assigned successfully
+        '403':
+          description: Forbidden - Admin access required
+        '400':
+          description: Invalid role or user ID
+
+  /expenses:
+    get:
+      summary: List expenses
+      description: Retrieve expenses based on user role and filters
+      tags:
+        - Expenses
+      parameters:
+        - name: status
+          in: query
+          description: Filter by expense status
+          schema:
+            $ref: '#/components/schemas/ExpenseStatus'
+        - name: user_id
+          in: query
+          description: Filter by user ID (admin only)
+          schema:
+            type: string
+            format: uuid
+        - name: date_from
+          in: query
+          description: Filter expenses from date
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          description: Filter expenses to date
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: List of expenses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Expense'
+        '403':
+          description: Forbidden
+
+    post:
+      summary: Create expense
+      description: Create a new expense with line items
+      tags:
+        - Expenses
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExpenseRequest'
+      responses:
+        '201':
+          description: Expense created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExpenseWithLineItems'
+        '400':
+          description: Validation error
+        '403':
+          description: Forbidden
+
+  /expenses/{id}:
+    get:
+      summary: Get expense details
+      description: Retrieve detailed expense information with line items
+      tags:
+        - Expenses
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Expense ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Expense details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExpenseWithLineItems'
+        '404':
+          description: Expense not found
+        '403':
+          description: Forbidden
+
+    put:
+      summary: Update expense
+      description: Update expense details (only draft expenses can be edited)
+      tags:
+        - Expenses
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Expense ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateExpenseRequest'
+      responses:
+        '200':
+          description: Expense updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExpenseWithLineItems'
+        '400':
+          description: Validation error or expense not editable
+        '403':
+          description: Forbidden
+        '404':
+          description: Expense not found
+
+  /expenses/{id}/submit:
+    post:
+      summary: Submit expense
+      description: Submit expense for review (employee only)
+      tags:
+        - Expenses
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Expense ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Expense submitted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+        '400':
+          description: Expense cannot be submitted
+        '403':
+          description: Forbidden
+        '404':
+          description: Expense not found
+
+  /expenses/{id}/assign:
+    post:
+      summary: Assign expense to engineer
+      description: Assign expense to engineer for review (admin only)
+      tags:
+        - Expenses
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Expense ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - engineer_id
+              properties:
+                engineer_id:
+                  type: string
+                  format: uuid
+                  example: 123e4567-e89b-12d3-a456-426614174000
+      responses:
+        '200':
+          description: Expense assigned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+        '400':
+          description: Invalid engineer ID
+        '403':
+          description: Forbidden - Admin access required
+        '404':
+          description: Expense not found
+
+  /expenses/{id}/verify:
+    post:
+      summary: Verify expense
+      description: Verify or reject expense (assigned engineer only)
+      tags:
+        - Expenses
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Expense ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - verified
+              properties:
+                verified:
+                  type: boolean
+                  description: Whether the expense is verified
+                  example: true
+                comment:
+                  type: string
+                  description: Optional comment about verification
+                  example: All receipts are valid and amounts match
+      responses:
+        '200':
+          description: Expense verification completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+        '400':
+          description: Invalid verification data
+        '403':
+          description: Forbidden - Engineer access required
+        '404':
+          description: Expense not found
+
+  /expenses/{id}/approve:
+    post:
+      summary: Approve expense
+      description: Approve expense for payment (admin only)
+      tags:
+        - Expenses
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Expense ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comment:
+                  type: string
+                  description: Optional approval comment
+                  example: Approved for reimbursement
+      responses:
+        '200':
+          description: Expense approved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+        '403':
+          description: Forbidden - Admin access required
+        '404':
+          description: Expense not found
+
+  /expenses/{id}/reject:
+    post:
+      summary: Reject expense
+      description: Reject expense (admin only)
+      tags:
+        - Expenses
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Expense ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comment:
+                  type: string
+                  description: Rejection reason
+                  example: Missing receipts for hotel stay
+      responses:
+        '200':
+          description: Expense rejected successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+        '403':
+          description: Forbidden - Admin access required
+        '404':
+          description: Expense not found
+
+  /expenses/{id}/attachments:
+    get:
+      summary: List expense attachments
+      description: Retrieve list of attachments for an expense
+      tags:
+        - Attachments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Expense ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of attachments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Attachment'
+        '403':
+          description: Forbidden
+        '404':
+          description: Expense not found
+
+    post:
+      summary: Upload attachment
+      description: Upload file attachment for expense
+      tags:
+        - Attachments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Expense ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: File to upload (PDF, PNG, JPG, max 10MB)
+                line_item_id:
+                  type: string
+                  format: uuid
+                  description: Optional line item ID to associate with
+      responses:
+        '201':
+          description: File uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        '400':
+          description: Invalid file type or size
+        '403':
+          description: Forbidden
+        '404':
+          description: Expense not found
+
+  /audit_logs:
+    get:
+      summary: Get audit logs
+      description: Retrieve audit logs for expenses (admin only)
+      tags:
+        - Audit
+      parameters:
+        - name: expense_id
+          in: query
+          description: Filter by expense ID
+          schema:
+            type: string
+            format: uuid
+        - name: user_id
+          in: query
+          description: Filter by user ID
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          description: Filter by action type
+          schema:
+            type: string
+            example: expense_created
+      responses:
+        '200':
+          description: List of audit logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditLog'
+        '403':
+          description: Forbidden - Admin access required
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 123e4567-e89b-12d3-a456-426614174000
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        created_at:
+          type: string
+          format: date-time
+          example: 2024-01-01T00:00:00Z
+
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: John Doe
+        email:
+          type: string
+          format: email
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+
+    AppRole:
+      type: string
+      enum:
+        - admin
+        - engineer
+        - employee
+      example: employee
+
+    ExpenseStatus:
+      type: string
+      enum:
+        - draft
+        - submitted
+        - under_review
+        - verified
+        - approved
+        - rejected
+        - paid
+      example: draft
+
+    ExpenseCategory:
+      type: string
+      enum:
+        - travel
+        - lodging
+        - food
+        - other
+      example: travel
+
+    Expense:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: Business Trip to New York
+        trip_start:
+          type: string
+          format: date
+          example: 2024-01-01
+        trip_end:
+          type: string
+          format: date
+          example: 2024-01-03
+        destination:
+          type: string
+          example: New York, NY
+        purpose:
+          type: string
+          example: Client meeting and conference
+        status:
+          $ref: '#/components/schemas/ExpenseStatus'
+        total_amount:
+          type: number
+          format: decimal
+          example: 1250.50
+        assigned_engineer_id:
+          type: string
+          format: uuid
+          nullable: true
+        admin_comment:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ExpenseWithLineItems:
+      allOf:
+        - $ref: '#/components/schemas/Expense'
+        - type: object
+          properties:
+            expense_line_items:
+              type: array
+              items:
+                $ref: '#/components/schemas/LineItem'
+
+    LineItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        expense_id:
+          type: string
+          format: uuid
+        date:
+          type: string
+          format: date
+          example: 2024-01-01
+        category:
+          $ref: '#/components/schemas/ExpenseCategory'
+        amount:
+          type: number
+          format: decimal
+          example: 500.00
+        description:
+          type: string
+          example: Flight ticket to New York
+        created_at:
+          type: string
+          format: date-time
+
+    CreateExpenseRequest:
+      type: object
+      required:
+        - title
+        - destination
+        - trip_start
+        - trip_end
+        - line_items
+      properties:
+        title:
+          type: string
+          example: Business Trip to New York
+        destination:
+          type: string
+          example: New York, NY
+        trip_start:
+          type: string
+          format: date
+          example: 2024-01-01
+        trip_end:
+          type: string
+          format: date
+          example: 2024-01-03
+        purpose:
+          type: string
+          example: Client meeting and conference
+        line_items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - date
+              - category
+              - amount
+              - description
+            properties:
+              date:
+                type: string
+                format: date
+                example: 2024-01-01
+              category:
+                $ref: '#/components/schemas/ExpenseCategory'
+              amount:
+                type: number
+                format: decimal
+                minimum: 0.01
+                example: 500.00
+              description:
+                type: string
+                example: Flight ticket to New York
+
+    UpdateExpenseRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        destination:
+          type: string
+        trip_start:
+          type: string
+          format: date
+        trip_end:
+          type: string
+          format: date
+        purpose:
+          type: string
+        status:
+          $ref: '#/components/schemas/ExpenseStatus'
+        admin_comment:
+          type: string
+        assigned_engineer_id:
+          type: string
+          format: uuid
+        line_items:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              date:
+                type: string
+                format: date
+              category:
+                $ref: '#/components/schemas/ExpenseCategory'
+              amount:
+                type: number
+                format: decimal
+              description:
+                type: string
+
+    Attachment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        expense_id:
+          type: string
+          format: uuid
+        line_item_id:
+          type: string
+          format: uuid
+          nullable: true
+        file_url:
+          type: string
+          example: https://storage.supabase.co/object/public/attachments/receipt.pdf
+        filename:
+          type: string
+          example: receipt.pdf
+        content_type:
+          type: string
+          example: application/pdf
+        uploaded_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    AuditLog:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        expense_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          example: expense_created
+        comment:
+          type: string
+          nullable: true
+          example: Expense created by employee
+        created_at:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: Validation failed
+        message:
+          type: string
+          example: Title is required
+        details:
+          type: object
+          additionalProperties: true
+
+tags:
+  - name: Authentication
+    description: User authentication and session management
+  - name: User Management
+    description: User account creation and role management (admin only)
+  - name: Expenses
+    description: Expense creation, submission, and management
+  - name: Attachments
+    description: File upload and management for receipts
+  - name: Audit
+    description: Audit logging and tracking

@@ -1,0 +1,6 @@
+name	employee_id	position	immediate_supervisor_employee_id	location
+Ada Placeholder	EX-0001	employee	EX-9001	Example City
+Grace Sample	EX-0002	employee	EX-9001	Example City
+Alan Fixture	EX-0003	team_leader	EX-9002	Sample Town
+Rosa Testcase	EX-9001	executive		Example City
+Kenji Dummy	EX-9002	executive		Sample Town

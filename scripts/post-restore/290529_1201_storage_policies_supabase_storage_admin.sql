@@ -1,0 +1,10 @@
+-- DEPRECATED — SQL Editor cannot SET ROLE supabase_storage_admin on hosted Supabase.
+--
+-- Use instead:
+--   npm run post-restore:storage-policies
+--
+-- File applied by that command:
+--   290529_1201_storage_policies_direct_connection.sql
+--
+-- Requires DATABASE_DIRECT_URL in .env (Direct connection, not pooler):
+--   postgresql://postgres:***REMOVED-SENSITIVE-VALUE***@db.kqlqirdneocivumdjtvx.supabase.co:5432/postgres

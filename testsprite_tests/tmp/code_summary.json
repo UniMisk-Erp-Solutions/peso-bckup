@@ -1,0 +1,142 @@
+{
+  "tech_stack": [
+    "TypeScript",
+    "React",
+    "Vite",
+    "Tailwind CSS",
+    "Shadcn UI",
+    "Supabase",
+    "React Router",
+    "React Query",
+    "Zod",
+    "React Hook Form"
+  ],
+  "features": [
+    {
+      "name": "Authentication System",
+      "description": "User authentication with role-based access control (Admin, Engineer, Employee, Cashier)",
+      "files": [
+        "src/contexts/AuthContext.tsx",
+        "src/components/ProtectedRoute.tsx",
+        "src/pages/Auth.tsx",
+        "src/integrations/supabase/client.ts"
+      ]
+    },
+    {
+      "name": "Expense Management",
+      "description": "Complete expense lifecycle from creation to approval with line items and attachments",
+      "files": [
+        "src/pages/ExpenseForm.tsx",
+        "src/pages/Expenses.tsx",
+        "src/pages/ExpenseDetail.tsx",
+        "src/services/ExpenseService.ts",
+        "src/components/MobileExpenseTable.tsx"
+      ]
+    },
+    {
+      "name": "Role-based Dashboard",
+      "description": "Role-specific dashboards with different views for Admin, Engineer, Employee, and Cashier",
+      "files": [
+        "src/pages/Dashboard.tsx",
+        "src/pages/AdminPanel.tsx",
+        "src/pages/EngineerReview.tsx",
+        "src/components/AppSidebar.tsx",
+        "src/components/Layout.tsx"
+      ]
+    },
+    {
+      "name": "Balance Management",
+      "description": "User balance tracking with automatic deduction on expense approval",
+      "files": [
+        "src/pages/Balances.tsx",
+        "src/integrations/supabase/types.ts"
+      ]
+    },
+    {
+      "name": "User Management",
+      "description": "Admin interface for creating and managing users with role assignment",
+      "files": [
+        "src/pages/UserManagement.tsx"
+      ]
+    },
+    {
+      "name": "File Upload System",
+      "description": "Receipt and document upload with Supabase storage integration",
+      "files": [
+        "src/components/FileUpload.tsx",
+        "src/integrations/supabase/client.ts"
+      ]
+    },
+    {
+      "name": "Analytics & Reporting",
+      "description": "Expense analytics and reporting with visual charts",
+      "files": [
+        "src/pages/Analytics.tsx"
+      ]
+    },
+    {
+      "name": "Notification System",
+      "description": "User notifications and alerts for expense status changes",
+      "files": [
+        "src/pages/Notifications.tsx"
+      ]
+    },
+    {
+      "name": "Expense Templates",
+      "description": "Reusable expense templates for common expense types",
+      "files": [
+        "src/pages/ExpenseTemplates.tsx"
+      ]
+    },
+    {
+      "name": "Status Management",
+      "description": "Expense status tracking with badges and workflow management",
+      "files": [
+        "src/components/StatusBadge.tsx"
+      ]
+    },
+    {
+      "name": "Responsive Design",
+      "description": "Mobile-responsive UI components with Tailwind CSS",
+      "files": [
+        "src/components/ui/",
+        "src/hooks/use-mobile.tsx",
+        "tailwind.config.ts"
+      ]
+    },
+    {
+      "name": "Database Integration",
+      "description": "Supabase integration with PostgreSQL database and real-time updates",
+      "files": [
+        "src/integrations/supabase/",
+        "supabase/migrations/",
+        "supabase/config.toml"
+      ]
+    },
+    {
+      "name": "Form Validation",
+      "description": "Form validation using Zod schemas and React Hook Form",
+      "files": [
+        "src/lib/utils.ts",
+        "src/services/ExpenseService.ts"
+      ]
+    },
+    {
+      "name": "Error Handling",
+      "description": "Comprehensive error handling with error boundaries and user feedback",
+      "files": [
+        "src/components/ErrorBoundary.tsx",
+        "src/hooks/use-toast.ts"
+      ]
+    },
+    {
+      "name": "Testing Infrastructure",
+      "description": "Unit and integration tests with Vitest",
+      "files": [
+        "src/__tests__/",
+        "src/services/__tests__/",
+        "vitest.config.ts"
+      ]
+    }
+  ]
+}

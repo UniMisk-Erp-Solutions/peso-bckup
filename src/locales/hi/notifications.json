@@ -1,0 +1,63 @@
+{
+  "title": "सूचनाएँ",
+  "pageDescription": "अपने व्यय जमा और स्वीकृतियों पर अपडेट रहें",
+  "markAllRead": "सभी को पढ़ा हुआ चिह्नित करें",
+  "empty": "कोई सूचना नहीं",
+  "emptyDescription": "आप सभी अपडेट से अवगत हैं।",
+  "viewExpense": "व्यय देखें",
+  "unread": "अपठित",
+  "popup": {
+    "close": "सूचना बंद करें",
+    "viewExpense": "व्यय देखें"
+  },
+  "loadFailed": "सूचनाएँ लोड करने में विफल",
+  "newNotification": "नई सूचना",
+  "newNotificationHint": "आपके पास एक नई सूचना है",
+  "templates": {
+    "balanceUpdated": {
+      "title": "शेष अद्यतन",
+      "message": "आपका शेष अद्यतन किया गया। {{actor}} द्वारा आपके खाते में {{amount}} जोड़ा गया"
+    },
+    "expenseApproved": {
+      "title": "व्यय स्वीकृत",
+      "message": "आपका व्यय \"{{expenseTitle}}\" ({{amount}}) {{actor}} द्वारा स्वीकृत किया गया"
+    },
+    "expenseVerified": {
+      "title": "व्यय सत्यापित",
+      "message": "आपका व्यय \"{{expenseTitle}}\" {{actor}} द्वारा सत्यापित किया गया"
+    },
+    "expenseRejected": {
+      "title": "व्यय अस्वीकृत",
+      "message": "आपका व्यय \"{{expenseTitle}}\" {{actor}} द्वारा अस्वीकृत किया गया",
+      "messageWithReason": "आपका व्यय \"{{expenseTitle}}\" {{actor}} द्वारा अस्वीकृत। कारण: {{reason}}"
+    },
+    "newExpenseClaim": {
+      "title": "नया व्यय दावा",
+      "message": "{{employee}} ने नया व्यय जमा किया: \"{{expenseTitle}}\""
+    },
+    "expenseVerifiedAwaiting": {
+      "title": "व्यय सत्यापित — स्वीकृति की प्रतीक्षा",
+      "message": "{{engineer}} ने {{employee}} का \"{{expenseTitle}}\" ({{amount}}) सत्यापित किया। कृपया समीक्षा करें और स्वीकृत करें।"
+    },
+    "expenseForwarded": {
+      "title": "व्यय समीक्षा के लिए अग्रेषित",
+      "message": "{{employee}} का व्यय \"{{expenseTitle}}\" अब {{reviewer}} की समीक्षा की प्रतीक्षा में है।"
+    },
+    "transferOfferReceived": {
+      "title": "ट्रांसफर ऑफर प्राप्त",
+      "message": "{{sender}} ने आपको {{amount}} की ऑफर की। कारण के साथ स्वीकार या अस्वीकार करें।"
+    },
+    "transferOfferAccepted": {
+      "title": "ट्रांसफर ऑफर स्वीकृत",
+      "message": "{{recipient}} ने आपकी {{amount}} की ट्रांसफर ऑफर स्वीकार की।"
+    },
+    "transferOfferRejected": {
+      "title": "ट्रांसफर ऑफर अस्वीकृत",
+      "message": "{{recipient}} ने आपकी {{amount}} की ट्रांसफर ऑफर अस्वीकार की। कारण: {{reason}}"
+    },
+    "transferOfferCancelled": {
+      "title": "ट्रांसफर ऑफर रद्द",
+      "message": "{{sender}} ने {{amount}} की ट्रांसफर ऑफर रद्द कर दी।"
+    }
+  }
+}

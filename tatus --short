@@ -1,0 +1,81 @@
+[33mcommit 677fbf1619cafac6f78c5e583624435e5d1d245e[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: Mithil Mistry <mithil20056mistry@gmail.com>
+Date:   Thu Dec 11 16:59:37 2025 +0530
+
+    fix: comprehensive RLS and multi-tenancy improvements
+    
+    Major fixes and improvements for multi-tenant SaaS application:
+    
+    ## Database Migrations
+    
+    ### Transaction Numbers Per Organization (Migration 13-14)
+    - Created organization_transaction_sequences table to track transaction numbers per organization
+    - Updated generate_transaction_number() function to accept organization_id parameter
+    - Each organization now has independent transaction numbering starting from 00001
+    - Fixed RLS policies to allow SECURITY DEFINER functions to manage sequences
+    - Migrated existing transaction numbers to be per-organization
+    
+    ### Expenses RLS Policies (Migration 15)
+    - Completely rewrote all expenses RLS policies using direct queries (no function calls)
+    - Engineers can now approve/reject expenses assigned to them
+    - Engineers can view all expenses in their organization (for review page)
+    - Fixed organization isolation - all policies check organization_id via organization_memberships
+    - Removed dependency on get_user_organization_id() and has_org_role() functions
+    
+    ### Engineer Approval Limit Enforcement (Migration 16)
+    - Added database-level trigger to enforce engineer approval limits
+    - Prevents engineers from approving expenses above their limit even if they bypass app code
+    - Reads limit from organization_settings.engineer_approval_limit
+    - Default limit is ₹50,000 if not set
+    
+    ## Frontend Fixes
+    
+    ### Balances Page (src/pages/Balances.tsx)
+    - Fixed role fetching to use organization_memberships instead of deprecated user_roles table
+    - Added organization_id filtering to profiles query
+    - Updated validation logic to support location-based engineer assignment
+    - Cashiers can now give money to managers/engineers in their assigned location
+    - Added proper organization_id to money_assignments inserts
+    - Updated UI text to mention managers in addition to employees
+    
+    ### Engineer Review Page (src/pages/EngineerReview.tsx)
+    - Fixed engineer approval limit fetching to use organization_settings table
+    - Previously was reading from wrong settings table, causing incorrect limit values
+    - Now correctly reads engineer_approval_limit per organization
+    
+    ### Expense Service (src/services/ExpenseService.ts)
+    - Already had correct logic for checking approval limits
+    - Uses organization_settings table correctly
+    
+    ## Key Improvements
+    
+    1. **Transaction Numbers**: Each organization has independent numbering (00001, 00002, etc.)
+    2. **RLS Security**: All policies use direct queries for better reliability
+    3. **Organization Isolation**: Proper multi-tenancy enforcement throughout
+    4. **Engineer Limits**: Database-level enforcement prevents bypassing approval limits
+    5. **Cashier-Manager Access**: Cashiers can now assign money to managers in their location
+    
+    ## Breaking Changes
+    
+    - Transaction numbers reset per organization (existing numbers migrated)
+    - RLS policies completely rewritten (may affect custom queries)
+    - organization_memberships table now required for all role checks
+    
+    ## Migration Order
+    
+    Run migrations in this order:
+    1. 13_make_transaction_numbers_per_organization.sql
+    2. 14_fix_transaction_numbers_rls_complete.sql
+    3. 15_fix_expenses_rls_complete.sql
+    4. 16_enforce_engineer_approval_limit.sql
+
+ ...fix_storage_policies_organization_isolation.sql | 266 [32m++++++++[m
+ master_migration/11_fix_expense_insert_rls.sql     |  48 [32m++[m
+ .../12_fix_all_rls_policies_comprehensive.sql      | 725 [32m+++++++++++++++++++++[m
+ ...3_make_transaction_numbers_per_organization.sql | 197 [32m++++++[m
+ .../14_fix_transaction_numbers_rls_complete.sql    | 198 [32m++++++[m
+ master_migration/15_fix_expenses_rls_complete.sql  | 248 [32m+++++++[m
+ .../16_enforce_engineer_approval_limit.sql         |  97 [32m+++[m
+ src/pages/EngineerReview.tsx                       |  26 [32m+[m[31m-[m
+ src/services/ExpenseService.ts                     |  26 [32m+[m[31m-[m
+ 9 files changed, 1815 insertions(+), 16 deletions(-)

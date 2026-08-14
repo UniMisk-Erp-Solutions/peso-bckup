@@ -1,0 +1,63 @@
+{
+  "title": "Notifications",
+  "pageDescription": "Stay updated on your expense submissions and approvals",
+  "markAllRead": "Mark all as read",
+  "empty": "No notifications",
+  "emptyDescription": "You're all caught up.",
+  "viewExpense": "View expense",
+  "unread": "Unread",
+  "loadFailed": "Failed to load notifications",
+  "newNotification": "New notification",
+  "newNotificationHint": "You have a new notification",
+  "popup": {
+    "close": "Close notification",
+    "viewExpense": "View expense"
+  },
+  "templates": {
+    "balanceUpdated": {
+      "title": "Balance Updated",
+      "message": "Your balance has been updated. {{amount}} has been added to your account by {{actor}}"
+    },
+    "expenseApproved": {
+      "title": "Expense Approved",
+      "message": "Your expense \"{{expenseTitle}}\" ({{amount}}) has been approved by {{actor}}"
+    },
+    "expenseVerified": {
+      "title": "Expense Verified",
+      "message": "Your expense \"{{expenseTitle}}\" has been verified by {{actor}}"
+    },
+    "expenseRejected": {
+      "title": "Expense Rejected",
+      "message": "Your expense \"{{expenseTitle}}\" has been rejected by {{actor}}",
+      "messageWithReason": "Your expense \"{{expenseTitle}}\" has been rejected by {{actor}}. Reason: {{reason}}"
+    },
+    "newExpenseClaim": {
+      "title": "New Expense Claim",
+      "message": "{{employee}} has submitted a new expense: \"{{expenseTitle}}\""
+    },
+    "expenseVerifiedAwaiting": {
+      "title": "Expense Verified — Awaiting Approval",
+      "message": "{{engineer}} has verified \"{{expenseTitle}}\" ({{amount}}) from {{employee}}. Please review and approve."
+    },
+    "expenseForwarded": {
+      "title": "Expense Forwarded for Review",
+      "message": "Expense \"{{expenseTitle}}\" from {{employee}} is now awaiting {{reviewer}} review."
+    },
+    "transferOfferReceived": {
+      "title": "Transfer offer received",
+      "message": "{{sender}} offered you {{amount}}. Accept or reject with a reason."
+    },
+    "transferOfferAccepted": {
+      "title": "Transfer offer accepted",
+      "message": "{{recipient}} accepted your transfer offer of {{amount}}."
+    },
+    "transferOfferRejected": {
+      "title": "Transfer offer denied",
+      "message": "{{recipient}} rejected your transfer offer of {{amount}}. Reason: {{reason}}"
+    },
+    "transferOfferCancelled": {
+      "title": "Transfer offer cancelled",
+      "message": "{{sender}} cancelled the transfer offer of {{amount}}."
+    }
+  }
+}

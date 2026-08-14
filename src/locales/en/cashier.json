@@ -1,0 +1,66 @@
+{
+  "accountantReadOnlyTitle": "Read-only access",
+  "accountantReadOnlyDescription": "Accountant cashiers cannot use balance, transfer, or expense submission tools.",
+  "accountantReadOnlyBadge": "Read-only",
+  "userManagement": {
+    "accountantCashierLabel": "Accountant cashier (read-only)",
+    "accountantCashierHint": "Can view approved expenses, transfer history, and download reports. Cannot manage balances, returns, or create transfers."
+  },
+  "approvedExpenses": {
+    "title": "Approved Expenses",
+    "description": "Browse approved organization expenses (read-only).",
+    "listTitle": "Approved expenses",
+    "listDescription": "Click a row to view expense details and receipts.",
+    "searchPlaceholder": "Search by title, employee, or category…",
+    "empty": "No approved expenses found.",
+    "showing": "Showing {{from}}-{{to}} of {{total}} approved expenses"
+  },
+  "transactions": {
+    "title": "Transaction History",
+    "description": "View all money assignments and return requests",
+    "cashierOnly": "This page is only accessible to cashiers.",
+    "moneyAssignments": "Money Assignments",
+    "moneyAssignmentsDescription": "Money you've assigned to employees and managers",
+    "returnRequests": "Return Requests",
+    "returnRequestsDescription": "Money return requests from employees",
+    "noAssignments": "No money assignments found",
+    "noReturns": "No return requests found",
+    "recipient": "Recipient",
+    "amount": "Amount",
+    "assignedDate": "Assigned Date",
+    "returnedDate": "Returned Date",
+    "status": "Status",
+    "returned": "Returned",
+    "active": "Active",
+    "pending": "Pending",
+    "approved": "Approved",
+    "rejected": "Rejected",
+    "assignmentsTab": "Money Assignments ({{count}})",
+    "returnsTab": "Return Requests ({{count}})",
+    "toast": {
+      "loadFailed": "Failed to load transaction history."
+    }
+  },
+  "transferHistory": {
+    "title": "Transfer History",
+    "description": "View complete history of cash and bank transfers",
+    "descriptionAccountant": "View all organization cash and bank transfers (read-only).",
+    "search": "Search",
+    "searchPlaceholder": "Search by name or type...",
+    "transferType": "Transfer Type",
+    "role": "Role",
+    "paymentMode": "Payment Mode",
+    "sourceBank": "Source Bank",
+    "allTypes": "All Types",
+    "allRoles": "All Roles",
+    "allModes": "All Modes",
+    "allBanks": "All Banks",
+    "cash": "Cash",
+    "bankTransfer": "Bank Transfer",
+    "noTransfers": "No transfers found",
+    "from": "From",
+    "to": "To",
+    "date": "Date",
+    "notes": "Notes"
+  }
+}

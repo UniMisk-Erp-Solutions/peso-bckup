@@ -1,0 +1,584 @@
+{
+  "ui": {
+    "quickLinks": "Quick Links",
+    "lastUpdated": "Last updated: {{date}}"
+  },
+  "admin": {
+    "displayName": "Admin Operations Manual",
+    "summary": "Complete module-by-module guide to configure and run PesoWise for your organization.",
+    "lastUpdated": "May 2026",
+    "quickLinks": [
+      { "label": "User Management", "route": "/admin/users" },
+      { "label": "Category Management", "route": "/admin/categories" },
+      { "label": "Expense Review", "route": "/admin/expenses" },
+      { "label": "Reports", "route": "/admin/reports" },
+      { "label": "Balances", "route": "/balances" },
+      { "label": "Settings", "route": "/settings" },
+      { "label": "Notifications", "route": "/notifications" }
+    ],
+    "sections": {
+      "admin-module-0-login": {
+        "title": "Module 0: Login and Admin Scope",
+        "paragraphs": [
+          "Login to PesoWise and confirm you are in the admin account for the correct organization.",
+          "Admin scope includes: users, categories, form templates, approval governance, balances, reports, notifications, and organization settings.",
+          "Before any action, verify organization context in the top bar so changes are applied to the intended org."
+        ]
+      },
+      "admin-module-1-user-management": {
+        "title": "Module 1: User Management (Create, Update, Assign)",
+        "paragraphs": [
+          "Open User Management from Admin menu.",
+          "Create single users with correct role (admin, manager, cashier, employee) and complete profile details.",
+          "For large onboarding, use Bulk Users Upload CSV and first run Dry-Run to validate data before final upload.",
+          "Check organization capacity in the uploader and ensure seat limits are available before import.",
+          "After creation, verify reporting assignments (employee to manager, cashier to location/manager).",
+          "If a user should no longer operate, deactivate or remove access to avoid accidental approvals."
+        ]
+      },
+      "admin-module-1-auto-email": {
+        "requiresFeatures": ["user_email_auto"],
+        "title": "Module 1a: Auto-Generated User Emails",
+        "paragraphs": [
+          "When auto-email is enabled for your organization, new users may receive system-generated email addresses.",
+          "Use this for employees who do not have corporate email; they can still log in with employee ID where enabled.",
+          "Communicate login credentials securely after user creation."
+        ]
+      },
+      "admin-module-1-hierarchy-roles": {
+        "requiresFeatures": ["approval_hierarchy"],
+        "title": "Module 1b: Hierarchy Roles (Team Leader and Executive)",
+        "paragraphs": [
+          "With approval hierarchy enabled, assign team leader and executive roles in User Management when those tiers are turned on for your org.",
+          "Team leaders and executives verify and may reject expenses in their queue; they cannot give final approval.",
+          "Assign each user to a team in Settings so routing sends expenses to the correct reviewer.",
+          "Use custom role labels in Settings if your organization uses different titles (for example Supervisor instead of Team Leader)."
+        ]
+      },
+      "admin-module-2-category-management": {
+        "title": "Module 2: Category Management",
+        "paragraphs": [
+          "Open Category Management to add, edit, activate, or archive categories.",
+          "Keep naming consistent (for example Fuel, Lodging, Client Travel) so reporting remains clean.",
+          "Avoid duplicate or near-duplicate category names; duplicates split analytics and create confusion for employees.",
+          "When policy changes, update categories and communicate expected usage to managers and employees."
+        ]
+      },
+      "admin-module-3-form-templates": {
+        "title": "Module 3: Expense Form Templates and Field Rules",
+        "paragraphs": [
+          "Go to Settings and configure base fields and custom form field templates.",
+          "Set each field's visibility and required status based on your policy (submit, review, detail stages).",
+          "Use custom fields to capture business-specific metadata like project code, vehicle number, vendor, route, or approval note.",
+          "Validate template behavior by creating a test expense after changes."
+        ]
+      },
+      "admin-module-3-conditional-dropdowns": {
+        "requiresFeatures": ["allow_conditional_dropdown_fields"],
+        "title": "Module 3a: Conditional Dropdown Fields",
+        "paragraphs": [
+          "When tiered dropdowns are enabled (Master Admin), edit a dropdown template in Settings.",
+          "Expand each option to add sub-fields shown only when that option is selected.",
+          "Test each branch with a sample expense so employees see the correct fields on submit."
+        ]
+      },
+      "admin-module-3-nested-dropdowns": {
+        "requiresFeatures": ["allow_conditional_dropdown_fields", "allow_nested_conditional_dropdown_fields"],
+        "title": "Module 3b: Nested Conditional Dropdowns",
+        "paragraphs": [
+          "Nested dropdowns let child options have their own sub-fields (multi-level select chains).",
+          "Configure parent option first, then add child dropdown options and fields under each child.",
+          "Keep chains shallow where possible so employees are not overwhelmed on mobile."
+        ]
+      },
+      "admin-module-4-settings": {
+        "title": "Module 4: Settings Page (Organization Controls)",
+        "paragraphs": [
+          "Use Settings to manage organization-level controls such as approval thresholds and attachment rules.",
+          "Maintain location and operational settings required by cashier and manager assignment logic.",
+          "Review backup and restore options periodically and ensure export processes are tested.",
+          "Any settings update should be followed by a quick workflow test to confirm expected behavior."
+        ]
+      },
+      "admin-module-4-hierarchy-teams": {
+        "requiresFeatures": ["teams_enabled"],
+        "title": "Module 4a: Teams (org structure)",
+        "paragraphs": [
+          "Open Settings and use Team Management to create teams and assign employee members.",
+          "Assign team leaders, executives, and managers on each team so leaders can view their teams on My Teams.",
+          "Teams work independently of multi-tier approval — enable Approval hierarchy separately if you need TL/executive review steps.",
+          "Confirm Master Admin has enabled Teams (org structure) for your organization."
+        ]
+      },
+      "admin-module-5-approval-review": {
+        "title": "Module 5: Review and Approve Expenses",
+        "paragraphs": [
+          "Open Expense Review and process pending and escalated requests in queue order.",
+          "For each expense: verify title, category, location, amount, receipt readability, and workflow history or comments.",
+          "Approve policy-compliant claims; reject non-compliant or incomplete claims with clear corrective guidance.",
+          "For rejected entries, use precise comments so users can resubmit successfully in one attempt."
+        ]
+      },
+      "admin-module-5-hierarchy-review": {
+        "requiresFeatures": ["approval_hierarchy"],
+        "title": "Module 5a: Multi-Tier Hierarchy Review",
+        "paragraphs": [
+          "With hierarchy enabled, expenses may arrive after team leader and/or executive verification.",
+          "Admin still gives final approval on escalated or high-value items per your threshold rules.",
+          "Monitor queues for items stuck at an intermediate tier and reassign teams if reviewers are unavailable."
+        ]
+      },
+      "admin-module-6-approval-governance": {
+        "title": "Module 6: Approval Governance and Threshold Rules",
+        "paragraphs": [
+          "Ensure manager threshold logic is correctly configured so high-value claims route to admin.",
+          "Regularly review threshold values against finance policy and risk levels.",
+          "When threshold policy changes, update Settings and notify managers to avoid inconsistent decisions."
+        ]
+      },
+      "admin-module-corrections": {
+        "requiresFeatures": ["allow_manager_admin_expense_corrections"],
+        "title": "Module 6a: Expense Corrections",
+        "paragraphs": [
+          "When corrections are enabled, admins may edit another user's submitted expense and mark it as edited.",
+          "Use corrections for clear data entry mistakes; add a note in comments for audit.",
+          "After correction, the expense continues in the approval workflow from its current status."
+        ]
+      },
+      "admin-module-7-balances": {
+        "title": "Module 7: Balances and Transfers",
+        "paragraphs": [
+          "Open Balances to fund users and cashiers and maintain cash flow continuity.",
+          "Use notes on manual balance edits for audit traceability.",
+          "Cross-check transfer history and returned amounts to prevent reconciliation mismatch.",
+          "Investigate large or frequent manual adjustments and resolve root causes."
+        ]
+      },
+      "admin-module-8-reports": {
+        "title": "Module 8: Reports and Analytics",
+        "paragraphs": [
+          "Use Reports to analyze spending by category, employee, manager, location, and date range.",
+          "Export CSV or PDF outputs for finance, audit, and management reviews.",
+          "Track recurring anomalies (sudden spikes, repeated rejections, unusual category distributions).",
+          "Use insights to refine category definitions, field templates, and approval policy."
+        ]
+      },
+      "admin-module-9-notifications": {
+        "title": "Module 9: Notifications and Operational Monitoring",
+        "paragraphs": [
+          "Monitor notifications continuously for new submissions, escalations, approvals, rejections, and return-related actions.",
+          "Prioritize old pending items first to reduce aging queues.",
+          "Use notification trends to identify bottlenecks in specific teams or users."
+        ]
+      },
+      "admin-module-10-admin-own-expense": {
+        "title": "Module 10: Admin Self Expense Flow",
+        "paragraphs": [
+          "Admin can also submit own expenses from My Expenses, then Add Expense.",
+          "Fill form with complete details and upload receipt for transparency.",
+          "Track status and history exactly like any other user-submitted expense."
+        ]
+      },
+      "admin-module-11-daily-checklist": {
+        "title": "Module 11: Daily Admin Checklist",
+        "paragraphs": [
+          "1) Clear pending approvals and escalations.",
+          "2) Validate user, role, and team changes requested that day.",
+          "3) Review balance adjustments and transfer anomalies.",
+          "4) Spot-check reports for policy drift and unusual trends.",
+          "5) Ensure notification backlog is near zero before day close."
+        ]
+      },
+      "admin-pwa-install": {
+        "title": "Install PesoWise as an App (PWA)",
+        "paragraphs": [
+          "On supported browsers, use the install banner or browser menu to add PesoWise to your home screen.",
+          "Installed apps open in full screen with your organization branding on tenant subdomains.",
+          "Use the installed app for faster access to approvals and expense entry in the field."
+        ]
+      }
+    }
+  },
+  "cashier": {
+    "displayName": "Cashier / Finance Guide",
+    "summary": "Monitor, manage, and settle expenses across employees and managers.",
+    "lastUpdated": "May 2026",
+    "quickLinks": [
+      { "label": "Balances", "route": "/balances" },
+      { "label": "Cashier Transactions", "route": "/cashier/transactions" },
+      { "label": "Transfer History", "route": "/cash-transfer-history" }
+    ],
+    "sections": {
+      "cashier-getting-started": {
+        "title": "Step 1: Login to PesoWise",
+        "paragraphs": [
+          "Open PesoWise and enter your login credentials.",
+          "You will land directly on the dashboard after successful login."
+        ]
+      },
+      "cashier-dashboard-overview": {
+        "title": "Part 1: Dashboard Overview",
+        "paragraphs": [
+          "From the dashboard, you can view the overall expense summary.",
+          "Track balances across employees and managers.",
+          "Monitor recent transactions and access analytics insights for cash planning."
+        ]
+      },
+      "cashier-add-own-expense": {
+        "title": "Part 2: Add Your Own Expense",
+        "paragraphs": [
+          "Go to My Expenses from the sidebar.",
+          "Click Add Expense and fill Category, Title, Location, Amount, and receipt if applicable.",
+          "Click Submit to record the expense in the system."
+        ]
+      },
+      "cashier-track-all-expenses": {
+        "title": "Part 3: View and Track All Expenses",
+        "paragraphs": [
+          "Cashier can view expenses of all employees and managers.",
+          "Track submitted expenses, approved expenses, and pending items."
+        ]
+      },
+      "cashier-settlement-balance": {
+        "title": "Part 4: Settlement and Balance Tracking",
+        "paragraphs": [
+          "Review approved expenses and compare approved amount vs actual expense.",
+          "Example: Approved INR 149,999 and actual INR 100,000 means balance INR 49,999.",
+          "Collect the remaining amount from employee via cash or transfer.",
+          "Update the system with actual expense, returned amount, and mark as Settled or Closed.",
+          "Always add notes for exceptions (late submission, partial return, receipt mismatch) for audit clarity."
+        ]
+      },
+      "cashier-analytics": {
+        "title": "Part 5: Analytics and Insights",
+        "paragraphs": [
+          "Use analytics to track highest-spend categories, department-wise spending, and overall financial trends."
+        ]
+      },
+      "cashier-notifications": {
+        "title": "Part 6: Notifications",
+        "paragraphs": [
+          "Monitor notifications for new expenses and manager or admin approvals.",
+          "Use these updates to stay current in real time."
+        ]
+      },
+      "cashier-settings": {
+        "title": "Part 7: Settings",
+        "paragraphs": [
+          "Open Settings to manage available platform preferences and operational controls."
+        ]
+      },
+      "cashier-end-of-day-check": {
+        "title": "End-of-Day Check",
+        "paragraphs": [
+          "Ensure all collected returns are recorded and matched against transfer history.",
+          "Review any pending settlement items and carry forward action notes for next day follow-up."
+        ]
+      },
+      "cashier-pwa-install": {
+        "title": "Install PesoWise as an App (PWA)",
+        "paragraphs": [
+          "Use the install prompt or browser Add to Home Screen to open PesoWise like a native app.",
+          "Helpful for settlement work on mobile devices at counters or in the field."
+        ]
+      }
+    }
+  },
+  "engineer": {
+    "dynamicApprovalUnder": "If amount is less than or equal to INR {{limit}}, manager can approve directly.",
+    "dynamicApprovalOver": "If amount is greater than INR {{limit}}, request is sent for admin approval.",
+    "displayName": "Manager Manual",
+    "summary": "Add your own expenses, review employee requests, and approve within manager limits.",
+    "lastUpdated": "May 2026",
+    "quickLinks": [
+      { "label": "Manager Review", "route": "/review" },
+      { "label": "Notifications", "route": "/notifications" },
+      {
+        "label": "Batch Review",
+        "route": "/review",
+        "requiresFeatures": ["allow_batch_expense_entry"]
+      }
+    ],
+    "sections": {
+      "manager-getting-started": {
+        "title": "Step 1: Login to PesoWise",
+        "paragraphs": [
+          "Open PesoWise and enter your login credentials.",
+          "After login, you will land on the dashboard."
+        ]
+      },
+      "manager-add-own-expense": {
+        "title": "Part 1: Adding Your Own Expense (Manager)",
+        "paragraphs": [
+          "Go to My Expenses from the left sidebar.",
+          "Click Add Expense and fill Category, Title, Location, Amount, and upload receipt.",
+          "Click Submit. Your expense appears in My Expenses with status Pending, Approved, or Rejected."
+        ]
+      },
+      "manager-review-employee-expenses": {
+        "title": "Part 2: Reviewing Employee Expenses",
+        "paragraphs": [
+          "Check Notifications on the dashboard for newly submitted expenses.",
+          "Go to Review Expenses from the sidebar to view employee requests.",
+          "Open View or Approve to review full details, amount, and receipt attachment.",
+          "Verify (approve) or reject with remarks when needed.",
+          "Use clear rejection comments so employees can correct and resubmit without delay."
+        ]
+      },
+      "manager-hierarchy-workflow": {
+        "requiresFeatures": ["approval_hierarchy"],
+        "title": "Part 2a: Hierarchy Workflow (Manager Tier)",
+        "paragraphs": [
+          "When approval hierarchy is enabled, expenses may reach you after team leader and/or executive verification.",
+          "You provide manager-tier approval; high-value items may still escalate to admin per threshold.",
+          "Check approval tier on each expense to see which steps are already complete."
+        ]
+      },
+      "manager-batch-review": {
+        "requiresFeatures": ["allow_batch_expense_entry"],
+        "title": "Part 2b: Batch Expense Review",
+        "paragraphs": [
+          "Employees may submit multiple expenses in one batch when batch entry is enabled.",
+          "Open batch review to verify or reject grouped submissions together.",
+          "Review each line item; reject the batch with clear comments if any entry is non-compliant."
+        ]
+      },
+      "manager-approval-rules": {
+        "title": "Approval Rules",
+        "paragraphs": [
+          "If amount is less than or equal to INR 50,000, manager can approve directly.",
+          "If amount is greater than INR 50,000, request is sent for admin approval."
+        ]
+      },
+      "manager-status-updates": {
+        "title": "Status Updates",
+        "paragraphs": [
+          "After manager action, expense status updates immediately in the workflow.",
+          "Employees can track latest status in their dashboard."
+        ]
+      },
+      "manager-review-checklist": {
+        "title": "Manager Review Checklist",
+        "paragraphs": [
+          "Check amount reasonability against trip purpose and category.",
+          "Confirm receipt quality (readable amount, date, vendor) before verification.",
+          "Escalate policy exceptions to admin instead of force-approving unclear claims."
+        ]
+      },
+      "manager-corrections": {
+        "requiresFeatures": ["allow_manager_admin_expense_corrections"],
+        "title": "Expense Corrections",
+        "paragraphs": [
+          "When enabled, managers may correct another user's expense details before approval.",
+          "Corrections mark the expense as edited; document why in comments for audit."
+        ]
+      },
+      "manager-pwa-install": {
+        "title": "Install PesoWise as an App (PWA)",
+        "paragraphs": [
+          "Install PesoWise on your phone for quick access to review queues and notifications.",
+          "Use Add to Home Screen from your browser when the install banner appears."
+        ]
+      }
+    }
+  },
+  "employee": {
+    "displayName": "Employee Guide",
+    "summary": "Add, submit, and track your expenses from dashboard to final approval.",
+    "lastUpdated": "May 2026",
+    "quickLinks": [
+      { "label": "My Expenses", "route": "/expenses" },
+      { "label": "Create Expense", "route": "/expenses/new" },
+      { "label": "Notifications", "route": "/notifications" },
+      {
+        "label": "Batch Entry",
+        "route": "/expenses/new",
+        "requiresFeatures": ["allow_batch_expense_entry"]
+      }
+    ],
+    "sections": {
+      "employee-getting-started": {
+        "title": "Step 1: Login to PesoWise",
+        "paragraphs": [
+          "Open PesoWise and enter your login credentials.",
+          "Once logged in, you will land on the dashboard."
+        ]
+      },
+      "employee-employee-id-login": {
+        "requiresFeatures": ["employee_id_login"],
+        "title": "Step 1a: Login with Employee ID",
+        "paragraphs": [
+          "On your organization subdomain, you may sign in with Employee ID and password instead of email.",
+          "Use the employee ID assigned by your admin; contact admin if you do not know your ID.",
+          "Keep your password private and change it if you suspect it was shared."
+        ]
+      },
+      "employee-my-expenses": {
+        "title": "Step 2: Go to My Expenses",
+        "paragraphs": [
+          "From the left sidebar, click My Expenses.",
+          "This section shows all your submitted expenses."
+        ]
+      },
+      "employee-add-expense": {
+        "title": "Step 3: Add a New Expense",
+        "paragraphs": [
+          "Click Add Expense to open the expense form."
+        ]
+      },
+      "employee-batch-entry": {
+        "requiresFeatures": ["allow_batch_expense_entry"],
+        "title": "Step 3a: Batch Expense Entry",
+        "paragraphs": [
+          "When batch entry is enabled, you can submit multiple expenses in one wizard flow.",
+          "Add each line with category, amount, and receipt as required.",
+          "Submit the batch once; all items move through approval together."
+        ]
+      },
+      "employee-fill-details": {
+        "title": "Step 4: Fill in Expense Details",
+        "paragraphs": [
+          "Enter category (for example Airfare), title (for example Business Meeting Travel), location, and total amount.",
+          "Upload the receipt or supporting proof before submitting.",
+          "Make sure amount entered in the form matches the receipt total.",
+          "If your form shows extra fields after selecting a dropdown option, fill those conditional fields completely."
+        ]
+      },
+      "employee-submit-expense": {
+        "title": "Step 5: Submit Expense",
+        "paragraphs": [
+          "After filling all required fields, click Submit.",
+          "Your expense is recorded in the system."
+        ]
+      },
+      "employee-hierarchy-flow": {
+        "requiresFeatures": ["approval_hierarchy"],
+        "title": "Step 5a: Multi-Tier Approval Path",
+        "paragraphs": [
+          "Your expense may be reviewed first by your team leader and/or executive before reaching the manager.",
+          "Status stays submitted while intermediate reviewers verify; you will see updates in My Expenses and Notifications.",
+          "If rejected at any tier, read comments, correct details, and resubmit."
+        ]
+      },
+      "employee-track-status": {
+        "title": "Step 6: View Your Expenses",
+        "paragraphs": [
+          "Return to My Expenses to see your submitted entries.",
+          "Track status updates as Pending, Approved, or Rejected."
+        ]
+      },
+      "employee-best-practices": {
+        "title": "Good Practices",
+        "paragraphs": [
+          "Upload clear receipts and use descriptive titles so reviewers can process faster.",
+          "Check notifications regularly for remarks or action needed on rejected expenses.",
+          "Submit expenses early to avoid period-end approval delays.",
+          "If rejected, edit the same expense with corrected details and resubmit promptly."
+        ]
+      },
+      "employee-pwa-install": {
+        "title": "Install PesoWise as an App (PWA)",
+        "paragraphs": [
+          "Add PesoWise to your home screen to submit expenses and check status without opening the browser each time.",
+          "Follow the install banner on your organization login page when it appears."
+        ]
+      }
+    }
+  },
+  "team_leader": {
+    "displayName": "Team Leader Guide",
+    "summary": "Verify team expenses, reject with clear comments, and forward compliant claims to the next tier.",
+    "lastUpdated": "May 2026",
+    "quickLinks": [
+      { "label": "Review Queue", "route": "/review" },
+      { "label": "Notifications", "route": "/notifications" }
+    ],
+    "sections": {
+      "tl-getting-started": {
+        "title": "Step 1: Login and Scope",
+        "paragraphs": [
+          "Sign in to PesoWise with your team leader account for the correct organization.",
+          "Your queue shows expenses submitted by employees on your team.",
+          "You verify and may reject; final approval is done by manager or admin."
+        ]
+      },
+      "tl-review-queue": {
+        "title": "Step 2: Review Team Expenses",
+        "paragraphs": [
+          "Open Review Expenses or Notifications for new submissions.",
+          "Check amount, category, receipt, and custom fields against team policy.",
+          "Verify to advance the expense to the next tier, or reject with specific correction notes."
+        ]
+      },
+      "tl-reject-guidance": {
+        "title": "Step 3: Rejecting Expenses",
+        "paragraphs": [
+          "Reject when receipts are missing, amounts do not match, or policy is violated.",
+          "Write what the employee must fix so they can resubmit in one attempt.",
+          "Do not use reject for questions you can resolve by messaging offline; use comments when available."
+        ]
+      },
+      "tl-notifications": {
+        "title": "Step 4: Stay Current",
+        "paragraphs": [
+          "Check notifications daily so team submissions do not age in queue.",
+          "Escalate repeated issues to your manager or admin."
+        ]
+      },
+      "tl-pwa-install": {
+        "title": "Install PesoWise as an App (PWA)",
+        "paragraphs": [
+          "Install the app for faster access to your review queue on mobile."
+        ]
+      }
+    }
+  },
+  "executive": {
+    "displayName": "Executive Guide",
+    "summary": "Verify expenses after team leader review and route compliant claims toward manager approval.",
+    "lastUpdated": "May 2026",
+    "quickLinks": [
+      { "label": "Review Queue", "route": "/review" },
+      { "label": "Notifications", "route": "/notifications" }
+    ],
+    "sections": {
+      "exec-getting-started": {
+        "title": "Step 1: Login and Scope",
+        "paragraphs": [
+          "Sign in with your executive account on the correct organization subdomain.",
+          "You see expenses that have passed earlier tiers assigned to you.",
+          "You verify and may reject; you cannot give final financial approval."
+        ]
+      },
+      "exec-review-queue": {
+        "title": "Step 2: Executive Review Queue",
+        "paragraphs": [
+          "Open Review Expenses from the sidebar or use Notifications.",
+          "Confirm policy compliance, supporting documents, and amounts.",
+          "Verify to send toward manager tier, or reject with actionable comments."
+        ]
+      },
+      "exec-reject-guidance": {
+        "title": "Step 3: Rejecting Expenses",
+        "paragraphs": [
+          "Reject incomplete or non-compliant submissions with clear instructions.",
+          "Employees edit and resubmit the same expense after corrections.",
+          "Coordinate with team leaders on recurring team-level issues."
+        ]
+      },
+      "exec-notifications": {
+        "title": "Step 4: Notifications",
+        "paragraphs": [
+          "Monitor notifications for new items routed to your tier.",
+          "Clear your queue regularly to avoid blocking manager approval."
+        ]
+      },
+      "exec-pwa-install": {
+        "title": "Install PesoWise as an App (PWA)",
+        "paragraphs": [
+          "Use Add to Home Screen for quick executive review on the go."
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "_readme": "PesoWise expense import template. Remove _readme before importing. Include profiles for each employee (name, email, employee_id, user_id). Full org backup JSON from Settings also works.",
+  "importType": "full-backup",
+  "exportedAt": "2026-05-29T12:00:00.000Z",
+  "sourceOrganizationId": "00000000-0000-0000-0000-000000000000",
+  "profiles": [
+    {
+      "id": "00000000-0000-0000-0000-000000000099",
+      "user_id": "00000000-0000-0000-0000-000000000099",
+      "name": "Anil Thakor",
+      "email": "anil@example.com",
+      "employee_id": "AT001",
+      "balance": 20000,
+      "reporting_engineer_id": null,
+      "cashier_assigned_engineer_id": null,
+      "assigned_cashier_id": null,
+      "cashier_assigned_location_id": null,
+      "is_active": true,
+      "is_master_admin": false,
+      "preferred_language": "en",
+      "organization_id": "00000000-0000-0000-0000-000000000000",
+      "created_at": "2025-12-12T06:18:49.156Z",
+      "updated_at": "2025-12-12T06:18:49.156Z"
+    }
+  ],
+  "organization_memberships": [
+    {
+      "id": "00000000-0000-0000-0000-000000000098",
+      "organization_id": "00000000-0000-0000-0000-000000000000",
+      "user_id": "00000000-0000-0000-0000-000000000099",
+      "role": "engineer",
+      "invited_by": null,
+      "joined_at": "2025-12-12T06:18:49.156Z",
+      "is_active": true
+    }
+  ],
+  "user_roles": [],
+  "expenses": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "user_id": "00000000-0000-0000-0000-000000000099",
+      "employee_id": "AT001",
+      "employee_name": "Anil Thakor",
+      "title": "GJ18BV3131",
+      "trip_start": "2026-05-02",
+      "trip_end": "2026-05-02",
+      "destination": "Ahmedabad",
+      "purpose": "KM.90336",
+      "category": "Petrol",
+      "status": "approved",
+      "total_amount": 1000,
+      "assigned_engineer_id": null,
+      "assigned_reviewer_id": null,
+      "approval_tier": null,
+      "batch_id": null,
+      "admin_comment": "",
+      "transaction_number": "01186",
+      "created_at": "2026-05-02T10:00:00.000Z",
+      "updated_at": "2026-05-02T10:05:00.000Z",
+      "organization_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "expense_line_items": [],
+  "attachments": [
+    {
+      "id": "00000000-0000-0000-0000-000000000020",
+      "expense_id": "00000000-0000-0000-0000-000000000001",
+      "line_item_id": null,
+      "file_url": "https://YOUR-OLD-PROJECT.supabase.co/storage/v1/object/public/receipts/00000000-0000-0000-0000-000000000001/1700000000000-receipt.jpg",
+      "filename": "1700000000000-receipt.jpg",
+      "content_type": "image/jpeg",
+      "uploaded_by": "00000000-0000-0000-0000-000000000099",
+      "file_size": 125000,
+      "created_at": "2026-05-02T10:00:01.000Z",
+      "organization_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "expense_form_field_values": [],
+  "audit_logs": [
+    {
+      "id": "00000000-0000-0000-0000-000000000040",
+      "expense_id": "00000000-0000-0000-0000-000000000001",
+      "organization_id": "00000000-0000-0000-0000-000000000000",
+      "user_id": "00000000-0000-0000-0000-000000000099",
+      "action": "submitted",
+      "comment": null,
+      "created_at": "2026-05-02T10:00:00.000Z"
+    }
+  ]
+}

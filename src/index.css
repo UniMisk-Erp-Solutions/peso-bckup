@@ -1,0 +1,955 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 214 32% 91%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 217 91% 60%;
+    --accent-foreground: 0 0% 100%;
+
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 217 91% 60%;
+
+    --info: 199 89% 48%;
+    --info-foreground: 0 0% 100%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 222 47% 11%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 215 28% 17%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 215 28% 17%;
+    --sidebar-ring: 217 91% 60%;
+
+    --chart-1: 217 91% 60%;
+    --chart-2: 142 76% 36%;
+    --chart-3: 38 92% 50%;
+    --chart-4: 280 80% 60%;
+    --chart-5: 340 75% 55%;
+
+    /* Glass UI tokens (light) */
+    --glass-bg: 0 0% 100%;
+    --glass-bg-strong: 0 0% 100%;
+    --glass-border: 220 30% 75%;
+    --glass-shadow: 220 35% 20%;
+    --glass-glow: 217 91% 60%;
+    --glass-noise-opacity: 0.045;
+    --glass-blur: 24px;
+    --glass-blur-strong: 36px;
+  }
+
+  .dark {
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    --card: 215 28% 17%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 215 28% 17%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 215 28% 17%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 215 28% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 217 91% 60%;
+    --accent-foreground: 0 0% 100%;
+
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 215 28% 17%;
+    --input: 215 28% 17%;
+    --ring: 217 91% 60%;
+
+    --info: 199 89% 48%;
+    --info-foreground: 0 0% 100%;
+
+    --sidebar-background: 222 47% 11%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 215 28% 17%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 215 28% 17%;
+    --sidebar-ring: 217 91% 60%;
+
+    --chart-1: 217 91% 60%;
+    --chart-2: 142 76% 36%;
+    --chart-3: 38 92% 50%;
+    --chart-4: 280 80% 60%;
+    --chart-5: 340 75% 55%;
+
+    /* Glass UI tokens (dark) */
+    --glass-bg: 222 34% 13%;
+    --glass-bg-strong: 221 38% 11%;
+    --glass-border: 218 30% 32%;
+    --glass-shadow: 220 60% 2%;
+    --glass-glow: 217 91% 60%;
+    --glass-noise-opacity: 0.055;
+    --glass-blur: 24px;
+    --glass-blur-strong: 38px;
+  }
+}
+
+/* ============================================================================
+   "Old Money" theme — private-banking re-skin applied app-wide via design tokens.
+   Activated by data-theme="old-money" on <html>. Re-skins every shadcn surface
+   (cards, buttons, inputs, the sidebar) without touching component code.
+   ============================================================================ */
+html[data-theme="old-money"] {
+  --background: 40 27% 93%;        /* ivory */
+  --foreground: 40 12% 10%;        /* ink */
+  --card: 0 0% 100%;
+  --card-foreground: 40 12% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 40 12% 10%;
+  --primary: 158 45% 20%;          /* deep emerald */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 40 25% 90%;
+  --secondary-foreground: 40 12% 10%;
+  --muted: 40 25% 91%;
+  --muted-foreground: 40 8% 44%;
+  --accent: 40 30% 88%;
+  --accent-foreground: 158 45% 20%;
+  --destructive: 0 36% 45%;        /* rose */
+  --destructive-foreground: 0 0% 100%;
+  --border: 40 25% 87%;            /* hairline */
+  --input: 40 25% 87%;
+  --ring: 38 39% 50%;              /* brass */
+
+  /* Emerald sidebar with brass accents */
+  --sidebar-background: 158 45% 16%;
+  --sidebar-foreground: 43 22% 86%;
+  --sidebar-primary: 38 39% 55%;
+  --sidebar-primary-foreground: 40 12% 10%;
+  --sidebar-accent: 158 38% 24%;
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-border: 158 28% 26%;
+  --sidebar-ring: 38 39% 55%;
+
+  --chart-1: 158 45% 20%;
+  --chart-2: 154 42% 30%;
+  --chart-3: 38 39% 50%;
+  --chart-4: 40 47% 73%;
+  --chart-5: 0 36% 45%;
+}
+
+/* Neutralize the legacy blue page gradient → warm ivory. */
+html[data-theme="old-money"] .min-h-app,
+html[data-theme="old-money"] .glass-shell-bg {
+  background-image: none !important;
+  background-color: hsl(var(--background)) !important;
+}
+
+/* Typography per design.md — Inter for body/UI, Fraunces for display + figures. */
+html[data-theme="old-money"],
+html[data-theme="old-money"] body,
+html[data-theme="old-money"] button,
+html[data-theme="old-money"] input,
+html[data-theme="old-money"] select,
+html[data-theme="old-money"] textarea {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+}
+/* Display headings + large figures in the serif face (editorial / money look). */
+html[data-theme="old-money"] h1,
+html[data-theme="old-money"] h2,
+html[data-theme="old-money"] h3,
+html[data-theme="old-money"] h4,
+html[data-theme="old-money"] .text-2xl,
+html[data-theme="old-money"] .text-3xl,
+html[data-theme="old-money"] .text-4xl,
+html[data-theme="old-money"] .text-5xl {
+  font-family: "Fraunces", Georgia, serif;
+  letter-spacing: -0.01em;
+}
+
+/* ---- Premium sidebar (emerald rail) ---- */
+html[data-theme="old-money"] [data-sidebar="group-label"] {
+  color: #d8c39a !important;
+  text-transform: uppercase;
+  letter-spacing: 2.5px;
+  font-size: 10px !important;
+  font-weight: 600;
+}
+html[data-theme="old-money"] [data-sidebar="menu-item"] > a {
+  color: #bcc7be !important;
+  border-radius: 12px !important;
+  letter-spacing: .2px;
+  position: relative;
+  transition: background-color .2s, color .2s;
+}
+html[data-theme="old-money"] [data-sidebar="menu-item"] > a:hover {
+  background: rgba(255, 255, 255, .06) !important;
+  color: #fff !important;
+}
+html[data-theme="old-money"] [data-sidebar="menu-item"] > a svg {
+  color: #d8c39a;
+  opacity: .8;
+  width: 18px;
+  height: 18px;
+}
+/* Active item (NavLink applies bg-gray-200 text-gray-900) → brass-tinted with accent bar */
+html[data-theme="old-money"] [data-sidebar="menu-item"] > a[class*="bg-gray-200"] {
+  background: rgba(216, 195, 154, .15) !important;
+  color: #fff !important;
+}
+html[data-theme="old-money"] [data-sidebar="menu-item"] > a[class*="bg-gray-200"] svg {
+  color: #d8c39a !important;
+  opacity: 1;
+}
+html[data-theme="old-money"] [data-sidebar="menu-item"] > a[class*="bg-gray-200"]::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 56%;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: #b08d4f;
+}
+/* Thin, themed scrollbars (sidebar + app) — replaces the chunky default. */
+html[data-theme="old-money"] [data-sidebar="content"],
+html[data-theme="old-money"] [data-sidebar="sidebar"] {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(216, 195, 154, .35) transparent;
+}
+html[data-theme="old-money"] [data-sidebar="content"]::-webkit-scrollbar,
+html[data-theme="old-money"] [data-sidebar="sidebar"]::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+html[data-theme="old-money"] [data-sidebar="content"]::-webkit-scrollbar-track,
+html[data-theme="old-money"] [data-sidebar="sidebar"]::-webkit-scrollbar-track {
+  background: transparent;
+}
+html[data-theme="old-money"] [data-sidebar="content"]::-webkit-scrollbar-thumb,
+html[data-theme="old-money"] [data-sidebar="sidebar"]::-webkit-scrollbar-thumb {
+  background: rgba(216, 195, 154, .28);
+  border-radius: 3px;
+}
+html[data-theme="old-money"] [data-sidebar="content"]::-webkit-scrollbar-thumb:hover,
+html[data-theme="old-money"] [data-sidebar="sidebar"]::-webkit-scrollbar-thumb:hover {
+  background: rgba(216, 195, 154, .5);
+}
+/* Rest of the app (ivory surfaces) — subtle ink scrollbar. */
+html[data-theme="old-money"] *::-webkit-scrollbar { width: 9px; height: 9px; }
+html[data-theme="old-money"] *::-webkit-scrollbar-track { background: transparent; }
+html[data-theme="old-money"] *::-webkit-scrollbar-thumb {
+  background: rgba(28, 26, 22, .16);
+  border-radius: 5px;
+}
+html[data-theme="old-money"] *::-webkit-scrollbar-thumb:hover { background: rgba(28, 26, 22, .3); }
+/* Member profile pinned in the rail footer */
+html[data-theme="old-money"] .om-rail-profile {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 0 8px 10px;
+  padding: 12px 12px 14px;
+  border-top: 1px solid rgba(216, 195, 154, .18);
+}
+html[data-theme="old-money"] .om-rail-ava {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #b08d4f;
+  color: #241f15;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+html[data-theme="old-money"] .om-rail-id b {
+  display: block;
+  font-size: 13px;
+  color: #fff;
+  line-height: 1.2;
+}
+html[data-theme="old-money"] .om-rail-id small {
+  font-size: 11px;
+  color: #9aa79c;
+  text-transform: capitalize;
+}
+/* Sidebar surface: hairline brass border + subtle inner depth */
+html[data-theme="old-money"] [data-sidebar="sidebar"] {
+  border-right: 1px solid rgba(216, 195, 154, .14) !important;
+}
+
+/* ---- Premium rounding ---- */
+html[data-theme="old-money"] { --radius: 0.9rem; }
+html[data-theme="old-money"] .rounded,
+html[data-theme="old-money"] .rounded-md { border-radius: 12px !important; }
+html[data-theme="old-money"] .rounded-lg { border-radius: 15px !important; }
+html[data-theme="old-money"] .rounded-xl { border-radius: 18px !important; }
+html[data-theme="old-money"] .rounded-2xl { border-radius: 24px !important; }
+html[data-theme="old-money"] .shadow-sm,
+html[data-theme="old-money"] .shadow,
+html[data-theme="old-money"] .shadow-md,
+html[data-theme="old-money"] .shadow-lg {
+  box-shadow: 0 1px 2px rgba(28, 26, 22, .04), 0 18px 40px -28px rgba(28, 26, 22, .35) !important;
+}
+
+/* ---- Remap hardcoded cool-tone utilities → emerald / brass / ivory ---- */
+/* Saturated action backgrounds → deep emerald */
+html[data-theme="old-money"] [class~="bg-blue-400"], html[data-theme="old-money"] [class~="bg-blue-500"], html[data-theme="old-money"] [class~="bg-blue-600"], html[data-theme="old-money"] [class~="bg-blue-700"],
+html[data-theme="old-money"] [class~="bg-indigo-400"], html[data-theme="old-money"] [class~="bg-indigo-500"], html[data-theme="old-money"] [class~="bg-indigo-600"], html[data-theme="old-money"] [class~="bg-indigo-700"],
+html[data-theme="old-money"] [class~="bg-sky-500"], html[data-theme="old-money"] [class~="bg-sky-600"],
+html[data-theme="old-money"] [class~="bg-violet-500"], html[data-theme="old-money"] [class~="bg-violet-600"],
+html[data-theme="old-money"] [class~="bg-purple-500"], html[data-theme="old-money"] [class~="bg-purple-600"], html[data-theme="old-money"] [class~="bg-purple-700"] {
+  background-color: #1c4a3a !important; color: #fff !important;
+}
+/* Gradient stops → emerald */
+html[data-theme="old-money"] [class~="from-blue-500"], html[data-theme="old-money"] [class~="from-blue-600"], html[data-theme="old-money"] [class~="from-indigo-500"], html[data-theme="old-money"] [class~="from-indigo-600"], html[data-theme="old-money"] [class~="from-sky-500"], html[data-theme="old-money"] [class~="from-violet-600"], html[data-theme="old-money"] [class~="from-purple-600"] {
+  --tw-gradient-from: #1c4a3a var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(28 74 58 / 0) var(--tw-gradient-to-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+}
+html[data-theme="old-money"] [class~="to-blue-600"], html[data-theme="old-money"] [class~="to-blue-700"], html[data-theme="old-money"] [class~="to-indigo-600"], html[data-theme="old-money"] [class~="to-indigo-700"], html[data-theme="old-money"] [class~="to-purple-600"], html[data-theme="old-money"] [class~="to-sky-600"] {
+  --tw-gradient-to: #14352a var(--tw-gradient-to-position) !important;
+}
+html[data-theme="old-money"] [class~="via-blue-500"], html[data-theme="old-money"] [class~="via-indigo-500"], html[data-theme="old-money"] [class~="via-blue-50"], html[data-theme="old-money"] [class~="via-indigo-100"] {
+  --tw-gradient-via-position: ; --tw-gradient-to: rgb(28 74 58 / 0) !important;
+  --tw-gradient-stops: var(--tw-gradient-from), #2c6b53, var(--tw-gradient-to) !important;
+}
+/* Light cool backgrounds (badges, soft cards) → warm ivory */
+html[data-theme="old-money"] [class~="bg-blue-50"], html[data-theme="old-money"] [class~="bg-blue-100"], html[data-theme="old-money"] [class~="bg-blue-200"],
+html[data-theme="old-money"] [class~="bg-indigo-50"], html[data-theme="old-money"] [class~="bg-indigo-100"],
+html[data-theme="old-money"] [class~="bg-sky-50"], html[data-theme="old-money"] [class~="bg-sky-100"],
+html[data-theme="old-money"] [class~="bg-violet-50"], html[data-theme="old-money"] [class~="bg-violet-100"],
+html[data-theme="old-money"] [class~="bg-purple-50"], html[data-theme="old-money"] [class~="bg-purple-100"],
+html[data-theme="old-money"] [class~="bg-slate-50"], html[data-theme="old-money"] [class~="bg-slate-100"], html[data-theme="old-money"] [class~="bg-gray-50"], html[data-theme="old-money"] [class~="bg-gray-100"] {
+  background-color: #f2efe9 !important;
+}
+/* Cool text → emerald */
+html[data-theme="old-money"] [class~="text-blue-500"], html[data-theme="old-money"] [class~="text-blue-600"], html[data-theme="old-money"] [class~="text-blue-700"], html[data-theme="old-money"] [class~="text-blue-800"],
+html[data-theme="old-money"] [class~="text-indigo-500"], html[data-theme="old-money"] [class~="text-indigo-600"], html[data-theme="old-money"] [class~="text-indigo-700"],
+html[data-theme="old-money"] [class~="text-sky-600"], html[data-theme="old-money"] [class~="text-violet-600"], html[data-theme="old-money"] [class~="text-purple-600"], html[data-theme="old-money"] [class~="text-purple-700"] {
+  color: #1c4a3a !important;
+}
+/* Cool borders → brass-soft hairline */
+html[data-theme="old-money"] [class~="border-blue-200"], html[data-theme="old-money"] [class~="border-blue-300"], html[data-theme="old-money"] [class~="border-indigo-200"], html[data-theme="old-money"] [class~="border-sky-200"], html[data-theme="old-money"] [class~="border-purple-200"] {
+  border-color: #d8c39a !important;
+}
+/* Amber / yellow (e.g. cashier) → brass */
+html[data-theme="old-money"] [class~="bg-amber-500"], html[data-theme="old-money"] [class~="bg-amber-600"], html[data-theme="old-money"] [class~="bg-yellow-500"], html[data-theme="old-money"] [class~="bg-yellow-600"] { background-color: #b08d4f !important; color: #fff !important; }
+html[data-theme="old-money"] [class~="bg-amber-50"], html[data-theme="old-money"] [class~="bg-amber-100"], html[data-theme="old-money"] [class~="bg-yellow-50"], html[data-theme="old-money"] [class~="bg-yellow-100"] { background-color: #efe6d2 !important; }
+html[data-theme="old-money"] [class~="text-amber-600"], html[data-theme="old-money"] [class~="text-amber-700"], html[data-theme="old-money"] [class~="text-yellow-600"], html[data-theme="old-money"] [class~="text-yellow-700"] { color: #8a6d2f !important; }
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    overflow-x: hidden;
+    min-height: 100%;
+    min-height: 100dvh;
+    /* Better tap feedback on touch devices (iOS / iPad) */
+    -webkit-tap-highlight-color: hsl(var(--primary) / 0.15);
+  }
+
+  #root {
+    min-height: 100%;
+    min-height: 100dvh;
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: clip;
+  }
+}
+
+/* Marketing utility classes */
+@layer utilities {
+  .min-h-app {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .pl-safe {
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+
+  .pr-safe {
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  .bottom-safe-offset {
+    bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Dedicated scroll region inside the app shell (Layout). */
+  .app-main-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+
+  /* Touch / phone / tablet compact layout — readable type + no iOS input zoom. */
+  @media (max-width: 1023px), ((max-width: 1400px) and (pointer: coarse)) {
+    .app-shell {
+      font-size: 17px;
+      line-height: 1.5;
+    }
+
+    .app-shell input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]):not([type="button"]):not([type="submit"]),
+    .app-shell select,
+    .app-shell textarea,
+    .app-shell [role="combobox"],
+    .app-shell [cmdk-input] {
+      font-size: 16px !important;
+      line-height: 1.5;
+    }
+
+    .app-shell label,
+    .app-shell [data-slot="label"] {
+      font-size: 0.9375rem;
+    }
+
+    .app-shell button,
+    .app-shell a[role="button"],
+    .app-shell [role="menuitem"] {
+      touch-action: manipulation;
+    }
+  }
+
+  /* Installed PWA: lock document scroll; main panel scrolls instead. */
+  html.app-standalone-shell,
+  html.app-standalone-shell body {
+    overflow: hidden;
+    height: 100%;
+    width: 100%;
+    position: fixed;
+    inset: 0;
+  }
+  .glass-surface {
+    background:
+      linear-gradient(
+        160deg,
+        hsl(0 0% 100% / 0.52),
+        hsl(var(--glass-bg) / 0.28)
+      );
+    border: 1px solid hsl(0 0% 100% / 0.42);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+  }
+
+  .glass-surface-strong {
+    background:
+      linear-gradient(
+        160deg,
+        hsl(0 0% 100% / 0.56),
+        hsl(var(--glass-bg-strong) / 0.28)
+      );
+    border: 1px solid hsl(0 0% 100% / 0.46);
+    backdrop-filter: blur(var(--glass-blur-strong));
+    -webkit-backdrop-filter: blur(var(--glass-blur-strong));
+  }
+
+  .glass-stroke {
+    border: 1px solid hsl(var(--glass-border) / 0.32);
+  }
+
+  .glass-elevated {
+    box-shadow:
+      0 12px 34px hsl(var(--glass-shadow) / 0.18),
+      0 1px 0 hsl(0 0% 100% / 0.36) inset;
+  }
+
+  .glass-noise-subtle {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .glass-noise-subtle::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-radius: inherit;
+    opacity: var(--glass-noise-opacity);
+    background-image:
+      radial-gradient(hsl(0 0% 100% / 0.85) 0.45px, transparent 0.6px),
+      radial-gradient(hsl(0 0% 0% / 0.5) 0.45px, transparent 0.6px);
+    background-position: 0 0, 7px 7px;
+    background-size: 14px 14px;
+    z-index: 1;
+  }
+
+  .glass-shell-bg {
+    background:
+      radial-gradient(circle at 14% 10%, hsl(var(--primary) / 0.22), transparent 34%),
+      radial-gradient(circle at 85% 4%, hsl(var(--chart-4) / 0.2), transparent 28%),
+      radial-gradient(circle at 58% 78%, hsl(var(--chart-2) / 0.16), transparent 34%),
+      linear-gradient(180deg, hsl(var(--background)), hsl(var(--background)));
+  }
+
+  .dark .glass-shell-bg {
+    background:
+      radial-gradient(circle at 12% 8%, hsl(var(--primary) / 0.2), transparent 34%),
+      radial-gradient(circle at 88% 2%, hsl(var(--chart-4) / 0.18), transparent 28%),
+      radial-gradient(circle at 62% 80%, hsl(var(--chart-2) / 0.12), transparent 34%),
+      linear-gradient(180deg, hsl(var(--background)), hsl(var(--background)));
+  }
+
+  .glass-page {
+    position: relative;
+  }
+
+  .glass-page::before {
+    content: "";
+    position: absolute;
+    inset: -8px -8px auto -8px;
+    height: 180px;
+    pointer-events: none;
+    background: linear-gradient(
+      to bottom,
+      hsl(var(--glass-glow) / 0.1),
+      transparent 70%
+    );
+    z-index: 0;
+  }
+
+  .glass-page > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .glass-ui .ui-card-surface {
+    background:
+      linear-gradient(
+        165deg,
+        hsl(0 0% 100% / 0.58),
+        hsl(var(--glass-bg) / 0.26)
+      ) !important;
+    border-color: hsl(0 0% 100% / 0.44) !important;
+    backdrop-filter: saturate(180%) blur(var(--glass-blur));
+    -webkit-backdrop-filter: saturate(180%) blur(var(--glass-blur));
+    border-radius: 1rem;
+    box-shadow:
+      0 12px 34px hsl(var(--glass-shadow) / 0.16),
+      0 1px 0 hsl(0 0% 100% / 0.6) inset,
+      0 -1px 0 hsl(0 0% 0% / 0.05) inset;
+  }
+
+  .glass-ui .ui-card-surface:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      0 18px 44px hsl(var(--glass-shadow) / 0.2),
+      0 1px 0 hsl(0 0% 100% / 0.64) inset;
+  }
+
+  .glass-ui .ui-button-default {
+    background: linear-gradient(
+      140deg,
+      hsl(var(--primary) / 0.95),
+      hsl(var(--primary) / 0.78)
+    ) !important;
+    border: 1px solid hsl(0 0% 100% / 0.34);
+    box-shadow:
+      0 10px 20px hsl(var(--primary) / 0.34),
+      0 0 0 1px hsl(0 0% 100% / 0.28) inset;
+  }
+
+  .glass-ui .ui-button-default:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      0 14px 28px hsl(var(--primary) / 0.4),
+      0 0 0 1px hsl(0 0% 100% / 0.24) inset;
+  }
+
+  .glass-ui .ui-button-outline,
+  .glass-ui .ui-input-surface,
+  .glass-ui [data-radix-popper-content-wrapper] .ui-select-content {
+    background:
+      linear-gradient(
+        165deg,
+        hsl(0 0% 100% / 0.5),
+        hsl(var(--glass-bg) / 0.24)
+      ) !important;
+    border-color: hsl(0 0% 100% / 0.42) !important;
+    border-radius: 0.8rem;
+    backdrop-filter: saturate(170%) blur(calc(var(--glass-blur) * 0.65));
+    -webkit-backdrop-filter: saturate(170%) blur(calc(var(--glass-blur) * 0.65));
+  }
+
+  .glass-ui .ui-input-surface::placeholder {
+    color: hsl(var(--muted-foreground) / 0.78);
+  }
+
+  .glass-ui .ui-input-surface:focus-visible {
+    border-color: hsl(var(--ring) / 0.75);
+    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.18);
+  }
+
+  .glass-ui .ui-dialog-content,
+  .glass-ui .ui-sheet-content {
+    background:
+      linear-gradient(
+        165deg,
+        hsl(0 0% 100% / 0.62),
+        hsl(var(--glass-bg-strong) / 0.3)
+      ) !important;
+    border-color: hsl(0 0% 100% / 0.44) !important;
+    backdrop-filter: saturate(190%) blur(var(--glass-blur-strong));
+    -webkit-backdrop-filter: saturate(190%) blur(var(--glass-blur-strong));
+    box-shadow:
+      0 24px 52px hsl(var(--glass-shadow) / 0.24),
+      0 1px 0 hsl(0 0% 100% / 0.54) inset;
+  }
+
+  .glass-ui [data-sidebar="sidebar"] {
+    background:
+      linear-gradient(
+        165deg,
+        hsl(0 0% 100% / 0.48),
+        hsl(var(--glass-bg-strong) / 0.24)
+      ) !important;
+    border-color: hsl(0 0% 100% / 0.36) !important;
+    backdrop-filter: saturate(180%) blur(var(--glass-blur));
+    -webkit-backdrop-filter: saturate(180%) blur(var(--glass-blur));
+    box-shadow:
+      10px 0 28px hsl(var(--glass-shadow) / 0.14),
+      -1px 0 0 hsl(0 0% 100% / 0.28) inset;
+  }
+
+  .glass-orb {
+    position: absolute;
+    border-radius: 9999px;
+    pointer-events: none;
+    filter: blur(28px);
+    opacity: 0.55;
+    z-index: 0;
+    mix-blend-mode: screen;
+  }
+
+  .dark .glass-orb {
+    opacity: 0.4;
+    mix-blend-mode: lighten;
+  }
+
+  .glass-ui [data-sidebar="menu-button"] {
+    border: 1px solid transparent;
+    transition: background-color 0.18s ease, border-color 0.18s ease;
+  }
+
+  .glass-ui [data-sidebar="menu-button"]:hover,
+  .glass-ui [data-sidebar="menu-button"][data-active="true"] {
+    background: hsl(var(--glass-bg) / 0.52);
+    border-color: hsl(var(--glass-border) / 0.28);
+  }
+
+  .gradient-text {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary via-primary to-primary/80;
+  }
+
+  .btn-glow {
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.4);
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+  }
+  .btn-glow:hover {
+    box-shadow: 0 0 20px 2px hsl(var(--primary) / 0.35);
+  }
+
+  .shadow-soft {
+    box-shadow: 0 2px 12px hsl(var(--foreground) / 0.06), 0 4px 24px hsl(var(--foreground) / 0.04);
+  }
+
+  .card-hover {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px hsl(var(--foreground) / 0.08), 0 8px 32px hsl(var(--foreground) / 0.06);
+  }
+
+  @keyframes pulse-subtle {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.92; }
+  }
+  .animate-pulse-subtle {
+    animation: pulse-subtle 2.5s ease-in-out infinite;
+  }
+
+  @keyframes demo-progress {
+    0%, 100% { width: 60%; }
+    50% { width: 85%; }
+  }
+  .demo-progress {
+    width: 70%;
+    animation: demo-progress 3s ease-in-out infinite;
+  }
+
+  .shadow-elevated {
+    box-shadow: 0 8px 30px hsl(var(--foreground) / 0.08), 0 16px 48px hsl(var(--foreground) / 0.06);
+  }
+
+  .shadow-glow {
+    box-shadow: 0 0 40px -10px hsl(var(--primary) / 0.3);
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .shimmer,
+  .animate-shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--primary) / 0.2) 0%,
+      hsl(var(--accent) / 0.4) 50%,
+      hsl(var(--primary) / 0.2) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.05); }
+  }
+  .animate-pulse-dot {
+    animation: pulse-dot 1.5s ease-in-out infinite;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  .animate-fade-in {
+    animation: fade-in 0.4s ease-out forwards;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass-ui *,
+  .card-hover,
+  .btn-glow {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Print: hide sidebar and nav so report content prints cleanly */
+@media print {
+  [data-sidebar="sidebar"],
+  [data-sidebar="trigger"],
+  .sidebar,
+  nav[aria-label="Sidebar"],
+  button[aria-label="Toggle sidebar"] {
+    display: none !important;
+  }
+  main {
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+}
+
+/* Hide browser number input spinners (up/down arrows) everywhere.
+   This prevents accidental value changes from clicking the spinner. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield; /* Firefox */
+}
+
+/* Prevent scroll-wheel from changing focused number inputs */
+input[type="number"]:focus {
+  pointer-events: auto;
+}
+
+/* Mobile phone shell — scroll architecture, safe-area, and FAB shadow (≤767px) */
+@media (max-width: 767px) {
+  /*
+   * Fixed-viewport shell — the single visual root and overflow-hidden ancestor.
+   * `position: fixed; inset: 0` gives it a bounded, constant height regardless of
+   * what body/root do. `overflow: hidden` prevents any accidental body scroll.
+   * 100svh = Safari 15.3 fallback; 100dvh = shrinks when the browser chrome collapses.
+   */
+  .mobile-app-shell {
+    position: fixed;
+    inset: 0;
+    height: 100svh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: hsl(var(--background));
+  }
+
+  /*
+   * The single intended vertical scroll owner.
+   * `flex: 1 1 0%` + `min-height: 0` creates a bounded height so overflow-y: auto
+   * actually activates. The bottom nav is a sibling flex item (not fixed), so no
+   * padding-bottom clearance trick is needed here.
+   */
+  .mobile-app-scroll {
+    flex: 1 1 0%;
+    min-height: 0;
+    min-width: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    /* keeps focused inputs above the bottom of the scroll region */
+    scroll-padding-bottom: 2rem;
+  }
+
+  /* FAB raised shadow — adapts to both Legacy and Old Money theme tokens */
+  .mobile-fab-shadow {
+    box-shadow: 0 8px 22px hsl(var(--primary) / 0.42);
+  }
+
+  /* Mobile expense form — wraps form content when isMobile=true */
+  .mobile-expense-form-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Sticky action bar at the bottom of the scroll region */
+  .mobile-sticky-action-bar {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    background: hsl(var(--background));
+    border-top: 1px solid hsl(var(--border));
+    z-index: 10;
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
+  }
+
+  /* Review queue cards */
+  .mobile-review-card {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: 12px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .mobile-review-card:active {
+    background: hsl(var(--accent));
+  }
+
+  /* Sticky review action bar — same positioning as .mobile-sticky-action-bar */
+  .mobile-review-action-bar {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    gap: 8px;
+    padding: 12px 0;
+    background: hsl(var(--background));
+    border-top: 1px solid hsl(var(--border));
+    z-index: 10;
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
+  }
+
+  /* Ensure text inputs don't trigger iOS zoom (16px minimum) */
+  .mobile-expense-form-layout input,
+  .mobile-expense-form-layout textarea,
+  .mobile-expense-form-layout select {
+    font-size: 16px;
+  }
+
+  /* Ensure interactive controls meet 44px tap target */
+  .mobile-expense-form-layout button,
+  .mobile-expense-form-layout [role="combobox"] {
+    min-height: 44px;
+  }
+
+  /* Batch review line cards */
+  .mobile-batch-line-card {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: 12px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .mobile-batch-line-card:active {
+    background: hsl(var(--accent));
+  }
+
+  /* Sticky batch review action bar */
+  .mobile-batch-action-bar {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    gap: 8px;
+    padding: 12px 0;
+    background: hsl(var(--background));
+    border-top: 1px solid hsl(var(--border));
+    z-index: 10;
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
+  }
+}

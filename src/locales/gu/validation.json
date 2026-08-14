@@ -1,0 +1,12 @@
+{
+  "required": "આ ફીલ્ડ જરૂરી છે",
+  "emailInvalid": "અમાન્ય ઈમેલ સરનામું",
+  "passwordMin": "પાસવર્ડ ઓછામાં ઓછા 6 અક્ષરોનો હોવો જોઈએ",
+  "amountPositive": "રકમ શૂન્ય કરતાં વધારે હોવી જોઈએ",
+  "amountInvalid": "માન્ય રકમ દાખલ કરો",
+  "dateRequired": "તારીખ જરૂરી છે",
+  "categoryRequired": "કૃપા કરીને એક શ્રેણી પસંદ કરો",
+  "attachmentRequired": "આ રકમ માટે જોડાણ જરૂરી છે",
+  "batchLineInvalid": "એક અથવા વધુ બેચ લાઇન અમાન્ય છે",
+  "batchEmpty": "બેચમાં ઓછામાં ઓછી એક ખર્ચ લાઇન ઉમેરો"
+}

@@ -1,0 +1,14 @@
+-- =============================================================================
+-- DEPRECATED — DO NOT RUN (unsafe GRANT ALL)
+-- =============================================================================
+-- Use instead:
+--   scripts/post-restore/290529_1200_safe_grants_rls_urls_after_restore.sql
+--
+-- If you already ran this unsafe version, run the SAFE script above to REVOKE
+-- and re-apply least-privilege grants. URL updates are idempotent.
+-- =============================================================================
+
+-- 300526_1200_fix_public_schema_grants_after_restore.sql  [UNSAFE - kept for history]
+-- GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+-- GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+-- ...

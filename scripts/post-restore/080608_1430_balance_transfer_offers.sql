@@ -1,0 +1,2 @@
+-- Balance transfer offers (recipient acceptance)
+-- Run supabase/migrations/080608_1430_balance_transfer_offers.sql in Supabase SQL Editor, then reload API schema.

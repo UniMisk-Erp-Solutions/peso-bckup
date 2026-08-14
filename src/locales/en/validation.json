@@ -1,0 +1,12 @@
+{
+  "required": "This field is required",
+  "emailInvalid": "Invalid email address",
+  "passwordMin": "Password must be at least 6 characters",
+  "amountPositive": "Amount must be greater than zero",
+  "amountInvalid": "Enter a valid amount",
+  "dateRequired": "Date is required",
+  "categoryRequired": "Please select a category",
+  "attachmentRequired": "Attachment is required for this amount",
+  "batchLineInvalid": "One or more batch lines are invalid",
+  "batchEmpty": "Add at least one expense line to the batch"
+}

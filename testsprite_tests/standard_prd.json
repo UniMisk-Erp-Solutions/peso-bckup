@@ -1,0 +1,189 @@
+{
+  "meta": {
+    "project": "Voyage Account Expense Management System",
+    "date": "2025-10-04",
+    "prepared_by": "Software Development Manager"
+  },
+  "product_overview": "Voyage Account is an enterprise-grade expense management system designed to streamline expense submission, approval workflows, and balance tracking across roles including Admin, Engineer, Employee, and Cashier. It features a secure web interface with responsive design and real-time financial tracking leveraging a modern tech stack.",
+  "core_goals": [
+    "Provide a secure, role-based authentication and user management system to control access and permissions.",
+    "Enable employees to easily create, submit, and track expense reports with full lifecycle management including attachments and status tracking.",
+    "Implement multi-step approval workflows involving Engineers and Admins to ensure proper expense verification and authorization.",
+    "Automate balance management by tracking and updating user balances with each approved expense and fund transfer.",
+    "Offer comprehensive reporting and analytics dashboards tailored by roles to enhance financial oversight and decision-making.",
+    "Deliver a responsive, user-friendly interface accessible across devices with seamless integration for file uploads and notifications."
+  ],
+  "key_features": [
+    "Role-based authentication and access control supporting Admin, Engineer, Employee, Cashier roles.",
+    "Expense lifecycle management with creation, multi-step approval, detailed line items, status badges, and receipt uploads.",
+    "User and balance management interfaces for setting initial balances, adding funds, and tracking deductions.",
+    "Role-specific dashboards presenting personalized data views, analytics charts, and notifications.",
+    "File upload system integrated with secure Supabase storage services for receipts and attachments.",
+    "Form validation with Zod schemas and React Hook Form ensuring data integrity and user input validation.",
+    "Real-time balance updates and validation preventing overspending based on user limits.",
+    "Comprehensive error handling with user feedback and error boundaries.",
+    "Testing infrastructure with unit and integration tests to ensure robustness and reliability."
+  ],
+  "user_flow_summary": [
+    "An Employee logs in, creates an expense report filling detailed line items and uploads receipts, then submits for review.",
+    "The assigned Engineer reviews the submitted expenses, verifies details, and either approves, requests modifications, or rejects the expense.",
+    "Once approved by the Engineer, the Admin reviews for final approval, after which the system automatically deducts the expense amount from the user's balance.",
+    "Admins create and manage users, assign roles, and set or adjust balances where needed.",
+    "Cashiers add funds to employee or engineer accounts with balances automatically deducted from their own accounts.",
+    "Users receive notifications alerting them of expense status changes and other important updates dynamically within their dashboards."
+  ],
+  "validation_criteria": [
+    "All user roles must only access authorized routes and features according to their permissions.",
+    "Expense reports must support line items, attachments, and follow the defined multi-step approval workflow.",
+    "Balances must update accurately and prevent users from spending beyond available limits.",
+    "File uploads must securely store and retrieve attachments without data loss or unauthorized access.",
+    "All forms in the system must validate input data correctly using Zod and provide useful feedback on errors.",
+    "Dashboards must display role-specific data including analytics, notifications, and expense statuses.",
+    "The system must handle errors gracefully and log relevant information to assist debugging.",
+    "Performance targets such as page load under 3 seconds and file uploads under 5 seconds must be met.",
+    "Cross-platform compatibility including responsive UI on desktop and mobile devices must be ensured.",
+    "Security mechanisms like authentication, session management, and data access controls must be thoroughly tested and verified."
+  ],
+  "code_summary": {
+    "tech_stack": [
+      "TypeScript",
+      "React",
+      "Vite",
+      "Tailwind CSS",
+      "Shadcn UI",
+      "Supabase",
+      "React Router",
+      "React Query",
+      "Zod",
+      "React Hook Form"
+    ],
+    "features": [
+      {
+        "name": "Authentication System",
+        "description": "User authentication with role-based access control (Admin, Engineer, Employee, Cashier)",
+        "files": [
+          "src/contexts/AuthContext.tsx",
+          "src/components/ProtectedRoute.tsx",
+          "src/pages/Auth.tsx",
+          "src/integrations/supabase/client.ts"
+        ]
+      },
+      {
+        "name": "Expense Management",
+        "description": "Complete expense lifecycle from creation to approval with line items and attachments",
+        "files": [
+          "src/pages/ExpenseForm.tsx",
+          "src/pages/Expenses.tsx",
+          "src/pages/ExpenseDetail.tsx",
+          "src/services/ExpenseService.ts",
+          "src/components/MobileExpenseTable.tsx"
+        ]
+      },
+      {
+        "name": "Role-based Dashboard",
+        "description": "Role-specific dashboards with different views for Admin, Engineer, Employee, and Cashier",
+        "files": [
+          "src/pages/Dashboard.tsx",
+          "src/pages/AdminPanel.tsx",
+          "src/pages/EngineerReview.tsx",
+          "src/components/AppSidebar.tsx",
+          "src/components/Layout.tsx"
+        ]
+      },
+      {
+        "name": "Balance Management",
+        "description": "User balance tracking with automatic deduction on expense approval",
+        "files": [
+          "src/pages/Balances.tsx",
+          "src/integrations/supabase/types.ts"
+        ]
+      },
+      {
+        "name": "User Management",
+        "description": "Admin interface for creating and managing users with role assignment",
+        "files": [
+          "src/pages/UserManagement.tsx"
+        ]
+      },
+      {
+        "name": "File Upload System",
+        "description": "Receipt and document upload with Supabase storage integration",
+        "files": [
+          "src/components/FileUpload.tsx",
+          "src/integrations/supabase/client.ts"
+        ]
+      },
+      {
+        "name": "Analytics & Reporting",
+        "description": "Expense analytics and reporting with visual charts",
+        "files": [
+          "src/pages/Analytics.tsx"
+        ]
+      },
+      {
+        "name": "Notification System",
+        "description": "User notifications and alerts for expense status changes",
+        "files": [
+          "src/pages/Notifications.tsx"
+        ]
+      },
+      {
+        "name": "Expense Templates",
+        "description": "Reusable expense templates for common expense types",
+        "files": [
+          "src/pages/ExpenseTemplates.tsx"
+        ]
+      },
+      {
+        "name": "Status Management",
+        "description": "Expense status tracking with badges and workflow management",
+        "files": [
+          "src/components/StatusBadge.tsx"
+        ]
+      },
+      {
+        "name": "Responsive Design",
+        "description": "Mobile-responsive UI components with Tailwind CSS",
+        "files": [
+          "src/components/ui/",
+          "src/hooks/use-mobile.tsx",
+          "tailwind.config.ts"
+        ]
+      },
+      {
+        "name": "Database Integration",
+        "description": "Supabase integration with PostgreSQL database and real-time updates",
+        "files": [
+          "src/integrations/supabase/",
+          "supabase/migrations/",
+          "supabase/config.toml"
+        ]
+      },
+      {
+        "name": "Form Validation",
+        "description": "Form validation using Zod schemas and React Hook Form",
+        "files": [
+          "src/lib/utils.ts",
+          "src/services/ExpenseService.ts"
+        ]
+      },
+      {
+        "name": "Error Handling",
+        "description": "Comprehensive error handling with error boundaries and user feedback",
+        "files": [
+          "src/components/ErrorBoundary.tsx",
+          "src/hooks/use-toast.ts"
+        ]
+      },
+      {
+        "name": "Testing Infrastructure",
+        "description": "Unit and integration tests with Vitest",
+        "files": [
+          "src/__tests__/",
+          "src/services/__tests__/",
+          "vitest.config.ts"
+        ]
+      }
+    ]
+  }
+}

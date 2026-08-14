@@ -1,0 +1,66 @@
+{
+  "accountantReadOnlyTitle": "વાંચવા-માત્ર પ્રવેશ",
+  "accountantReadOnlyDescription": "એકાઉન્ટન્ટ કેશિયર બેલેન્સ, ટ્રાન્સફર અથવા ખર્ચ સબમિશન સાધનો વાપરી શકતા નથી.",
+  "accountantReadOnlyBadge": "વાંચવા-માત્ર",
+  "userManagement": {
+    "accountantCashierLabel": "એકાઉન્ટન્ટ કેશિયર (વાંચવા-માત્ર)",
+    "accountantCashierHint": "મંજૂર ખર્ચ, ટ્રાન્સફર ઇતિહાસ જોઈ શકે અને રિપોર્ટ ડાઉનલોડ કરી શકે. બેલેન્સ, પરત અથવા ટ્રાન્સફર બનાવી શકતા નથી."
+  },
+  "approvedExpenses": {
+    "title": "મંજૂર ખર્ચ",
+    "description": "મંજૂર સંસ્થા ખર્ચ બ્રાઉઝ કરો (વાંચવા-માત્ર).",
+    "listTitle": "મંજૂર ખર્ચ",
+    "listDescription": "ખર્ચ વિગતો અને રસીદો જોવા પંક્તિ પર ક્લિક કરો.",
+    "searchPlaceholder": "શીર્ષક, કર્મચારી અથવા શ્રેણી દ્વારા શોધો…",
+    "empty": "કોઈ મંજૂર ખર્ચ મળ્યો નથી.",
+    "showing": "{{total}} માંથી {{from}}-{{to}} મંજૂર ખર્ચ બતાવી રહ્યા છીએ"
+  },
+  "transactions": {
+    "title": "ટ્રાન્ઝેક્શન ઇતિહાસ",
+    "description": "બધા પૈસા સોંપણી અને પરત અરજીઓ જુઓ",
+    "cashierOnly": "આ પૃષ્ઠ ફક્ત કેશિયર માટે ઉપલબ્ધ છે.",
+    "moneyAssignments": "પૈસા સોંપણી",
+    "moneyAssignmentsDescription": "કર્મચારીઓ અને મેનેજરોને તમે સોંપેલા પૈસા",
+    "returnRequests": "પરત અરજીઓ",
+    "returnRequestsDescription": "કર્મચારીઓ તરફથી પૈસા પરત અરજીઓ",
+    "noAssignments": "કોઈ પૈસા સોંપણી મળી નહીં",
+    "noReturns": "કોઈ પરત અરજી મળી નહીં",
+    "recipient": "પ્રાપ્તકર્તા",
+    "amount": "રકમ",
+    "assignedDate": "સોંપણી તારીખ",
+    "returnedDate": "પરત તારીખ",
+    "status": "સ્થિતિ",
+    "returned": "પરત",
+    "active": "સક્રિય",
+    "pending": "બાકી",
+    "approved": "મંજૂર",
+    "rejected": "નકારાયેલ",
+    "assignmentsTab": "પૈસા સોંપણી ({{count}})",
+    "returnsTab": "પરત અરજીઓ ({{count}})",
+    "toast": {
+      "loadFailed": "ટ્રાન્ઝેક્શન ઇતિહાસ લોડ થઈ શક્યો નહીં."
+    }
+  },
+  "transferHistory": {
+    "title": "ટ્રાન્સફર ઇતિહાસ",
+    "description": "રોકડ અને બેંક ટ્રાન્સફરનો સંપૂર્ણ ઇતિહાસ જુઓ",
+    "descriptionAccountant": "બધા સંસ્થા રોકડ અને બેંક ટ્રાન્સફર જુઓ (વાંચવા-માત્ર).",
+    "search": "શોધો",
+    "searchPlaceholder": "નામ અથવા પ્રકારથી શોધો...",
+    "transferType": "ટ્રાન્સફર પ્રકાર",
+    "role": "ભૂમિકા",
+    "paymentMode": "ચુકવણી મોડ",
+    "sourceBank": "સ્રોત બેંક",
+    "allTypes": "બધા પ્રકાર",
+    "allRoles": "બધી ભૂમિકાઓ",
+    "allModes": "બધા મોડ",
+    "allBanks": "બધી બેંકો",
+    "cash": "રોકડ",
+    "bankTransfer": "બેંક ટ્રાન્સફર",
+    "noTransfers": "કોઈ ટ્રાન્સફર મળ્યું નહીં",
+    "from": "થી",
+    "to": "ને",
+    "date": "તારીખ",
+    "notes": "નોંધો"
+  }
+}

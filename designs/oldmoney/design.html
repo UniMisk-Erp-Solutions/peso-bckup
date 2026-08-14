@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="old-money">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PesoWise — Old Money Theme Design Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ── Design tokens (old-money theme) ── */
+:root {
+  --bg:           #ede8df;   /* ivory */
+  --fg:           #1c1a17;   /* ink */
+  --card:         #ffffff;
+  --primary:      #1b5c3a;   /* deep emerald */
+  --primary-fg:   #ffffff;
+  --primary-hover:#164a2f;
+  --secondary:    #e8e3d8;
+  --muted:        #eae5da;
+  --muted-fg:     #736f68;   /* warm gray */
+  --border:       #e0dbd0;   /* hairline */
+  --ring:         #af8a40;   /* brass */
+  --success:      #16a34a;
+  --success-bg:   #dcfce7;
+  --warning:      #b45309;
+  --warning-bg:   #fef3c7;
+  --danger:       #9b3535;   /* muted rose */
+  --danger-bg:    #fee2e2;
+  --info:         #0e6394;
+  --info-bg:      #e0f2fe;
+  --sidebar-bg:   #164a2f;   /* dark emerald */
+  --sidebar-fg:   #dbd6c8;   /* warm cream */
+  --sidebar-muted:#8fa89a;
+  --sidebar-brass:#d8c39a;
+  --sidebar-active:rgba(216,195,154,.15);
+  --radius:       8px;
+  --shadow:       0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.04);
+  --shadow-md:    0 4px 12px rgba(0,0,0,.09);
+}
+
+/* ── Base typography ── */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+/* Serif display elements */
+h1, h2, h3, h4,
+.serif, .stat-value, .balance-amount {
+  font-family: 'Fraunces', Georgia, serif;
+  letter-spacing: -0.01em;
+}
+
+/* ── App shell ── */
+.app-shell { display: flex; height: 100vh; overflow: hidden; }
+
+/* ── Sidebar (Emerald Rail) ── */
+.sidebar {
+  width: 256px; min-width: 256px;
+  background: var(--sidebar-bg);
+  color: var(--sidebar-fg);
+  display: flex; flex-direction: column; overflow-y: auto;
+}
+.sidebar-logo {
+  padding: 20px 20px 14px;
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.sidebar-logo-mark {
+  width: 32px; height: 32px;
+  background: var(--ring); /* brass */
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 700; font-size: 16px; color: var(--fg);
+  flex-shrink: 0;
+}
+.sidebar-logo-text { font-size: 16px; font-weight: 700; color: var(--sidebar-fg); font-family: 'Fraunces', Georgia, serif; }
+.nav-group { padding: 16px 12px 4px; }
+.nav-group-label {
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 2.5px;
+  color: var(--sidebar-brass); padding: 0 8px 8px;
+  font-family: 'Inter', sans-serif;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 12px;
+  cursor: pointer; color: var(--sidebar-muted);
+  transition: background .15s, color .15s;
+  margin-bottom: 2px; font-size: 13.5px; font-weight: 500;
+  border: none; background: none; width: 100%; text-align: left;
+  position: relative;
+}
+.nav-item:hover { background: rgba(255,255,255,.06); color: #fff; }
+.nav-item.active {
+  background: var(--sidebar-active);
+  color: #fff;
+}
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: -2px; top: 50%; transform: translateY(-50%);
+  height: 56%; width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: #b08d4f; /* brass accent bar */
+}
+.nav-item.active .nav-icon { color: var(--sidebar-brass) !important; opacity: 1; }
+.nav-icon { width: 18px; height: 18px; flex-shrink: 0; opacity: .75; color: var(--sidebar-brass); }
+.sidebar-user {
+  margin-top: auto; padding: 16px;
+  border-top: 1px solid rgba(255,255,255,.06);
+  display: flex; align-items: center; gap: 10px;
+}
+.avatar {
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--ring); /* brass avatar */
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; color: var(--fg); flex-shrink: 0;
+  font-family: 'Fraunces', serif;
+}
+.avatar-name { font-size: 13px; font-weight: 500; color: var(--sidebar-fg); }
+.avatar-role { font-size: 11px; color: var(--sidebar-muted); margin-top: 1px; }
+
+/* ── App body ── */
+.app-body {
+  flex: 1; display: flex; flex-direction: column; min-width: 0;
+  background: var(--bg); /* flat ivory — no gradient */
+}
+
+/* ── Header ── */
+.app-header {
+  height: 52px;
+  background: rgba(255,255,255,.82);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 16px; padding: 0 24px; flex-shrink: 0;
+}
+.header-org { font-size: 15px; font-weight: 700; color: var(--fg); font-family: 'Fraunces', serif; }
+.header-sub { font-size: 11px; color: var(--muted-fg); }
+.header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.header-balance {
+  background: var(--success-bg); border: 1px solid #bbf7d0; border-radius: 8px;
+  padding: 4px 10px; display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: #15803d; font-family: 'Fraunces', serif;
+}
+.header-name { font-size: 13px; font-weight: 500; text-align: right; }
+.header-role-badge {
+  font-size: 10px; font-weight: 600; padding: 1px 6px;
+  background: var(--primary); color: #fff; border-radius: 999px;
+  display: inline-block; margin-top: 2px;
+}
+
+/* ── Page content ── */
+.page-content { flex: 1; overflow-y: auto; padding: 24px; }
+.page { display: none; }
+.page.active { display: block; }
+.page-title { font-size: 22px; font-weight: 700; color: var(--fg); margin-bottom: 4px; font-family: 'Fraunces', Georgia, serif; }
+.page-sub { font-size: 13px; color: var(--muted-fg); margin-bottom: 20px; }
+
+/* ── Cards ── */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.card-header { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.card-title { font-size: 15px; font-weight: 600; font-family: 'Fraunces', serif; }
+.card-body { padding: 20px; }
+
+/* ── Stat cards ── */
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+.stat-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px;
+}
+.stat-label { font-size: 11px; font-weight: 600; color: var(--muted-fg); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.stat-value { font-size: 26px; font-weight: 700; color: var(--fg); line-height: 1; margin-bottom: 4px; font-family: 'Fraunces', Georgia, serif; }
+.stat-change { font-size: 11px; color: var(--success); }
+.stat-icon { float: right; width: 38px; height: 38px; background: var(--muted); border-radius: 10px; display: flex; align-items: center; justify-content: center; margin-top: -4px; }
+
+/* ── Badges ── */
+.badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.4; }
+.badge-pending  { background: var(--warning-bg); color: var(--warning); }
+.badge-approved { background: var(--success-bg); color: var(--success); }
+.badge-rejected { background: var(--danger-bg);  color: var(--danger); }
+.badge-draft    { background: var(--muted);       color: var(--muted-fg); }
+.badge-flagged  { background: #ffedd5;            color: #c2410c; }
+.badge-primary  { background: #d1fae5;            color: var(--primary); }
+.badge-outline  { background: transparent; border: 1px solid var(--border); color: var(--muted-fg); }
+
+/* ── Tables ── */
+.table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); }
+thead th {
+  background: var(--muted); color: var(--muted-fg);
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px;
+  padding: 10px 14px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border);
+}
+tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--muted); }
+.td-num { font-family: 'Courier New', monospace; font-weight: 700; color: var(--primary); font-size: 12px; }
+.td-emp-name { font-weight: 600; font-size: 13px; }
+.td-emp-sub { font-size: 11px; color: var(--muted-fg); font-family: monospace; }
+.td-amount { font-weight: 700; white-space: nowrap; font-family: 'Fraunces', serif; }
+.td-neg { color: var(--danger); font-weight: 700; font-family: 'Fraunces', serif; }
+.td-pos { color: var(--success); font-weight: 700; font-family: 'Fraunces', serif; }
+.sticky-col { position: sticky; right: 0; background: var(--card); border-left: 1px solid var(--border); box-shadow: -4px 0 8px -4px rgba(0,0,0,.08); }
+thead .sticky-col { background: var(--muted); }
+
+/* ── Buttons ── */
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: opacity .15s; font-family: 'Inter', sans-serif; }
+.btn:hover { opacity: .85; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-secondary { background: var(--card); color: var(--fg); border-color: var(--border); }
+.btn-success  { background: var(--success); color: #fff; font-size: 12px; padding: 4px 10px; }
+.btn-danger   { background: var(--danger);  color: #fff; font-size: 12px; padding: 4px 10px; }
+.btn-ghost    { background: transparent; color: var(--fg); border-color: var(--border); font-size: 12px; padding: 4px 10px; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+/* ── Form elements ── */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.form-group { display: flex; flex-direction: column; gap: 4px; }
+.form-label { font-size: 12px; font-weight: 500; color: var(--fg); }
+.form-input, .form-select, .form-textarea {
+  width: 100%; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 13px; color: var(--fg); background: var(--bg); font-family: 'Inter', sans-serif;
+}
+.form-input:focus, .form-select:focus { outline: 2px solid var(--ring); outline-offset: 1px; border-color: var(--ring); }
+.form-textarea { min-height: 80px; resize: vertical; }
+.form-section { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
+.form-section-title { font-size: 14px; font-weight: 600; margin-bottom: 14px; font-family: 'Fraunces', serif; }
+
+/* ── Misc UI ── */
+.chip { display: inline-flex; align-items: center; padding: 2px 8px; background: var(--muted); color: var(--muted-fg); border-radius: 999px; font-size: 11px; font-weight: 500; }
+.divider { height: 1px; background: var(--border); margin: 20px 0; }
+.flex { display: flex; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
+.flex-end { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.mb-4 { margin-bottom: 16px; }
+.mb-6 { margin-bottom: 24px; }
+.text-sm { font-size: 13px; }
+.text-xs { font-size: 11px; }
+.text-muted { color: var(--muted-fg); }
+.font-mono { font-family: monospace; }
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; background: var(--muted); border-radius: 8px; padding: 4px; width: fit-content; }
+.tab { padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; color: var(--muted-fg); border: none; background: none; }
+.tab.active { background: var(--card); color: var(--fg); box-shadow: var(--shadow); }
+.progress { height: 6px; background: var(--muted); border-radius: 999px; overflow: hidden; }
+.progress-bar { height: 100%; background: var(--primary); border-radius: 999px; }
+.upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 32px; text-align: center; color: var(--muted-fg); font-size: 13px; }
+.file-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: var(--bg); }
+.notification-item { display: flex; gap: 14px; padding: 14px; border-bottom: 1px solid var(--border); }
+.notification-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); flex-shrink: 0; margin-top: 4px; }
+.chart-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 12px; }
+.chart-bar-label { width: 140px; flex-shrink: 0; color: var(--muted-fg); }
+.chart-bar-track { flex: 1; height: 8px; background: var(--muted); border-radius: 999px; overflow: hidden; }
+.chart-bar-fill { height: 100%; border-radius: 999px; background: var(--primary); }
+.chart-bar-val { width: 80px; flex-shrink: 0; font-weight: 600; text-align: right; font-family: 'Fraunces', serif; }
+.settings-tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+.settings-tab { padding: 10px 18px; font-size: 13px; font-weight: 500; color: var(--muted-fg); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.settings-tab.active { color: var(--primary); border-bottom-color: var(--ring); }
+.balance-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
+.balance-name { font-size: 15px; font-weight: 600; font-family: 'Fraunces', serif; }
+.balance-id { font-size: 11px; color: var(--muted-fg); font-family: monospace; }
+.balance-amount { font-size: 24px; font-weight: 700; margin: 10px 0 4px; font-family: 'Fraunces', Georgia, serif; }
+.balance-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 20px; }
+.page-indicator { font-size: 11px; color: var(--muted-fg); background: var(--muted); border-radius: 999px; padding: 2px 8px; display: inline-block; margin-bottom: 6px; font-family: monospace; }
+
+/* Old Money specific: decorative rule under headings */
+.page-title::after {
+  content: '';
+  display: block;
+  width: 40px; height: 2px;
+  background: var(--ring); /* brass underline */
+  margin-top: 6px;
+  border-radius: 999px;
+}
+</style>
+</head>
+<body>
+<div class="app-shell">
+
+<!-- ── SIDEBAR (Emerald Rail) ── -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="sidebar-logo-mark">P</div>
+    <div>
+      <div class="sidebar-logo-text">PesoWise</div>
+    </div>
+  </div>
+
+  <nav>
+    <div class="nav-group">
+      <div class="nav-group-label">Main</div>
+      <button class="nav-item active" onclick="showPage('dashboard', this)">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Dashboard
+      </button>
+      <button class="nav-item" onclick="showPage('expenses', this)">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+        My Expenses
+      </button>
+      <button class="nav-item" onclick="showPage('new-expense', this)">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 4v16m8-8H4"/></svg>
+        New Expense
+      </button>
+      <button class="nav-item" onclick="showPage('notifications', this)">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 00-9.33-5M15 17v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+        Notifications
+        <span class="badge badge-primary" style="margin-left:auto;font-size:10px;padding:1px 6px;">3</span>
+      </button>
+      <button class="nav-item" onclick="showPage('balances', this)">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        Balances
+      </button>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Admin</div>
+      <button class="nav-item" onclick="showPage('admin-expenses', this)">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+        All Expenses
+      </button>
+      <button class="nav-item" onclick="showPage('review', this)">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        Review Expenses
+      </button>
+      <button class="nav-item" onclick="showPage('user-management', this)">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        User Management
+      </button>
+      <button class="nav-item" onclick="showPage('reports', this)">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        Reports
+      </button>
+      <button class="nav-item" onclick="showPage('analytics', this)">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        Analytics
+      </button>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Settings</div>
+      <button class="nav-item" onclick="showPage('settings', this)">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        Settings
+      </button>
+    </div>
+  </nav>
+
+  <div class="sidebar-user">
+    <div class="avatar">AU</div>
+    <div>
+      <div class="avatar-name">Admin User</div>
+      <div class="avatar-role">Administrator</div>
+    </div>
+  </div>
+</aside>
+
+<!-- ── APP BODY ── -->
+<div class="app-body">
+
+  <!-- HEADER -->
+  <header class="app-header">
+    <div>
+      <div class="header-org">Mistry &amp; Shah Enterprises</div>
+      <div style="font-size:11px;color:var(--muted-fg);">Expense Management Platform</div>
+    </div>
+    <div class="header-right">
+      <div class="header-balance">₹ 45,200.00</div>
+      <div>
+        <div class="header-name">Admin User</div>
+        <div><span class="header-role-badge">Admin</span></div>
+      </div>
+      <div class="avatar" style="width:34px;height:34px;font-size:12px;">AU</div>
+    </div>
+  </header>
+
+  <!-- PAGE CONTENT -->
+  <div class="page-content">
+
+    <!-- ══════════════════════════════════════
+         PAGE: DASHBOARD
+    ══════════════════════════════════════ -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-indicator">/ dashboard</div>
+      <div class="flex-between mb-4">
+        <div>
+          <div class="page-title">Dashboard</div>
+          <div class="page-sub">Welcome back, Admin User — here's what's happening today.</div>
+        </div>
+        <button class="btn btn-primary">+ New Expense</button>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="flex-between">
+            <div class="stat-label">Total Expenses</div>
+            <div class="stat-icon">
+              <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="var(--primary)" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+            </div>
+          </div>
+          <div class="stat-value">71</div>
+          <div class="stat-change">↑ 12 this month</div>
+        </div>
+        <div class="stat-card">
+          <div class="flex-between">
+            <div class="stat-label">Pending Review</div>
+            <div class="stat-icon">
+              <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="var(--warning)" stroke-width="2"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </div>
+          </div>
+          <div class="stat-value" style="color:var(--warning);">14</div>
+          <div class="stat-change" style="color:var(--warning);">Needs action</div>
+        </div>
+        <div class="stat-card">
+          <div class="flex-between">
+            <div class="stat-label">Total Approved</div>
+            <div class="stat-icon">
+              <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="var(--success)" stroke-width="2"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </div>
+          </div>
+          <div class="stat-value" style="color:var(--success);">49</div>
+          <div class="stat-change">₹ 38,42,150.00</div>
+        </div>
+        <div class="stat-card">
+          <div class="flex-between">
+            <div class="stat-label">This Month</div>
+            <div class="stat-icon">
+              <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="var(--ring)" stroke-width="2"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </div>
+          </div>
+          <div class="stat-value">₹ 8.4L</div>
+          <div class="stat-change">↑ 23% vs last month</div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;">
+        <div class="card">
+          <div class="card-header flex-between">
+            <span class="card-title">Recent Expenses</span>
+            <button class="btn btn-ghost btn-sm">View all →</button>
+          </div>
+          <div class="table-wrap" style="border:none;border-radius:0;">
+            <table>
+              <thead>
+                <tr><th>Txn #</th><th>Employee</th><th>Title</th><th>Amount</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="td-num">00071</td><td><div class="td-emp-name">Hasti Vakani</div><div class="td-emp-sub">2094</div></td><td>Client Lunch</td><td class="td-amount">₹ 2,34,324.00</td><td><span class="badge badge-approved">Approved</span></td></tr>
+                <tr><td class="td-num">00070</td><td><div class="td-emp-name">Admin User</div><div class="td-emp-sub">1001</div></td><td>Software Tools</td><td class="td-amount">₹ 2,343.00</td><td><span class="badge badge-pending">Pending</span></td></tr>
+                <tr><td class="td-num">00069</td><td><div class="td-emp-name">Ravi Kumar</div><div class="td-emp-sub">1003</div></td><td>Audit Fees</td><td class="td-amount">₹ 24,32,432.00</td><td><span class="badge badge-pending">Pending</span></td></tr>
+                <tr><td class="td-num">00068</td><td><div class="td-emp-name">Admin User</div><div class="td-emp-sub">1001</div></td><td>Conference</td><td class="td-amount">₹ 4,56,677.00</td><td><span class="badge badge-approved">Approved</span></td></tr>
+                <tr><td class="td-num">00067</td><td><div class="td-emp-name">Priya Patel</div><div class="td-emp-sub">1002</div></td><td>Travel</td><td class="td-amount">₹ 3,423.00</td><td><span class="badge badge-rejected">Rejected</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">By Category</span></div>
+          <div class="card-body">
+            <div class="chart-bar-row"><div class="chart-bar-label">Client Meeting</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:78%"></div></div><div class="chart-bar-val">₹ 7.8L</div></div>
+            <div class="chart-bar-row"><div class="chart-bar-label">Accounting Fees</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:62%"></div></div><div class="chart-bar-val">₹ 6.2L</div></div>
+            <div class="chart-bar-row"><div class="chart-bar-label">Travel</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:45%"></div></div><div class="chart-bar-val">₹ 4.5L</div></div>
+            <div class="chart-bar-row"><div class="chart-bar-label">Advertising</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:30%"></div></div><div class="chart-bar-val">₹ 3.0L</div></div>
+            <div class="chart-bar-row"><div class="chart-bar-label">Software</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:15%"></div></div><div class="chart-bar-val">₹ 1.5L</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         PAGE: MY EXPENSES
+    ══════════════════════════════════════ -->
+    <div class="page" id="page-expenses">
+      <div class="page-indicator">/ expenses</div>
+      <div class="flex-between mb-4">
+        <div>
+          <div class="page-title">My Expenses</div>
+          <div class="page-sub">Manage and track your submitted expenses.</div>
+        </div>
+        <div class="flex gap-2">
+          <button class="btn btn-secondary">Export CSV</button>
+          <button class="btn btn-primary">+ New Expense</button>
+        </div>
+      </div>
+      <div class="tabs">
+        <button class="tab active">All (12)</button>
+        <button class="tab">Pending (4)</button>
+        <button class="tab">Approved (6)</button>
+        <button class="tab">Rejected (2)</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Txn #</th><th>Title</th><th>Category</th><th>Destination</th><th>Amount</th><th>Expense Date</th><th>Date Created</th><th>Status</th><th class="sticky-col">Actions</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="td-num">00071</td><td style="font-weight:500;">Client Lunch — South Mumbai</td><td><span class="chip">Client Meeting</span></td><td>Mumbai</td><td class="td-amount">₹ 2,34,324.00</td><td>Jun 28, 2026</td><td>Jul 1, 2026</td><td><span class="badge badge-approved">Approved</span></td><td class="sticky-col"><button class="btn btn-ghost btn-sm">View</button></td></tr>
+            <tr><td class="td-num">00070</td><td style="font-weight:500;">Software Licences Q3</td><td><span class="chip">Software</span></td><td>Online</td><td class="td-amount">₹ 2,343.00</td><td>Jun 25, 2026</td><td>Jun 25, 2026</td><td><span class="badge badge-pending">Pending</span></td><td class="sticky-col"><button class="btn btn-ghost btn-sm">View</button></td></tr>
+            <tr><td class="td-num">00069</td><td style="font-weight:500;">Annual Audit Fees</td><td><span class="chip">Accounting Fees</span></td><td>Delhi</td><td class="td-amount">₹ 24,32,432.00</td><td>Jun 20, 2026</td><td>Jun 21, 2026</td><td><span class="badge badge-pending">Pending</span></td><td class="sticky-col"><button class="btn btn-ghost btn-sm">View</button></td></tr>
+            <tr><td class="td-num">00068</td><td style="font-weight:500;">Tech Conference 2026</td><td><span class="chip">Client Meeting</span></td><td>Bangalore</td><td class="td-amount">₹ 4,56,677.00</td><td>Jun 15, 2026</td><td>Jun 15, 2026</td><td><span class="badge badge-approved">Approved</span></td><td class="sticky-col"><button class="btn btn-ghost btn-sm">View</button></td></tr>
+            <tr><td class="td-num">00067</td><td style="font-weight:500;">Train to Ahmedabad</td><td><span class="chip">Travel</span></td><td>Ahmedabad</td><td class="td-amount">₹ 3,423.00</td><td>Jun 12, 2026</td><td>Jun 12, 2026</td><td><span class="badge badge-rejected">Rejected</span></td><td class="sticky-col"><button class="btn btn-ghost btn-sm">View</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         PAGE: NEW EXPENSE FORM
+    ══════════════════════════════════════ -->
+    <div class="page" id="page-new-expense">
+      <div class="page-indicator">/ expenses / new</div>
+      <div class="flex-between mb-4">
+        <div>
+          <div class="page-title">New Expense</div>
+          <div class="page-sub">Fill in all required fields and attach bill photos.</div>
+        </div>
+        <button class="btn btn-secondary">← Back</button>
+      </div>
+      <div class="form-section">
+        <div class="form-section-title">Basic Information</div>
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">Expense Title *</label><input class="form-input" type="text" value="Client Lunch — Mumbai"></div>
+          <div class="form-group"><label class="form-label">Category *</label><select class="form-select"><option>Client Meeting Expenses</option><option>Travel</option><option>Accounting Fees</option></select></div>
+          <div class="form-group"><label class="form-label">Destination *</label><input class="form-input" type="text" value="Mumbai"></div>
+          <div class="form-group"><label class="form-label">Amount (₹) *</label><input class="form-input" type="number" value="12500"></div>
+          <div class="form-group"><label class="form-label">Trip Start Date *</label><input class="form-input" type="date" value="2026-07-01"></div>
+          <div class="form-group"><label class="form-label">Trip End Date *</label><input class="form-input" type="date" value="2026-07-03"></div>
+        </div>
+      </div>
+      <div class="form-section">
+        <div class="form-section-title">Additional Information</div>
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">Project / Client Name</label><input class="form-input" type="text" placeholder="e.g. Sharma & Co. audit"></div>
+          <div class="form-group"><label class="form-label">Invoice Number</label><input class="form-input" type="text" placeholder="INV-2026-001"></div>
+          <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Notes</label><textarea class="form-textarea">Lunch with CA Ramesh regarding quarterly audit scope.</textarea></div>
+        </div>
+      </div>
+      <div class="form-section">
+        <div class="form-section-title">Bill Photos / PDFs <span style="color:var(--danger);font-weight:400;font-size:11px;">* Required</span></div>
+        <div class="upload-zone"><div style="font-size:28px;margin-bottom:8px;">📎</div><div style="font-weight:500;margin-bottom:4px;">Drag &amp; drop or click to upload</div><div class="text-xs text-muted" style="margin-top:4px;">PNG, JPG, HEIC, PDF (auto-compressed) • Total limit: 5 MB</div></div>
+        <div style="margin-top:12px;">
+          <div class="file-item">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="var(--muted-fg)" stroke-width="2"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            <div style="flex:1;min-width:0;"><div style="font-weight:500;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">lunch-bill.jpg</div><div class="text-xs text-muted">image/jpeg • 1.2 MB • Jul 1, 2026</div></div>
+            <button class="btn btn-ghost btn-sm">👁 View</button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger);">✕</button>
+          </div>
+        </div>
+      </div>
+      <div class="flex-end">
+        <button class="btn btn-secondary">Save Draft</button>
+        <button class="btn btn-primary">Submit Expense →</button>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         PAGE: ADMIN — ALL EXPENSES
+    ══════════════════════════════════════ -->
+    <div class="page" id="page-admin-expenses">
+      <div class="page-indicator">/ admin / expenses</div>
+      <div class="flex-between mb-4">
+        <div>
+          <div class="page-title">All Expenses</div>
+          <div class="page-sub">Organisation-wide expense ledger.</div>
+        </div>
+        <div class="flex gap-2">
+          <button class="btn btn-secondary">Filters</button>
+          <button class="btn btn-secondary">Export CSV</button>
+          <button class="btn btn-primary">Bulk Actions</button>
+        </div>
+      </div>
+      <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px;">
+        <div class="stat-card"><div class="stat-label">Total Users</div><div class="stat-value">8</div></div>
+        <div class="stat-card"><div class="stat-label">Total Expenses</div><div class="stat-value">71</div></div>
+        <div class="stat-card"><div class="stat-label">Pending Approval</div><div class="stat-value" style="color:var(--warning);">14</div></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th><input type="checkbox"></th><th>Txn #</th><th>Employee / Employee ID</th><th>Title</th><th>Category</th><th>Destination</th><th>Amount</th><th>Balance</th><th>Status</th><th class="sticky-col">Status / Actions</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><input type="checkbox"></td><td class="td-num">00071</td><td><div class="td-emp-name">Hasti Vakani</div><div class="td-emp-sub">2094</div></td><td style="font-weight:500;">Client Lunch</td><td>Advertising</td><td>Mumbai</td><td class="td-amount">₹ 2,34,324.00</td><td class="td-neg">−₹ 2,10,892.00<br><span class="text-xs">Insufficient balance</span></td><td><span class="badge badge-approved">Approved</span></td><td class="sticky-col"><button class="btn btn-ghost btn-sm">View</button></td></tr>
+            <tr><td><input type="checkbox"></td><td class="td-num">00070</td><td><div class="td-emp-name">Admin User</div><div class="td-emp-sub">1001</div></td><td style="font-weight:500;">Software Licences</td><td>Other</td><td>Online</td><td class="td-amount">₹ 2,343.00</td><td class="td-neg">−₹ 8,99,773.98<br><span class="text-xs">Insufficient balance</span></td><td><span class="badge badge-pending">Pending</span></td><td class="sticky-col"><div class="flex gap-2"><button class="btn btn-success">Approve</button><button class="btn btn-danger">Reject</button><button class="btn btn-ghost btn-sm">View</button></div></td></tr>
+            <tr><td><input type="checkbox"></td><td class="td-num">00069</td><td><div class="td-emp-name">Ravi Kumar</div><div class="td-emp-sub">1003</div></td><td style="font-weight:500;">Annual Audit Fees</td><td>Accounting Fees</td><td>Delhi</td><td class="td-amount">₹ 24,32,432.00</td><td class="td-neg">−₹ 8,99,773.98<br><span class="text-xs">Insufficient balance</span></td><td><span class="badge badge-pending">Pending</span></td><td class="sticky-col"><div class="flex gap-2"><button class="btn btn-success">Approve</button><button class="btn btn-danger">Reject</button><button class="btn btn-ghost btn-sm">View</button></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         PAGE: REVIEW EXPENSES
+    ══════════════════════════════════════ -->
+    <div class="page" id="page-review">
+      <div class="page-indicator">/ review</div>
+      <div class="flex-between mb-4">
+        <div>
+          <div class="page-title">Review Expenses</div>
+          <div class="page-sub">Pending approvals assigned to you.</div>
+        </div>
+        <button class="btn btn-secondary">Bulk Approve</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Txn #</th><th>Employee</th><th>Title</th><th>Category</th><th>Destination</th><th>Amount</th><th>Balance</th><th>Status</th><th>Expense Date</th><th>Date Created</th><th class="sticky-col">Status / Actions</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="td-num">00070</td><td><div class="td-emp-name">Admin User</div><div class="td-emp-sub">1001</div></td><td style="font-weight:500;">Software Licences Q3</td><td>Other</td><td>Online</td><td class="td-amount">₹ 2,343.00</td><td class="td-neg">−₹ 8,99,773.98</td><td><span class="badge badge-pending">Pending</span></td><td>Jun 25, 2026</td><td>Jun 25, 2026</td><td class="sticky-col"><div class="flex gap-2"><button class="btn btn-success">Approve</button><button class="btn btn-danger">Reject</button><button class="btn btn-ghost btn-sm">View</button></div></td></tr>
+            <tr><td class="td-num">00069</td><td><div class="td-emp-name">Ravi Kumar</div><div class="td-emp-sub">1003</div></td><td style="font-weight:500;">Annual Audit Fees</td><td>Accounting Fees</td><td>Delhi</td><td class="td-amount">₹ 24,32,432.00</td><td class="td-neg">−₹ 8,99,773.98</td><td><span class="badge badge-pending">Pending</span></td><td>Jun 20, 2026</td><td>Jun 21, 2026</td><td class="sticky-col"><div class="flex gap-2"><button class="btn btn-success">Approve</button><button class="btn btn-danger">Reject</button><button class="btn btn-ghost btn-sm">View</button></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         PAGE: BALANCES
+    ══════════════════════════════════════ -->
+    <div class="page" id="page-balances">
+      <div class="page-indicator">/ balances</div>
+      <div class="page-title mb-4">Balances</div>
+      <div class="balance-grid">
+        <div class="balance-card"><div class="balance-name">Admin User</div><div class="balance-id">1001</div><div class="balance-amount td-neg">−₹ 8,99,773.98</div><div class="text-xs text-muted">Opening: ₹ 10,00,000.00</div></div>
+        <div class="balance-card"><div class="balance-name">Hasti Vakani</div><div class="balance-id">2094</div><div class="balance-amount td-neg">−₹ 2,10,892.00</div><div class="text-xs text-muted">Opening: ₹ 5,00,000.00</div></div>
+        <div class="balance-card"><div class="balance-name">Priya Patel</div><div class="balance-id">1002</div><div class="balance-amount td-pos">₹ 45,200.00</div><div class="text-xs text-muted">Opening: ₹ 1,00,000.00</div></div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         PAGE: SETTINGS
+    ══════════════════════════════════════ -->
+    <div class="page" id="page-settings">
+      <div class="page-indicator">/ settings</div>
+      <div class="page-title mb-4">Settings</div>
+      <div class="settings-tabs">
+        <div class="settings-tab active">Organisation</div>
+        <div class="settings-tab">Expense Fields</div>
+        <div class="settings-tab">Field Order</div>
+        <div class="settings-tab">Appearance</div>
+        <div class="settings-tab">Categories</div>
+      </div>
+      <div class="card mb-4">
+        <div class="card-header"><span class="card-title">Organisation Details</span></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group"><label class="form-label">Organisation Name</label><input class="form-input" value="Mistry &amp; Shah Enterprises"></div>
+            <div class="form-group"><label class="form-label">Slug</label><input class="form-input" value="mistry-shah" readonly style="background:var(--muted);"></div>
+          </div>
+          <div style="margin-top:16px;"><button class="btn btn-primary">Save Changes</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header flex-between"><span class="card-title">Theme</span></div>
+        <div class="card-body">
+          <div class="flex gap-3">
+            <div style="padding:12px 20px;border:1px solid var(--border);border-radius:8px;cursor:pointer;text-align:center;">
+              <div style="width:40px;height:24px;background:linear-gradient(135deg,#eff6ff,#eef2ff);border-radius:4px;margin:0 auto 6px;border:1px solid #dde6f0;"></div>
+              <div style="font-size:11px;font-weight:600;color:var(--muted-fg);">Legacy</div>
+            </div>
+            <div style="padding:12px 20px;border:2px solid var(--ring);border-radius:8px;cursor:pointer;text-align:center;">
+              <div style="width:40px;height:24px;background:linear-gradient(135deg,#ede8df,#e8e3d8);border-radius:4px;margin:0 auto 6px;border:1px solid #c8bfa8;"></div>
+              <div style="font-size:11px;font-weight:600;color:var(--primary);">Old Money ✓</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         PAGE: REPORTS
+    ══════════════════════════════════════ -->
+    <div class="page" id="page-reports">
+      <div class="page-indicator">/ admin / reports</div>
+      <div class="flex-between mb-4">
+        <div class="page-title">Reports</div>
+        <div class="flex gap-2">
+          <select class="form-select" style="width:auto;padding:6px 12px;font-size:13px;"><option>June 2026</option><option>May 2026</option></select>
+          <button class="btn btn-primary">Export PDF</button>
+        </div>
+      </div>
+      <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px;">
+        <div class="stat-card"><div class="stat-label">Total Disbursed</div><div class="stat-value">₹ 38.4L</div></div>
+        <div class="stat-card"><div class="stat-label">Avg per Expense</div><div class="stat-value">₹ 54,085</div></div>
+        <div class="stat-card"><div class="stat-label">Largest Expense</div><div class="stat-value">₹ 24.3L</div></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Expenses by Category</span></div>
+        <div class="card-body">
+          <div class="chart-bar-row"><div class="chart-bar-label">Client Meeting</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:78%"></div></div><div class="chart-bar-val">₹ 7,80,000</div></div>
+          <div class="chart-bar-row"><div class="chart-bar-label">Accounting Fees</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:62%"></div></div><div class="chart-bar-val">₹ 6,20,000</div></div>
+          <div class="chart-bar-row"><div class="chart-bar-label">Travel</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:45%"></div></div><div class="chart-bar-val">₹ 4,50,000</div></div>
+          <div class="chart-bar-row"><div class="chart-bar-label">Advertising</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:30%"></div></div><div class="chart-bar-val">₹ 3,00,000</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         PAGE: ANALYTICS
+    ══════════════════════════════════════ -->
+    <div class="page" id="page-analytics">
+      <div class="page-indicator">/ analytics</div>
+      <div class="page-title mb-4">Analytics</div>
+      <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px;">
+        <div class="stat-card"><div class="stat-label">This Month</div><div class="stat-value">₹ 8.4L</div><div class="stat-change">↑ 23%</div></div>
+        <div class="stat-card"><div class="stat-label">Last Month</div><div class="stat-value">₹ 6.8L</div></div>
+        <div class="stat-card"><div class="stat-label">YTD Total</div><div class="stat-value">₹ 38.4L</div></div>
+        <div class="stat-card"><div class="stat-label">Active Users</div><div class="stat-value">8</div></div>
+      </div>
+      <div class="card mb-4">
+        <div class="card-header"><span class="card-title">Monthly Expense Trend (₹)</span></div>
+        <div class="card-body">
+          <div style="display:flex;align-items:flex-end;gap:12px;height:160px;padding-top:10px;">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;"><div style="width:100%;background:var(--primary);border-radius:4px 4px 0 0;height:40%;opacity:.6;"></div><div class="text-xs text-muted">Apr</div></div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;"><div style="width:100%;background:var(--primary);border-radius:4px 4px 0 0;height:55%;opacity:.7;"></div><div class="text-xs text-muted">May</div></div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;"><div style="width:100%;background:var(--primary);border-radius:4px 4px 0 0;height:85%;opacity:.85;"></div><div class="text-xs text-muted">Jun</div></div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;"><div style="width:100%;background:var(--ring);border-radius:4px 4px 0 0;height:100%;"></div><div class="text-xs text-muted" style="font-weight:600;color:var(--primary);">Jul</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         PAGE: USER MANAGEMENT
+    ══════════════════════════════════════ -->
+    <div class="page" id="page-user-management">
+      <div class="page-indicator">/ admin / users</div>
+      <div class="flex-between mb-4">
+        <div>
+          <div class="page-title">User Management</div>
+          <div class="page-sub">Manage organisation members and their roles.</div>
+        </div>
+        <button class="btn btn-primary">+ Invite User</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Email / Employee ID</th><th>Role</th><th>Balance</th><th>Status</th><th>Joined</th><th>Actions</th></tr></thead>
+          <tbody>
+            <tr><td><div class="td-emp-name">Admin User</div></td><td><div style="font-size:12px;">admin@example.com</div><div class="td-emp-sub">1001</div></td><td><span class="badge badge-primary">Admin</span></td><td class="td-neg">−₹ 8,99,773.98</td><td><span class="badge badge-approved">Active</span></td><td class="text-xs text-muted">Jan 15, 2026</td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+            <tr><td><div class="td-emp-name">Hasti Vakani</div></td><td><div style="font-size:12px;">hasti@example.com</div><div class="td-emp-sub">2094</div></td><td><span class="badge badge-draft">Employee</span></td><td class="td-neg">−₹ 2,10,892.00</td><td><span class="badge badge-approved">Active</span></td><td class="text-xs text-muted">Feb 1, 2026</td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+            <tr><td><div class="td-emp-name">Priya Patel</div></td><td><div style="font-size:12px;">priya@example.com</div><div class="td-emp-sub">1002</div></td><td><span class="badge badge-draft">Engineer</span></td><td class="td-pos">₹ 45,200.00</td><td><span class="badge badge-approved">Active</span></td><td class="text-xs text-muted">Mar 10, 2026</td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         PAGE: NOTIFICATIONS
+    ══════════════════════════════════════ -->
+    <div class="page" id="page-notifications">
+      <div class="page-indicator">/ notifications</div>
+      <div class="page-title mb-4">Notifications</div>
+      <div class="card">
+        <div class="notification-item">
+          <div class="notification-dot"></div>
+          <div>
+            <div style="font-weight:600;font-size:13px;">Expense #00069 needs your approval</div>
+            <div class="text-xs text-muted" style="margin-top:2px;">Ravi Kumar submitted ₹ 24,32,432 for Annual Audit Fees</div>
+            <div class="text-xs text-muted" style="margin-top:4px;">2 hours ago</div>
+          </div>
+          <button class="btn btn-primary btn-sm" style="margin-left:auto;flex-shrink:0;">Review</button>
+        </div>
+        <div class="notification-item">
+          <div class="notification-dot"></div>
+          <div>
+            <div style="font-weight:600;font-size:13px;">Expense #00071 approved</div>
+            <div class="text-xs text-muted" style="margin-top:2px;">Your expense of ₹ 2,34,324 has been approved by Admin</div>
+            <div class="text-xs text-muted" style="margin-top:4px;">Yesterday at 3:45 PM</div>
+          </div>
+        </div>
+        <div class="notification-item" style="border-bottom:none;opacity:.55;">
+          <div class="notification-dot" style="background:var(--muted-fg);"></div>
+          <div>
+            <div style="font-weight:500;font-size:13px;">Welcome to PesoWise</div>
+            <div class="text-xs text-muted" style="margin-top:2px;">Your account for Mistry &amp; Shah Enterprises is set up.</div>
+            <div class="text-xs text-muted" style="margin-top:4px;">Jun 28, 2026</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /page-content -->
+</div><!-- /app-body -->
+</div><!-- /app-shell -->
+
+<script>
+function showPage(id, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+</script>
+</body>
+</html>
