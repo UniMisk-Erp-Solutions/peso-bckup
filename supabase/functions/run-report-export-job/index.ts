@@ -281,7 +281,10 @@ Deno.serve(async (req) => {
     const { error: upErr } = await svc.storage
       .from(BUCKET)
       .upload(storagePath, bytes, {
-        contentType: "text/csv; charset=utf-8",
+        // The bucket's allowed_mime_types lists a bare "text/csv"; Storage
+        // compares the whole header, so "text/csv; charset=utf-8" is rejected.
+        // Encoding is carried by the BOM above, not by this parameter.
+        contentType: "text/csv",
         upsert: true,
       });
     if (upErr) throw new Error(`upload: ${upErr.message}`);
@@ -291,7 +294,7 @@ Deno.serve(async (req) => {
       p_worker_id: workerId,
       p_storage_path: storagePath,
       p_filename: filename,
-      p_mime_type: "text/csv; charset=utf-8",
+      p_mime_type: "text/csv",
       p_file_size_bytes: bytes.byteLength,
       p_row_count: rows.length,
     });
