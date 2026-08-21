@@ -259,6 +259,7 @@
     "customFieldsLoadFailed": "Some custom field values could not be loaded. Values shown below may be incomplete.",
     "noEligible": "No eligible expenses",
     "noEligibleDescription": "None of the selected expenses can be {{action}} in their current status.",
+    "verifyBatch": "Verify Batch ({{count}})",
     "actionVerify": "verified",
     "actionApprove": "approved",
     "actionReject": "rejected",

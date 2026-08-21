@@ -18,7 +18,12 @@ import {
   type DailyExpenseReportConfig,
   type DailyProjectExpenseReportRow,
 } from "@/lib/dailyExpenseReportConfig";
-import { fetchDailyProjectExpenseReportRows, dailyReportResultsToRows, type DailyProjectExpenseReportBuildResult } from "@/lib/buildDailyProjectExpenseReport";
+import { dailyReportResultsToRows, type DailyProjectExpenseReportBuildResult } from "@/lib/buildDailyProjectExpenseReport";
+import {
+  runDailyProjectReportExport,
+  DailyReportExportError,
+  type DailyReportExportProgress,
+} from "@/lib/dailyProjectReportPaging";
 import { downloadDailyProjectExpenseReportFile } from "@/lib/exportDailyProjectExpenseReport";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -514,26 +519,51 @@ async function loadDetailedReport(p: DetailedParams): Promise<DetailedResult> {
 
 interface DailyParams {
   organizationId: string;
-  config: DailyExpenseReportConfig;
   teamScoped: boolean;
   teamMemberUserIds: string[];
   selectedEmployee: string;
   dailyPeriodMode: DailyPeriodMode;
   dailyDateFrom: string;
   dailyDateTo: string;
+  signal?: AbortSignal;
+  onProgress?: (progress: DailyReportExportProgress) => void;
 }
 
+/**
+ * DOC-101 — server-paged Daily Project Report retrieval.
+ *
+ * Previously this called `fetchDailyProjectExpenseReportRows`, which pulled the
+ * whole organization's approved expenses in one unbounded PostgREST request
+ * (silently capped at 1000 rows) and then issued one custom-field request per
+ * 75 expense ids. Now the server returns already-enriched report rows one
+ * bounded page at a time, and the coordinator refuses to produce any result
+ * unless it has proven it holds every row of the snapshot.
+ *
+ * The mapping config is no longer passed from the browser: the RPC reads
+ * `organization_settings.daily_expense_report_config` itself.
+ */
 async function loadDailyReport(p: DailyParams): Promise<DailyProjectExpenseReportBuildResult[]> {
-  const { organizationId, config, teamScoped, teamMemberUserIds, selectedEmployee, dailyPeriodMode, dailyDateFrom, dailyDateTo } = p;
+  const {
+    organizationId, teamScoped, teamMemberUserIds, selectedEmployee,
+    dailyPeriodMode, dailyDateFrom, dailyDateTo, signal, onProgress,
+  } = p;
   const isAllTime = dailyPeriodMode === "all_time";
-  return fetchDailyProjectExpenseReportRows({
+
+  // A team-scoped report with no resolvable members has an empty population;
+  // asking the server for `user_id = ANY('{}')` would be a needless round trip.
+  if (teamScoped && teamMemberUserIds.length === 0) return [];
+
+  const outcome = await runDailyProjectReportExport({
     organizationId,
-    config,
     dateFrom: isAllTime ? null : dailyDateFrom,
     dateTo: isAllTime ? null : dailyDateTo,
     userId: selectedEmployee !== "all" ? selectedEmployee : null,
     userIds: teamScoped ? teamMemberUserIds : null,
+    teamScoped,
+    signal,
+    onProgress,
   });
+  return outcome.results;
 }
 
 export default function Reports({ teamScoped = false }: ReportsProps) {
@@ -604,6 +634,8 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
   const [dailyDateTo, setDailyDateTo] = useState(defaultDailyDateTo);
   const [dailyPeriodMode, setDailyPeriodMode] = useState<DailyPeriodMode>("all_time");
   const [dailyReportSourceOpen, setDailyReportSourceOpen] = useState(false);
+  /** Live page progress for the server-paged Daily Project Report (DOC-101). */
+  const [dailyProgress, setDailyProgress] = useState<DailyReportExportProgress | null>(null);
   const [selectedDailyReportResult, setSelectedDailyReportResult] =
     useState<DailyProjectExpenseReportBuildResult | null>(null);
   const [dailyReportConfig, setDailyReportConfig] = useState<DailyExpenseReportConfig | null>(null);
@@ -891,19 +923,26 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
       dailyAllTime ? "all" : dailyDateTo,
       dailyConfigSignature,
     ),
-    queryFn: () => {
-      const config = dailyReportConfigRef.current ?? dailyReportConfig;
-      if (!config) throw new Error("Daily report config not ready");
-      return loadDailyReport({
-        organizationId: organizationId!,
-        config,
-        teamScoped,
-        teamMemberUserIds,
-        selectedEmployee,
-        dailyPeriodMode,
-        dailyDateFrom,
-        dailyDateTo,
-      });
+    // React Query gives one in-flight fetch per key and hands us its
+    // AbortController, so a tab change / re-filter / unmount cancels the
+    // in-progress export instead of leaving pages racing (single-flight).
+    queryFn: async ({ signal }) => {
+      setDailyProgress({ received: 0, total: null, pages: 0 });
+      try {
+        return await loadDailyReport({
+          organizationId: organizationId!,
+          teamScoped,
+          teamMemberUserIds,
+          selectedEmployee,
+          dailyPeriodMode,
+          dailyDateFrom,
+          dailyDateTo,
+          signal,
+          onProgress: setDailyProgress,
+        });
+      } finally {
+        setDailyProgress(null);
+      }
     },
     enabled:
       activeTab === "daily" &&
@@ -2701,11 +2740,33 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                     </span>
                   ) : null}
                   {dailyQuery.isFetching ? (
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      ({t("daily.generating")})
+                    <span className="ml-2 text-xs text-muted-foreground" data-testid="daily-progress">
+                      (
+                      {dailyProgress && dailyProgress.total != null
+                        ? t("daily.preparingProgress", {
+                            received: dailyProgress.received,
+                            total: dailyProgress.total,
+                          })
+                        : t("daily.generating")}
+                      )
                     </span>
                   ) : null}
                 </p>
+
+                {/* A failed export must never look like an empty-but-successful
+                    one: say plainly that no file was produced (DOC-101). */}
+                {!dailyQuery.isFetching && dailyQuery.error ? (
+                  <p
+                    className="text-xs text-red-800 bg-red-50 border border-red-200 rounded-md px-3 py-2"
+                    data-testid="daily-report-error"
+                  >
+                    {dailyQuery.error instanceof DailyReportExportError
+                      ? t(`daily.errors.${dailyQuery.error.code}`, {
+                          defaultValue: t("daily.errors.generic"),
+                        })
+                      : t("daily.errors.generic")}
+                  </p>
+                ) : null}
 
                 {dailyReviewRowCount > 0 ? (
                   <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">

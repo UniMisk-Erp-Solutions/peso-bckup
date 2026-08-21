@@ -120,7 +120,9 @@
     "assignedExpenses": "સોંપેલા ખર્ચ",
     "assignedExpensesDescription": "તમને સોંપેલા ખર્ચ સબમિશનની સમીક્ષા અને ચકાસણી કરો",
     "toast": {
-      "correctionFailed": "સુધારો નિષ્ફળ"
+      "correctionFailed": "સુધારો નિષ્ફળ",
+      "approvalResolutionFailed": "પસંદ કરેલ સંપૂર્ણ બેચ લોડ કરી શકાયું નથી",
+      "approvalResolutionFailedDescription": "કોઈ ખર્ચ મંજૂર કરવામાં આવ્યા નથી. ફરી પ્રયાસ કરો."
     },
     "progress": {
       "loadingExpenses": "ખર્ચ લોડ થઈ રહ્યા છે…",
@@ -238,14 +240,29 @@
       "description": "કેટલાક પસંદ કરેલા ખર્ચે હજુ સુધી ચકાસણી પ્રક્રિયા પૂર્ણ કરી નથી.",
       "descriptionSingle": "આ ખર્ચે હજુ સુધી ચકાસણી પ્રક્રિયા પૂર્ણ કરી નથી. શું તમે મેનેજર મંજૂરી સાથે આગળ વધવા માંગો છો?",
       "readyNow": "અત્યારે તૈયાર",
-      "waiting": "રાહ જોઈ રહ્યું / હજુ ચકાસાયું નથી",
+      "waiting": "અગાઉની ચકાસણીની રાહ જોઈ રહ્યું",
       "overLimit": "તમારી મંજૂરી મર્યાદાથી વધુ",
       "completed": "પહેલેથી પૂર્ણ",
       "selectedTotal": "પસંદ કરેલ કુલ",
       "overrideUnavailable": "આ પર્યાવરણમાં મેનેજર ઓવરરાઇડ સર્વર સપોર્ટ સક્ષમ નથી, તેથી રાહ જોઈ રહેલી આઇટમ અહીં મંજૂર કરી શકાતી નથી.",
-      "overrideWillApply": "{{count}} રાહ જોઈ રહેલી આઇટમ મેનેજર ઓવરરાઇડથી મંજૂર થશે.",
+      "viewWaiting": "{{count}} રાહ જોઈ રહેલા જુઓ",
+      "hideWaiting": "છુપાવો",
+      "batchBadge": "બેચ",
+      "employeeIdShort": "કર્મચારી",
       "stop": "રોકો",
-      "proceed": "મંજૂરી સાથે આગળ વધો ({{count}})"
+      "approveReadyNow": "{{count}} તૈયાર મંજૂર કરો",
+      "managerOverride": "{{count}} રાહ જોઈ રહેલા પર મેનેજર ઓવરરાઇડ"
+    },
+    "overrideConfirm": {
+      "title": "ચકાસણી પ્રક્રિયાને ઓવરરાઇડ કરવી છે?",
+      "description": "તમે {{count}} ખર્ચ મંજૂર કરવા જઈ રહ્યા છો જેમણે તેમની સામાન્ય ચકાસણી પ્રક્રિયા પૂર્ણ કરી નથી.",
+      "cancel": "રદ કરો",
+      "confirm": "{{count}} ઓવરરાઇડ કરી મંજૂર કરો"
+    },
+    "batchVerifyBlockers": {
+      "title": "{{count}} બેચ ચકાસી શકાયા નથી",
+      "description": "આ બેચમાં કંઈ બદલાયું નથી. બેચ આગળ વધે તે પહેલાં તેના તમામ ઘટકો પાત્ર હોવા જરૂરી છે.",
+      "close": "બંધ કરો"
     },
     "metricsFor": "આના માટે મેટ્રિક્સ:",
     "metricsForSearch": "વર્તમાન શોધ અને ફિલ્ટર માટે મેટ્રિક્સ",

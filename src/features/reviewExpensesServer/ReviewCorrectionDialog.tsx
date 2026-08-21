@@ -42,6 +42,8 @@ import {
   EMPTY_CORRECTION_FIELDS,
   loadCorrectionCustomFields,
   validateCorrectionCustomFields,
+  fetchCorrectionOptionBranches,
+  mergeCorrectionOptionBranches,
   type CorrectionCustomFieldsModel,
 } from "@/lib/loadCorrectionCustomFields";
 import { getVisibleBranchIds } from "@/lib/conditionalFormFields";
@@ -132,6 +134,24 @@ export function ReviewCorrectionDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, expenseId, organizationId]);
 
+  /** DOC-100 pt.2: the reviewer changing a parent select's value mid-correction
+   *  must load that option's tree on demand -- the initial load only ever
+   *  fetched whichever value was SAVED when the dialog opened. */
+  const handleSelectOptionValue = useCallback(
+    async (templateId: string, optionValue: string) => {
+      if (!organizationId || !optionValue) return;
+      const result = await fetchCorrectionOptionBranches(supabase, organizationId, templateId, optionValue);
+      setFieldModel((prev) => ({
+        ...prev,
+        optionBranches: mergeCorrectionOptionBranches(prev.optionBranches, templateId, result.branches),
+        loadError: result.error
+          ? "Could not load additional field configuration for the selected option. Please retry."
+          : undefined,
+      }));
+    },
+    [organizationId],
+  );
+
   const submit = useCallback(async () => {
     if (!seed) return;
     setError(null);
@@ -139,6 +159,11 @@ export function ReviewCorrectionDialog({
     const amt = Number(amount);
     if (!Number.isFinite(amt) || amt <= 0) {
       setError("Amount must be a positive number");
+      return;
+    }
+
+    if (fieldModel.loadError) {
+      setError(fieldModel.loadError);
       return;
     }
 
@@ -304,6 +329,7 @@ export function ReviewCorrectionDialog({
             }
             allowNested={allowNestedConditional}
             organizationId={organizationId}
+            onSelectOptionValue={handleSelectOptionValue}
           />
 
           <div>

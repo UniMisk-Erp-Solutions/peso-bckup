@@ -1,5 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
-import { ExpenseService } from "@/services/ExpenseService";
+import { fetchRuntimeOptionBranches } from "@/lib/runtimeOptionBranches";
 
 // ---------------------------------------------------------------------------
 // Shared usage-tracking data layer
@@ -250,11 +250,14 @@ export async function trackFormFieldSelectionsForCategory(
 
   let branchSelects: Array<{ branchId: string; value: string }> = [];
   if (allowConditionalDropdown && templateSelects.length > 0) {
-    const selectIds = templateSelects.map((t) => t.templateId);
-    const branches = await ExpenseService.fetchOptionBranchesForTemplates(
-      organizationId,
-      selectIds,
+    // DOC-100 pt.3: post-submission usage tracking is fire-and-forget, but it
+    // still runs on every employee submission -- fetch only the branch trees
+    // for the values actually selected (same bounded runtime RPC everything
+    // else uses), never the whole category's branch graph.
+    const results = await Promise.all(
+      templateSelects.map((t) => fetchRuntimeOptionBranches(supabase, organizationId, t.templateId, t.value)),
     );
+    const branches = results.flatMap((r) => r.branches);
     branchSelects = branches
       .filter((b) => b.field_type === "select" && branchValues[b.id]?.trim())
       .map((b) => ({ branchId: b.id, value: branchValues[b.id] }));

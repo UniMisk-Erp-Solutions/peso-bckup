@@ -27,11 +27,11 @@ import { FileUpload } from "@/components/FileUpload";
 import { ExpenseService, CreateExpenseData, UpdateExpenseData } from "@/services/ExpenseService";
 import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
 import { CategoryFormFieldsSection } from "@/components/CategoryFormFieldsSection";
+import { useOnDemandOptionBranches } from "@/hooks/useOnDemandOptionBranches";
 import {
   getVisibleBranchIds,
   validateVisibleBranchFields,
 } from "@/lib/conditionalFormFields";
-import type { OptionBranchDefinition } from "@/lib/conditionalFormFieldTypes";
 import { z } from "zod";
 import { DEFAULT_BASE_FIELD_CONFIG, resolveBaseFieldConfig, type BaseExpenseFieldKey, type BaseFieldConfig } from "@/lib/expenseFormConfig";
 import { BaseExpenseFieldInput } from "@/components/BaseExpenseFieldInput";
@@ -266,7 +266,14 @@ export default function ExpenseForm() {
   // Form fields state
   const [categoryFormFields, setCategoryFormFields] = useState<any[]>([]);
   const [formFieldValues, setFormFieldValues] = useState<Record<string, string>>({});
-  const [optionBranches, setOptionBranches] = useState<OptionBranchDefinition[]>([]);
+  // DOC-097 hotfix pt.3: branches are fetched ON DEMAND per selected option
+  // (never all-options-up-front) -- see useOnDemandOptionBranches.
+  const {
+    optionBranches,
+    selectOptionValue: selectOptionBranches,
+    reset: resetOptionBranches,
+    hasError: optionBranchLoadError,
+  } = useOnDemandOptionBranches(organizationId);
   const [branchValues, setBranchValues] = useState<Record<string, string>>({});
   const [baseFieldConfig, setBaseFieldConfig] = useState<Record<BaseExpenseFieldKey, BaseFieldConfig>>(DEFAULT_BASE_FIELD_CONFIG);
 
@@ -448,23 +455,30 @@ export default function ExpenseForm() {
 
       setCategoryFormFields(fields);
 
+      // DOC-097 hotfix pt.3: no more eager "every branch for every select
+      // template" fetch. Branches load on demand as the user picks a value
+      // (see onSelectOptionValue on CategoryFormFieldsSection below) --
+      // except when reopening an expense that already has a selected value
+      // (edit/resubmit/duplicate), where that one option's branches must be
+      // available immediately, so those are pre-loaded here explicitly.
+      resetOptionBranches();
       if (allowConditionalDropdown && organizationId) {
-        const selectIds = fields
+        const selectTemplates = fields
           .map((f: any) => f.template)
-          .filter((t: any) => t?.field_type === "select")
-          .map((t: any) => t.id);
-        const branches = await ExpenseService.fetchOptionBranchesForTemplates(
-          organizationId,
-          selectIds,
-        );
-        setOptionBranches(branches);
+          .filter((t: any) => t?.field_type === "select");
+        const preselected = options?.preserveFormValues;
+        if (preselected) {
+          for (const t of selectTemplates) {
+            const value = preselected[t.id];
+            if (value) void selectOptionBranches(t.id, value);
+          }
+        }
         if (options?.preserveBranchValues) {
           setBranchValues(options.preserveBranchValues);
         } else {
           setBranchValues({});
         }
       } else {
-        setOptionBranches([]);
         if (options?.preserveBranchValues) {
           setBranchValues(options.preserveBranchValues);
         } else {
@@ -733,7 +747,7 @@ export default function ExpenseForm() {
     setFormFieldValues({});
     setBranchValues({});
     setCategoryFormFields([]);
-    setOptionBranches([]);
+    resetOptionBranches();
     setCategorySearchTerm("");
     formStateRef.current = {
       expense: defaults,
@@ -743,7 +757,7 @@ export default function ExpenseForm() {
     };
     persistedAttachmentUrlsRef.current.clear();
     setFileUploadResetKey((key) => key + 1);
-  }, [createDefaultExpenseState]);
+  }, [createDefaultExpenseState, resetOptionBranches]);
 
   const handleClearForm = useCallback(async () => {
     if (loading) return;
@@ -1486,17 +1500,27 @@ export default function ExpenseForm() {
         }
       }
 
-      if (allowConditionalDropdown && optionBranches.length > 0) {
-        const branchValidation = validateVisibleBranchFields(
-          optionBranches,
-          formFieldValues,
-          branchValues,
-          allowNestedConditional,
-        );
-        if (!branchValidation.valid) {
+      if (allowConditionalDropdown) {
+        // DOC-100 pt.2: a failed on-demand branch fetch must never let a
+        // required conditional field silently vanish — block submission
+        // instead of validating against a possibly-incomplete branch set.
+        if (optionBranchLoadError) {
           throw new Error(
-            `Please complete: ${branchValidation.missing.join(", ")}`,
+            "Could not load additional field configuration for the selected option. Please retry before submitting.",
           );
+        }
+        if (optionBranches.length > 0) {
+          const branchValidation = validateVisibleBranchFields(
+            optionBranches,
+            formFieldValues,
+            branchValues,
+            allowNestedConditional,
+          );
+          if (!branchValidation.valid) {
+            throw new Error(
+              `Please complete: ${branchValidation.missing.join(", ")}`,
+            );
+          }
         }
       }
 
@@ -1968,6 +1992,7 @@ export default function ExpenseForm() {
                     allowNested={allowNestedConditional}
                     organizationId={organizationId}
                     userId={user?.id}
+                    onSelectOptionValue={allowConditionalDropdown ? selectOptionBranches : undefined}
                   />
 
                   <div className={cn("space-y-2", !getBaseField("title").is_visible && "hidden")}>

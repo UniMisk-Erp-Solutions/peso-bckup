@@ -45,6 +45,7 @@ import {
   deleteParentOption,
   countBranchesForOption,
   validateTemplate,
+  validateBranchDraftsIntegrity,
   buildCleanedOptions,
   parseBulkOptionValues,
   mergeBulkOptions,
@@ -330,5 +331,86 @@ describe("isSnapshotDirty", () => {
   it("30. dirty when name changes", () => {
     const baseline = makeSnapshot(baseSnapshot);
     expect(isSnapshotDirty({ ...baseSnapshot, name: "Changed" }, baseline)).toBe(true);
+  });
+});
+
+// ── validateBranchDraftsIntegrity ───────────────────────────────────────────────
+
+describe("validateBranchDraftsIntegrity", () => {
+  it("errors on duplicate root field_key for the same parent option", () => {
+    const drafts = [
+      makeDraft({ localId: "a", parent_option_value: "U1", field_key: "pid", name: "Project ID" }),
+      makeDraft({ localId: "b", parent_option_value: "U1", field_key: "pid", name: "Duplicate" }),
+    ];
+    const issues = validateBranchDraftsIntegrity(["U1"], drafts);
+    expect(issues.some((i) => i.severity === "error" && /Duplicate dependent field key/.test(i.message))).toBe(true);
+  });
+
+  it("does not flag the same field_key across DIFFERENT parent options", () => {
+    const drafts = [
+      makeDraft({ localId: "a", parent_option_value: "U1", field_key: "pid", name: "Project ID" }),
+      makeDraft({ localId: "b", parent_option_value: "U2", field_key: "pid", name: "Project ID" }),
+    ];
+    const issues = validateBranchDraftsIntegrity(["U1", "U2"], drafts);
+    expect(issues.some((i) => /Duplicate dependent field key/.test(i.message))).toBe(false);
+  });
+
+  it("warns (does not error) on a root branch whose parent option no longer exists", () => {
+    const drafts = [makeDraft({ localId: "a", parent_option_value: "REMOVED", field_key: "pid", name: "Project ID" })];
+    const issues = validateBranchDraftsIntegrity([], drafts);
+    const issue = issues.find((i) => /no longer exists/.test(i.message) && !/nested under/.test(i.message));
+    expect(issue?.severity).toBe("warning");
+  });
+
+  it("warns (does not error) on a blank field_key for a named branch", () => {
+    const drafts = [makeDraft({ localId: "a", parent_option_value: "U1", field_key: "", name: "Project ID" })];
+    const issues = validateBranchDraftsIntegrity(["U1"], drafts);
+    const issue = issues.find((i) => /has no field key/.test(i.message));
+    expect(issue?.severity).toBe("warning");
+  });
+
+  it("errors on a case-insensitive duplicate choice within a select branch", () => {
+    const drafts = [
+      makeDraft({
+        localId: "a",
+        parent_option_value: "U1",
+        field_key: "pid",
+        name: "Project ID",
+        field_type: "select",
+        options: ["Alpha", "alpha", "Beta"],
+      }),
+    ];
+    const issues = validateBranchDraftsIntegrity(["U1"], drafts);
+    expect(issues.some((i) => i.severity === "error" && /duplicate choice/.test(i.message))).toBe(true);
+  });
+
+  it("warns (does not error) on a dangling parent_branch_local_id", () => {
+    const drafts = [
+      makeDraft({
+        localId: "nested",
+        parent_option_value: "sub",
+        field_key: "nested_key",
+        name: "Nested",
+        parent_branch_local_id: "does-not-exist",
+      }),
+    ];
+    const issues = validateBranchDraftsIntegrity(["U1"], drafts);
+    const issue = issues.find((i) => /nested under a field that no longer exists/.test(i.message));
+    expect(issue?.severity).toBe("warning");
+  });
+
+  it("produces no issues for a fully clean draft set", () => {
+    const drafts = [
+      makeDraft({ localId: "a", parent_option_value: "U1", field_key: "pid", name: "Project ID", field_type: "select", options: ["P-101"] }),
+    ];
+    expect(validateBranchDraftsIntegrity(["U1"], drafts)).toEqual([]);
+  });
+
+  it("is wired into validateTemplate's overall issue list", () => {
+    const drafts = [
+      makeDraft({ localId: "a", parent_option_value: "U1", field_key: "pid", name: "Project ID", field_type: "select", options: ["X", "x"] }),
+    ];
+    const issues = validateTemplate({ name: "T", type: "select", options: ["U1"], branchDrafts: drafts });
+    expect(issues.some((i) => /duplicate choice/.test(i.message))).toBe(true);
   });
 });

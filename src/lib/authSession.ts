@@ -1,4 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
+import { clearLocalAuthStorage } from "@/lib/localAuthStorageKey";
+
+export { clearLocalAuthStorage } from "@/lib/localAuthStorageKey";
 
 const REFRESH_TOKEN_ERROR_PATTERN = /refresh token/i;
 
@@ -59,30 +62,6 @@ export function isInvalidAuthSessionError(error: AuthErrorLike): boolean {
     }
   }
   return false;
-}
-
-/** Remove persisted Supabase auth keys for this project (local only). */
-export function clearLocalAuthStorage(): void {
-  if (typeof window === "undefined") return;
-
-  const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-  const projectRef = url?.match(/https?:\/\/([^.]+)\./)?.[1];
-
-  const keysToRemove: string[] = [];
-  for (let i = 0; i < localStorage.length; i += 1) {
-    const key = localStorage.key(i);
-    if (!key) continue;
-    if (key.startsWith("sb-") && key.endsWith("-auth-token")) {
-      keysToRemove.push(key);
-    }
-    if (projectRef && key.includes(projectRef) && key.includes("auth")) {
-      keysToRemove.push(key);
-    }
-  }
-
-  for (const key of new Set(keysToRemove)) {
-    localStorage.removeItem(key);
-  }
 }
 
 /**

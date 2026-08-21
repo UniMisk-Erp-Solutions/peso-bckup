@@ -1,5 +1,6 @@
 import { slugifyFieldKey } from "@/lib/conditionalFormFields";
 import type { DraftOptionBranch } from "@/lib/optionBranchPersistence";
+import { parseDelimitedText, MAX_IMPORT_ROWS, MAX_IMPORT_COLUMNS } from "@/lib/formBuilder/dropdownBulkImport";
 
 /**
  * Bulk import for dependent (conditional) dropdowns.
@@ -43,46 +44,29 @@ export type ParseDependentResult =
   | { ok: true; result: DependentImportResult }
   | { ok: false; error: string };
 
-const MAX_DEPENDENT_COLUMNS = 8;
-const MAX_DATA_ROWS = 5000;
+// Not architectural limits \u2014 see MAX_IMPORT_ROWS/MAX_IMPORT_COLUMNS in
+// dropdownBulkImport.ts for why these are generous browser guardrails rather
+// than a real backend/schema constraint (there isn't one).
+const MAX_DEPENDENT_COLUMNS = MAX_IMPORT_COLUMNS - 1; // one column is the parent
+const MAX_DATA_ROWS = MAX_IMPORT_ROWS;
 
-/** Quote-aware single CSV line splitter (handles "a,b" and escaped ""). */
+/**
+ * Quote-aware single CSV line splitter (handles "a,b" and escaped "").
+ * Kept as a thin wrapper over the shared state-machine parser so existing
+ * callers/tests keep working unchanged.
+ */
 export function parseCsvLine(line: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (line[i + 1] === '"') {
-          cur += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        cur += ch;
-      }
-    } else if (ch === '"') {
-      inQuotes = true;
-    } else if (ch === ",") {
-      out.push(cur);
-      cur = "";
-    } else {
-      cur += ch;
-    }
-  }
-  out.push(cur);
-  return out.map((c) => c.trim());
+  return parseDelimitedText(line, ",")[0] ?? [];
 }
 
+/**
+ * Split the whole CSV text into rows using the shared quote-aware parser.
+ * Unlike the old line-by-line splitter, this correctly handles a quoted cell
+ * that contains an embedded newline (it does not naively split on \r?\n
+ * before quote parsing).
+ */
 function splitRows(text: string): string[][] {
-  return text
-    .replace(/^\uFEFF/, "")
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length > 0)
-    .map(parseCsvLine);
+  return parseDelimitedText(text, ",");
 }
 
 /**

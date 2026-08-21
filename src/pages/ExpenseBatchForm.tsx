@@ -74,6 +74,7 @@ import {
   getPerLineAssignmentsForCategory,
 } from "@/lib/batchFieldPlan";
 import type { OptionBranchDefinition } from "@/lib/conditionalFormFieldTypes";
+import { fetchRuntimeOptionBranches } from "@/lib/runtimeOptionBranches";
 import { useBatchFieldPlan } from "@/hooks/useBatchFieldPlan";
 import { trackBaseFieldSelections, trackFormFieldSelectionsForCategory } from "@/lib/recommendedFormFieldOptions";
 import { NumberInput } from "@/components/NumberInput";
@@ -153,10 +154,21 @@ export default function ExpenseBatchForm() {
   /** Custom fields asked once per batch, keyed by template ID. */
   const [batchSharedFormValues, setBatchSharedFormValues] = useState<BatchSharedFormValues>({});
 
-  /** Branch definitions keyed by category ID, pre-fetched for per-line conditional dropdowns. */
-  const [branchesByCategoryId, setBranchesByCategoryId] = useState<Record<string, OptionBranchDefinition[]>>({});
-  /** Tracks which category IDs have already been fetched to avoid duplicate requests. */
-  const fetchedBranchCategoryIdsRef = useRef<Set<string>>(new Set());
+  /** DOC-100 pt.1: per-line/shared conditional-branch load errors, tracked so a
+   *  failed on-demand fetch (RPC error) blocks submission instead of being
+   *  silently treated as "this option has no conditional fields". Keyed by
+   *  line clientId / shared template ID. */
+  const [lineLoadErrors, setLineLoadErrors] = useState<Record<string, boolean>>({});
+  const [sharedLoadErrors, setSharedLoadErrors] = useState<Record<string, boolean>>({});
+  const anyLoadError =
+    Object.values(lineLoadErrors).some(Boolean) || Object.values(sharedLoadErrors).some(Boolean);
+
+  const handleLineLoadErrorChange = (clientId: string, hasError: boolean) => {
+    setLineLoadErrors((prev) => (prev[clientId] === hasError ? prev : { ...prev, [clientId]: hasError }));
+  };
+  const handleSharedLoadErrorChange = (templateId: string, hasError: boolean) => {
+    setSharedLoadErrors((prev) => (prev[templateId] === hasError ? prev : { ...prev, [templateId]: hasError }));
+  };
 
   const { plan, categoryIdByName, loading: planLoading, error: planError, reload: planReload } = useBatchFieldPlan(
     organizationId,
@@ -168,24 +180,6 @@ export default function ExpenseBatchForm() {
     () => Object.fromEntries(Object.entries(categoryIdByName).map(([n, id]) => [id, n])),
     [categoryIdByName],
   );
-
-  // Pre-fetch branch definitions for all per-line "select" category IDs in the plan.
-  // Runs whenever plan.perLine changes (new categories added to the batch).
-  useEffect(() => {
-    if (!organizationId || !allowConditionalDropdown) return;
-    const catIds = [...new Set(plan.perLine.map((p) => p.categoryId))];
-    const missing = catIds.filter((id) => !fetchedBranchCategoryIdsRef.current.has(id));
-    if (missing.length === 0) return;
-    missing.forEach((id) => fetchedBranchCategoryIdsRef.current.add(id));
-    void Promise.all(
-      missing.map(async (catId) => {
-        const catName = categoryNameById[catId] ?? "";
-        if (!catName) return;
-        const branches = await ExpenseService.fetchOptionBranchesForCategory(organizationId, catName);
-        setBranchesByCategoryId((prev) => ({ ...prev, [catId]: branches }));
-      }),
-    );
-  }, [plan.perLine, organizationId, allowConditionalDropdown, categoryNameById]);
 
   const sessionTempFilenamesRef = useRef<Set<string>>(new Set());
   const sessionTempUploadMetaRef = useRef<Map<string, TempUploadMeta>>(new Map());
@@ -323,6 +317,16 @@ export default function ExpenseBatchForm() {
     );
   };
 
+  const removeLine = (clientId: string) => {
+    setLines((prev) => prev.filter((l) => l.clientId !== clientId));
+    setLineLoadErrors((prev) => {
+      if (!(clientId in prev)) return prev;
+      const next = { ...prev };
+      delete next[clientId];
+      return next;
+    });
+  };
+
   const handleSharedTitleChange = (title: string) => {
     setSharedTitle(title);
     setLines((prev) => prev.map((l) => ({ ...l, title })));
@@ -379,6 +383,8 @@ export default function ExpenseBatchForm() {
     setBatchSharedFormValues({});
     setSubmitResult(null);
     setReceiptTick((t) => t + 1);
+    setLineLoadErrors({});
+    setSharedLoadErrors({});
   };
 
   const handleClearForm = async () => {
@@ -400,19 +406,72 @@ export default function ExpenseBatchForm() {
     }
   };
 
-  /** Fetch branch definitions for conditional dropdown validation. */
-  const fetchCategoryBranches = async (
-    cats: string[],
-  ): Promise<Map<string, import("@/lib/conditionalFormFieldTypes").OptionBranchDefinition[]>> => {
-    const out = new Map<string, import("@/lib/conditionalFormFieldTypes").OptionBranchDefinition[]>();
-    if (!organizationId || !allowConditionalDropdown) return out;
+  /**
+   * DOC-100 pt.1: fetch branch definitions for conditional-dropdown validation
+   * WITHOUT downloading a category's full branch graph. Only the (template,
+   * option) pairs actually selected — across shared fields and every line's
+   * own per-line selection — are requested, via the same bounded runtime RPC
+   * the per-line/shared renderers already use. Validation correctness is
+   * unaffected: getVisibleBranches only ever matches branches whose
+   * parent_option_value equals the value actually selected, so branches for
+   * options nobody picked are never relevant to validation regardless of
+   * whether they were fetched.
+   */
+  const fetchSelectedOptionBranches = async (
+    mergedLines: BatchLineInput[],
+  ): Promise<{ categoryBranches: Map<string, OptionBranchDefinition[]>; hasError: boolean }> => {
+    const categoryBranches = new Map<string, OptionBranchDefinition[]>();
+    if (!organizationId || !allowConditionalDropdown) return { categoryBranches, hasError: false };
+
+    // Collect every distinct (templateId, optionValue) pair actually selected,
+    // grouped by the category name(s) validation will look them up under.
+    const keysByCategory = new Map<string, Set<string>>();
+    const pairByKey = new Map<string, { templateId: string; optionValue: string }>();
+    const addPair = (category: string, templateId: string, optionValue: string) => {
+      if (!optionValue) return;
+      const key = `${templateId}::${optionValue}`;
+      pairByKey.set(key, { templateId, optionValue });
+      const set = keysByCategory.get(category) ?? new Set<string>();
+      set.add(key);
+      keysByCategory.set(category, set);
+    };
+
+    for (const line of mergedLines) {
+      const category = line.category?.trim() || "other";
+      const catId = categoryIdByName[category];
+      if (!catId) continue;
+
+      for (const sf of plan.shared) {
+        if (!sf.categoryIds.includes(catId)) continue;
+        if (sf.assignment.template?.field_type !== "select") continue;
+        const val = batchSharedFormValues[sf.templateId]?.fields?.[sf.templateId];
+        if (val) addPair(category, sf.templateId, val);
+      }
+
+      for (const plf of getPerLineAssignmentsForCategory(plan, catId)) {
+        if (plf.template?.field_type !== "select") continue;
+        const val = (line.formFieldValues ?? {})[plf.template.id];
+        if (val) addPair(category, plf.template.id, val);
+      }
+    }
+
+    let hasError = false;
+    const branchesByKey = new Map<string, OptionBranchDefinition[]>();
     await Promise.all(
-      cats.map(async (cat) => {
-        const branches = await ExpenseService.fetchOptionBranchesForCategory(organizationId, cat);
-        out.set(cat, branches);
+      Array.from(pairByKey.entries()).map(async ([key, { templateId, optionValue }]) => {
+        const result = await fetchRuntimeOptionBranches(supabase, organizationId, templateId, optionValue);
+        if (result.error) hasError = true;
+        branchesByKey.set(key, result.branches);
       }),
     );
-    return out;
+
+    for (const [category, keys] of keysByCategory) {
+      const branches: OptionBranchDefinition[] = [];
+      for (const key of keys) branches.push(...(branchesByKey.get(key) ?? []));
+      categoryBranches.set(category, branches);
+    }
+
+    return { categoryBranches, hasError };
   };
 
   const goNextFromStep1 = () => {
@@ -474,6 +533,15 @@ export default function ExpenseBatchForm() {
       }
     }
 
+    if (anyLoadError) {
+      toast({
+        variant: "destructive",
+        title: "Could not load additional fields",
+        description: "Some conditional field configuration failed to load. Please retry before continuing.",
+      });
+      return;
+    }
+
     // Validate required custom template and branch fields before advancing.
     const mergedForValidation = applyBatchFieldPlanToLines(
       linesWithTemps(),
@@ -482,8 +550,15 @@ export default function ExpenseBatchForm() {
       categoryNameById,
       categoryIdByName,
     );
-    const uniqueCats = uniqueCategoriesInLines(mergedForValidation);
-    const categoryBranches = await fetchCategoryBranches(uniqueCats);
+    const { categoryBranches, hasError: branchFetchError } = await fetchSelectedOptionBranches(mergedForValidation);
+    if (branchFetchError) {
+      toast({
+        variant: "destructive",
+        title: "Could not load additional fields",
+        description: "Some conditional field configuration failed to load. Please retry before continuing.",
+      });
+      return;
+    }
     const customCheck = validateBatchCustomFieldsFromPlan({
       lines: mergedForValidation.map((l, i) => ({
         lineIndex: i,
@@ -510,6 +585,14 @@ export default function ExpenseBatchForm() {
 
   const handleSubmit = async () => {
     if (!user?.id) return;
+    if (anyLoadError) {
+      toast({
+        variant: "destructive",
+        title: "Could not load additional fields",
+        description: "Some conditional field configuration failed to load. Please retry before submitting.",
+      });
+      return;
+    }
     const withTemps = linesWithTemps();
     const attachCheck = validateBatchAttachments({
       lines: withTemps,
@@ -530,7 +613,16 @@ export default function ExpenseBatchForm() {
     );
 
     // ── Validate required custom template and branch fields before any writes ──
-    const submitCategoryBranches = await fetchCategoryBranches(uniqueCategoriesInLines(mergedLines));
+    const { categoryBranches: submitCategoryBranches, hasError: submitBranchFetchError } =
+      await fetchSelectedOptionBranches(mergedLines);
+    if (submitBranchFetchError) {
+      toast({
+        variant: "destructive",
+        title: "Could not load additional fields",
+        description: "Some conditional field configuration failed to load. Please retry before submitting.",
+      });
+      return;
+    }
     const customFieldCheck = validateBatchCustomFieldsFromPlan({
       lines: mergedLines.map((l, i) => ({
         lineIndex: i,
@@ -566,14 +658,14 @@ export default function ExpenseBatchForm() {
     for (const l of mergedLines) {
       const formFieldValues = l.formFieldValues || {};
       const branchValues = l.branchValues || {};
+      // Reuse submitCategoryBranches (already fetched above, bounded to only
+      // the option values actually selected across this batch) rather than
+      // re-downloading the category's branch graph per line.
       const visibleBranchIds =
         allowConditionalDropdown && organizationId
           ? [
               ...getVisibleBranchIds(
-                await ExpenseService.fetchOptionBranchesForCategory(
-                  organizationId,
-                  l.category?.trim() || "other",
-                ),
+                submitCategoryBranches.get(l.category?.trim() || "other") ?? [],
                 formFieldValues,
                 branchValues,
                 allowNestedConditional,
@@ -907,6 +999,7 @@ export default function ExpenseBatchForm() {
                   allowConditionalDropdown={allowConditionalDropdown}
                   allowNested={allowNestedConditional}
                   userId={user?.id}
+                  onLoadErrorChange={(hasError) => handleSharedLoadErrorChange(sf.templateId, hasError)}
                 />
               ))}
             {!isMobile && lineViewMode === "table" ? (
@@ -936,9 +1029,7 @@ export default function ExpenseBatchForm() {
                 getReceiptCount={getReceiptCount}
                 onUpdateLine={updateLine}
                 onDuplicate={duplicateLineAt}
-                onRemove={(id) =>
-                  setLines((prev) => prev.filter((l) => l.clientId !== id))
-                }
+                onRemove={removeLine}
                 onReceiptUpload={registerLineReceipt}
               />
             ) : (
@@ -969,9 +1060,7 @@ export default function ExpenseBatchForm() {
                         variant="ghost"
                         size="icon"
                         disabled={lines.length <= BATCH_EXPENSE_MIN_LINES}
-                        onClick={() =>
-                          setLines((prev) => prev.filter((l) => l.clientId !== line.clientId))
-                        }
+                        onClick={() => removeLine(line.clientId)}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -1000,7 +1089,8 @@ export default function ExpenseBatchForm() {
                     return (
                       <BatchLineFormFields
                         assignments={perLineAssignments}
-                        optionBranches={allowConditionalDropdown ? (branchesByCategoryId[catId] ?? []) : []}
+                        categoryId={catId}
+                        lineId={line.clientId}
                         formFieldValues={line.formFieldValues || {}}
                         branchValues={line.branchValues || {}}
                         onFormFieldValuesChange={(formFieldValues) =>
@@ -1009,9 +1099,11 @@ export default function ExpenseBatchForm() {
                         onBranchValuesChange={(branchValues) =>
                           updateLine(line.clientId, { branchValues })
                         }
+                        allowConditionalDropdown={allowConditionalDropdown}
                         allowNested={allowNestedConditional}
                         organizationId={organizationId}
                         userId={user?.id}
+                        onLoadErrorChange={(hasError) => handleLineLoadErrorChange(line.clientId, hasError)}
                       />
                     );
                   })()}

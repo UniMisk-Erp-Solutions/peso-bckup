@@ -78,6 +78,8 @@ import { AsyncOperationProgress } from "@/components/AsyncOperationProgress";
 import {
   loadCorrectionCustomFields,
   validateCorrectionCustomFields,
+  fetchCorrectionOptionBranches,
+  mergeCorrectionOptionBranches,
   type CorrectionCustomFieldsModel,
   EMPTY_CORRECTION_FIELDS,
 } from "@/lib/loadCorrectionCustomFields";
@@ -448,6 +450,21 @@ export default function AdminPanel() {
     setCorrectionDialogOpen(true);
   };
 
+  /** DOC-100 pt.2: the reviewer changing a parent select's value mid-correction
+   *  must load that option's tree on demand -- the initial load only ever
+   *  fetched whichever value was SAVED when the dialog opened. */
+  const handleCorrectionSelectOptionValue = async (templateId: string, optionValue: string) => {
+    if (!organizationId || !optionValue) return;
+    const result = await fetchCorrectionOptionBranches(supabase, organizationId, templateId, optionValue);
+    setCorrFieldModel((prev) => ({
+      ...prev,
+      optionBranches: mergeCorrectionOptionBranches(prev.optionBranches, templateId, result.branches),
+      loadError: result.error
+        ? "Could not load additional field configuration for the selected option. Please retry."
+        : undefined,
+    }));
+  };
+
   const submitExpenseCorrection = async () => {
     if (!selectedExpense || !user) return;
     setCorrectionLoading(true);
@@ -455,6 +472,10 @@ export default function AdminPanel() {
       const amt = Number(corrAmount);
       if (!Number.isFinite(amt) || amt <= 0) {
         throw new Error("Amount must be a positive number");
+      }
+
+      if (corrFieldModel.loadError) {
+        throw new Error(corrFieldModel.loadError);
       }
 
       const vResult = validateCorrectionCustomFields(
@@ -1877,6 +1898,7 @@ export default function AdminPanel() {
                 }
                 allowNested={allowNestedConditional}
                 organizationId={organizationId}
+                onSelectOptionValue={handleCorrectionSelectOptionValue}
               />
               <div>
                 <Label htmlFor="m-corr-reason">Reason for correction (audit)</Label>
@@ -2803,6 +2825,7 @@ export default function AdminPanel() {
                     }
                     allowNested={allowNestedConditional}
                     organizationId={organizationId}
+                    onSelectOptionValue={handleCorrectionSelectOptionValue}
                   />
                   <div>
                     <Label htmlFor="corr-reason">Reason for correction (audit)</Label>

@@ -25,8 +25,7 @@ import {
   isUserTeamManagerForExpense,
 } from "@/lib/managerActionableExpenses";
 import { fetchReviewerCorrectedExpenseIds } from "@/lib/supabaseInQuery";
-import { getVisibleBranchIds, normalizeBranchRow } from "@/lib/conditionalFormFields";
-import type { BranchFieldValueMap, OptionBranchDefinition } from "@/lib/conditionalFormFieldTypes";
+import type { BranchFieldValueMap } from "@/lib/conditionalFormFieldTypes";
 import type { BatchExpenseAttachmentMode } from "@/lib/expenseBatchConstants";
 import type { BatchReviewRole } from "@/lib/batchExpenseReview";
 import {
@@ -191,6 +190,32 @@ export type BatchSubmitResult = {
   successCount: number;
   failureCount: number;
 };
+
+/** Per-child transaction detail returned by a successful batch verify. */
+export type BatchVerifyTransaction = {
+  transactionNumber: string | null;
+  employeeId: string | null;
+  statusBefore: string;
+  statusAfter: string;
+  tierBefore: string | null;
+  tierAfter: string | null;
+};
+
+/** Per-child blocker detail returned when a batch verify cannot proceed. */
+export type BatchVerifyBlocker = {
+  expenseId: string;
+  transactionNumber: string | null;
+  employeeId: string | null;
+  status: string;
+  approvalTier: string | null;
+  reason: string;
+};
+
+/** Result of `ExpenseService.verifyBatchAtomic` -- DOC-098. */
+export type BatchVerifyResult =
+  | { ok: true; batchId: string; verifiedCount: number; transactions: BatchVerifyTransaction[] }
+  | { ok: false; batchId: string; code: "batch_not_found" }
+  | { ok: false; batchId: string; code: "batch_verification_blocked"; blockers: BatchVerifyBlocker[] };
 
 /** Payload for `apply_expense_correction` RPC (partial updates). */
 export interface ExpenseCorrectionUpdates {
@@ -1071,6 +1096,90 @@ export class ExpenseService {
     return updatedExpense as Expense;
   }
 
+  /**
+   * Atomically verify every eligible child of ONE batch at the hierarchy tier
+   * (team_leader/executive), via the server-authoritative
+   * review_verify_batch_atomic_v1 RPC (DOC-098). The RPC resolves batch
+   * membership itself -- this method never passes a client-held expense-id
+   * list -- locks and prevalidates every current non-terminal child, and
+   * either advances all of them or mutates nothing, returning a structured
+   * per-child blocker list.
+   *
+   * SECURITY REVISION: the RPC also derives next-tier routing (tier/
+   * reviewer/engineer) itself, server-side -- this method no longer computes
+   * or sends any of that. An earlier draft passed p_next_approval_tier/
+   * p_next_assigned_reviewer_id/p_next_assigned_engineer_id as client
+   * parameters on the assumption that review_advance_expense_hierarchy_tier
+   * independently validated them; reading its live definition proved it does
+   * not (it writes assigned_reviewer_id/assigned_engineer_id from whatever
+   * the caller supplies, beyond a bare tier-string enum check). Removing
+   * these parameters from the RPC's signature entirely closes that gap --
+   * there is nothing left for a client to tamper with (DOC-098 same-day
+   * security review).
+   */
+  static async verifyBatchAtomic(
+    batchId: string,
+    reviewerId: string,
+    comment?: string,
+    options?: { reviewerRole?: string | null },
+  ): Promise<BatchVerifyResult> {
+    const organizationId = await getUserOrganizationId(reviewerId);
+    if (!organizationId) {
+      throw new Error("Reviewer is not associated with an organization");
+    }
+
+    const reviewerRole =
+      options?.reviewerRole ?? (await this.fetchMembershipRole(organizationId, reviewerId));
+    if (reviewerRole !== "team_leader" && reviewerRole !== "executive") {
+      throw new Error("Only team leaders and executives can bulk-verify batches");
+    }
+
+    const { data: rpcResult, error: rpcError } = await supabase.rpc(
+      "review_verify_batch_atomic_v1",
+      {
+        p_batch_id: batchId,
+        p_comment: comment ?? null,
+      },
+    );
+
+    throwRpcError(rpcError);
+
+    const result = (rpcResult ?? {}) as Record<string, unknown>;
+
+    if (result.ok === true) {
+      const transactions = ((result.transactions as Record<string, unknown>[]) ?? []).map(
+        (t) => ({
+          transactionNumber: (t.transaction_number as string | null) ?? null,
+          employeeId: (t.employee_id as string | null) ?? null,
+          statusBefore: String(t.status_before ?? ""),
+          statusAfter: String(t.status_after ?? ""),
+          tierBefore: (t.tier_before as string | null) ?? null,
+          tierAfter: (t.tier_after as string | null) ?? null,
+        }),
+      );
+      return {
+        ok: true,
+        batchId,
+        verifiedCount: Number(result.verified_count ?? transactions.length),
+        transactions,
+      };
+    }
+
+    if (result.code === "batch_not_found") {
+      return { ok: false, batchId, code: "batch_not_found" };
+    }
+
+    const blockers = ((result.blockers as Record<string, unknown>[]) ?? []).map((b) => ({
+      expenseId: String(b.expense_id ?? ""),
+      transactionNumber: (b.transaction_number as string | null) ?? null,
+      employeeId: (b.employee_id as string | null) ?? null,
+      status: String(b.status ?? ""),
+      approvalTier: (b.approval_tier as string | null) ?? null,
+      reason: String(b.reason ?? ""),
+    }));
+    return { ok: false, batchId, code: "batch_verification_blocked", blockers };
+  }
+
   static async isBatchExpenseEntryEnabled(organizationId: string): Promise<boolean> {
     const { data, error } = await supabase
       .from("organization_features")
@@ -1170,51 +1279,6 @@ export class ExpenseService {
   ): Promise<void> {
     const payload = buildExpenseCustomFieldPayload({ templateValues: formFieldValues });
     await this.replaceExpenseFormFieldValues(expenseId, organizationId, payload);
-  }
-
-  static async fetchOptionBranchesForCategory(
-    organizationId: string,
-    categoryName: string,
-  ): Promise<OptionBranchDefinition[]> {
-    const { data: categoryData } = await supabase
-      .from("expense_categories")
-      .select("id")
-      .eq("organization_id", organizationId)
-      .eq("name", categoryName)
-      .maybeSingle();
-    if (!categoryData) return [];
-
-    const { data: assignments } = await supabase
-      .from("expense_category_form_fields")
-      .select("template_id, expense_form_field_templates(field_type)")
-      .eq("organization_id", organizationId)
-      .eq("category_id", categoryData.id);
-
-    const selectIds = (assignments || [])
-      .filter((a: { expense_form_field_templates?: { field_type?: string } }) =>
-        a.expense_form_field_templates?.field_type === "select",
-      )
-      .map((a: { template_id: string }) => a.template_id);
-
-    return this.fetchOptionBranchesForTemplates(organizationId, selectIds);
-  }
-
-  static async fetchOptionBranchesForTemplates(
-    organizationId: string,
-    templateIds: string[],
-  ): Promise<OptionBranchDefinition[]> {
-    if (templateIds.length === 0) return [];
-    const { data, error } = await supabase
-      .from("expense_form_field_option_branches")
-      .select("*")
-      .eq("organization_id", organizationId)
-      .in("parent_template_id", templateIds)
-      .order("display_order", { ascending: true });
-    if (error) {
-      console.error("fetchOptionBranchesForTemplates:", error);
-      return [];
-    }
-    return (data || []).map((row) => normalizeBranchRow(row as Record<string, unknown>));
   }
 
   static async saveBranchFieldValues(

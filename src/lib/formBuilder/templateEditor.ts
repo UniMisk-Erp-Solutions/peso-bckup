@@ -290,6 +290,111 @@ export function validateTemplate({
     }
   }
 
+  issues.push(...validateBranchDraftsIntegrity(options, branchDrafts));
+
+  return issues;
+}
+
+/**
+ * Cross-field integrity checks over the dependent-field draft graph, on top
+ * of validateTemplate's per-field checks above. Split out so the bulk-import
+ * dialog (and its tests) can run the same checks independently of the
+ * name/type-required basics.
+ *
+ * Classification rationale:
+ *   - ERROR: directly visible/actionable in the current edit session and
+ *     genuinely breaks the field's own behaviour (duplicate choices render a
+ *     confusing duplicate option; a duplicate field_key under one parent
+ *     makes header-matching / matrix columns ambiguous for that field).
+ *   - WARNING: structural anomalies that COULD legitimately exist in
+ *     historical data unrelated to what's being edited right now (an orphan
+ *     branch left over from a removed option, a dangling nested reference) or
+ *     that the save path already auto-heals (a blank field_key falls back to
+ *     slugifyFieldKey(name) in saveOptionBranchConfigurationAtomically) —
+ *     these should not silently block an unrelated save.
+ */
+export function validateBranchDraftsIntegrity(
+  options: string[],
+  branchDrafts: DraftOptionBranch[],
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const optionSet = new Set(options.map((o) => o.trim().toLowerCase()));
+  const localIds = new Set(branchDrafts.map((d) => d.localId));
+
+  // Duplicate root field_key per parent option.
+  const seenRootKeyPerOption = new Map<string, Set<string>>();
+  for (const d of branchDrafts) {
+    if (d.parent_branch_local_id !== null) continue;
+    if (!d.name.trim()) continue;
+    const optKey = d.parent_option_value.toLowerCase();
+    const fieldKeyLower = d.field_key.trim().toLowerCase();
+    if (!fieldKeyLower) continue;
+    let seen = seenRootKeyPerOption.get(optKey);
+    if (!seen) {
+      seen = new Set();
+      seenRootKeyPerOption.set(optKey, seen);
+    }
+    if (seen.has(fieldKeyLower)) {
+      issues.push({
+        severity: "error",
+        message: `Duplicate dependent field key "${d.field_key}" for parent option "${d.parent_option_value}"`,
+        section: "dependent",
+      });
+    } else {
+      seen.add(fieldKeyLower);
+    }
+  }
+
+  for (const d of branchDrafts) {
+    if (!d.name.trim()) continue;
+
+    // Orphan root branch: parent option no longer exists in options[].
+    if (d.parent_branch_local_id === null && !optionSet.has(d.parent_option_value.trim().toLowerCase())) {
+      issues.push({
+        severity: "warning",
+        message: `Dependent field "${d.name}" refers to parent option "${d.parent_option_value}", which no longer exists`,
+        section: "dependent",
+      });
+    }
+
+    // Empty field_key on a named branch (save auto-generates one from the name).
+    if (!d.field_key.trim()) {
+      issues.push({
+        severity: "warning",
+        message: `Dependent field "${d.name}" has no field key — one will be generated from its name on save`,
+        section: "dependent",
+      });
+    }
+
+    // Duplicate choices within a branch (case-insensitive).
+    if (d.field_type === "select" || d.field_type === "checkbox") {
+      const seen = new Set<string>();
+      for (const opt of d.options) {
+        const trimmed = opt.trim();
+        if (!trimmed) continue;
+        const lower = trimmed.toLowerCase();
+        if (seen.has(lower)) {
+          issues.push({
+            severity: "error",
+            message: `Dependent field "${d.name}" has a duplicate choice: "${trimmed}"`,
+            section: "dependent",
+          });
+        } else {
+          seen.add(lower);
+        }
+      }
+    }
+
+    // Dangling parent_branch_local_id: nested branch whose parent no longer exists.
+    if (d.parent_branch_local_id !== null && !localIds.has(d.parent_branch_local_id)) {
+      issues.push({
+        severity: "warning",
+        message: `Dependent field "${d.name}" is nested under a field that no longer exists`,
+        section: "dependent",
+      });
+    }
+  }
+
   return issues;
 }
 
@@ -305,7 +410,6 @@ export function buildCleanedOptions(options: string[]): string[] {
   }, []);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function buildTemplateData(params: {
   organizationId: string;
   name: string;

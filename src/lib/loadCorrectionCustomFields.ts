@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { OptionBranchDefinition } from "./conditionalFormFieldTypes";
 import { validateVisibleBranchFields } from "./conditionalFormFields";
+import { fetchRuntimeOptionBranches } from "./runtimeOptionBranches";
 
 export type CorrectionFieldAssignment = {
   template: {
@@ -44,15 +45,25 @@ export const EMPTY_CORRECTION_FIELDS: CorrectionCustomFieldsModel = {
 /**
  * Loads all correction-dialog custom field data for a given expense.
  *
- * Unlike the old approach (fetching only fields that have saved values),
- * this loads ALL configured fields for the expense's category so empty
- * configured fields are shown and all field types render correctly.
+ * Loads ALL configured template fields for the expense's category (so empty
+ * configured fields are shown and all field types render correctly), but
+ * DOC-100 pt.2: branch (conditional child) definitions are fetched only for
+ * whichever parent option value is actually SAVED for each select template —
+ * never the whole category's branch graph via an unbounded
+ * `.in("parent_template_id", [...])` query. Uses the same bounded,
+ * employee-safe get_runtime_form_option_configuration RPC the single/batch
+ * submission flows already use (see fetchRuntimeOptionBranches). Callers
+ * that let the reviewer change a parent value mid-correction must call
+ * fetchCorrectionOptionBranches + mergeCorrectionOptionBranches to load that
+ * new option's tree on demand, same shape as this initial load.
  *
  * Loading order:
  * 1. Resolve category ID from expense_categories
  * 2. Load all assigned templates in display_order from expense_category_form_fields
- * 3. In parallel: fetch option branches (for select fields) + fetch existing values
- * 4. Overlay existing template and branch values onto defaults
+ * 3. Load the expense's existing saved template + branch values
+ * 4. Overlay existing values onto defaults to determine each select
+ *    template's saved parent value
+ * 5. Request the branch tree ONLY for those saved parent values
  */
 export async function loadCorrectionCustomFields(
   supabase: SupabaseClient,
@@ -127,49 +138,55 @@ export async function loadCorrectionCustomFields(
 
   if (!categoryFormFields.length) return { ...EMPTY_CORRECTION_FIELDS, categoryId: cat.id };
 
-  // Step 3: Collect template IDs for select fields (they may have branch children)
-  const selectTemplateIds = categoryFormFields
-    .filter((f) => f.template.field_type === "select")
-    .map((f) => f.template.id);
+  // Step 3: Load this expense's existing saved template + branch values.
+  const { data: existingRowsRaw } = await supabase
+    .from("expense_form_field_values")
+    .select("template_id, branch_field_id, field_value")
+    .eq("expense_id", expenseId)
+    .eq("organization_id", organizationId);
+  const existingRows = (existingRowsRaw ?? []) as Array<{
+    template_id: string | null;
+    branch_field_id: string | null;
+    field_value: string | null;
+  }>;
 
-  // Step 4: Parallel — fetch option branches + existing saved values
-  const [branches, existingRows] = await Promise.all([
-    selectTemplateIds.length > 0
-      ? supabase
-          .from("expense_form_field_option_branches")
-          .select(
-            "id, organization_id, parent_template_id, parent_option_value, parent_branch_id, " +
-              "field_key, name, field_type, required, placeholder, help_text, default_value, " +
-              "validation_rules, options, display_order",
-          )
-          .eq("organization_id", organizationId)
-          .in("parent_template_id", selectTemplateIds)
-          .order("display_order", { ascending: true })
-          .then((r) => (r.data ?? []) as OptionBranchDefinition[])
-      : Promise.resolve([] as OptionBranchDefinition[]),
-    supabase
-      .from("expense_form_field_values")
-      .select("template_id, branch_field_id, field_value")
-      .eq("expense_id", expenseId)
-      .eq("organization_id", organizationId)
-      .then((r) => (r.data ?? []) as Array<{ template_id: string | null; branch_field_id: string | null; field_value: string | null }>),
-  ]);
-
-  // Step 5: Build initial values — checkbox fields default to "false"
+  // Step 4: Build initial values — checkbox fields default to "false" — then
+  // overlay the saved values on top so we know each select template's saved
+  // parent option value.
   const formFieldValues: Record<string, string> = {};
   for (const f of categoryFormFields) {
     if (f.template.field_type === "checkbox") {
       formFieldValues[f.template.id] = "false";
     }
   }
-
-  // Step 6: Overlay existing values
   const branchValues: Record<string, string> = {};
   for (const row of existingRows) {
     if (row.template_id) {
       formFieldValues[String(row.template_id)] = String(row.field_value ?? "");
     } else if (row.branch_field_id) {
       branchValues[String(row.branch_field_id)] = String(row.field_value ?? "");
+    }
+  }
+
+  // Step 5: Request the branch tree ONLY for select templates that actually
+  // have a saved parent value — never the whole category's branch graph.
+  const selectFieldsWithSavedValue = categoryFormFields.filter(
+    (f) => f.template.field_type === "select" && formFieldValues[f.template.id],
+  );
+  let optionBranches: OptionBranchDefinition[] = [];
+  let loadError: string | undefined;
+  if (selectFieldsWithSavedValue.length > 0) {
+    const results = await Promise.all(
+      selectFieldsWithSavedValue.map((f) =>
+        fetchRuntimeOptionBranches(supabase, organizationId, f.template.id, formFieldValues[f.template.id]),
+      ),
+    );
+    for (const r of results) {
+      optionBranches.push(...r.branches);
+      if (r.error) {
+        loadError =
+          "Could not load additional field configuration for one or more selected options. Please retry.";
+      }
     }
   }
 
@@ -180,14 +197,58 @@ export async function loadCorrectionCustomFields(
 
   return {
     categoryFormFields,
-    optionBranches: branches,
+    optionBranches,
     formFieldValues,
     branchValues,
     initialFormFieldValues,
     initialBranchValues,
     categoryId: cat.id,
+    loadError,
   };
 }
+
+/**
+ * Merge a freshly-fetched option's branch tree into an existing flat
+ * optionBranches array, replacing whatever was previously loaded for that
+ * SAME parent template (root branches AND their nested descendants) while
+ * leaving every other template's branches untouched. Mirrors the by-template
+ * merge model useOnDemandOptionBranches uses for the employee/batch flows.
+ */
+export function mergeCorrectionOptionBranches(
+  current: OptionBranchDefinition[],
+  templateId: string,
+  freshBranches: OptionBranchDefinition[],
+): OptionBranchDefinition[] {
+  // Collect every branch (root + nested descendants, transitively) currently
+  // rooted under this template so its whole stale subtree is dropped, not
+  // just the root level.
+  const toDrop = new Set<string>();
+  for (const b of current) {
+    if (b.parent_template_id === templateId) toDrop.add(b.id);
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const b of current) {
+      if (b.parent_branch_id && toDrop.has(b.parent_branch_id) && !toDrop.has(b.id)) {
+        toDrop.add(b.id);
+        changed = true;
+      }
+    }
+  }
+  const kept = current.filter((b) => !toDrop.has(b.id));
+  return [...kept, ...freshBranches];
+}
+
+/**
+ * Fetch one parent option's branch tree on demand — call this when the
+ * reviewer changes a select-type field's value mid-correction (the initial
+ * loadCorrectionCustomFields call only ever fetched the value that was
+ * SAVED at open time). Thin, named re-export of fetchRuntimeOptionBranches
+ * so correction-dialog call sites don't need to know about the shared
+ * runtime-branches module directly.
+ */
+export const fetchCorrectionOptionBranches = fetchRuntimeOptionBranches;
 
 /**
  * Validates custom field values before saving a correction.

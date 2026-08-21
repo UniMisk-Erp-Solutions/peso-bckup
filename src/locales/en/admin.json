@@ -174,14 +174,29 @@
       "description": "Some selected expenses have not yet completed the verification flow.",
       "descriptionSingle": "This expense has not yet completed the verification flow. Do you want to proceed with Manager approval?",
       "readyNow": "Ready now",
-      "waiting": "Waiting / not yet verified",
+      "waiting": "Waiting for previous verification",
       "overLimit": "Over your approval limit",
       "completed": "Already completed",
       "selectedTotal": "Selected total",
       "overrideUnavailable": "Manager override server support is not enabled in this environment, so waiting items cannot be approved here.",
-      "overrideWillApply": "{{count}} waiting item(s) will be approved with Manager override.",
+      "viewWaiting": "View {{count}} waiting",
+      "hideWaiting": "Hide",
+      "batchBadge": "Batch",
+      "employeeIdShort": "Employee",
       "stop": "Stop",
-      "proceed": "Proceed with approval ({{count}})"
+      "approveReadyNow": "Approve {{count}} ready now",
+      "managerOverride": "Manager Override {{count}} waiting"
+    },
+    "overrideConfirm": {
+      "title": "Override verification workflow?",
+      "description": "You are about to approve {{count}} expense(s) that have not completed their normal verification stage.",
+      "cancel": "Cancel",
+      "confirm": "Override and approve {{count}}"
+    },
+    "batchVerifyBlockers": {
+      "title": "{{count}} batch(es) could not be verified",
+      "description": "Nothing was changed for these batches. Every child of a batch must be eligible before any of it advances.",
+      "close": "Close"
     },
     "approvedStayVisible": "Approved and rejected expenses stay in this list so you can open them again (View only).",
     "timeline": {
@@ -215,7 +230,9 @@
       }
     },
     "toast": {
-      "correctionFailed": "Correction failed"
+      "correctionFailed": "Correction failed",
+      "approvalResolutionFailed": "Could not load the complete selected batch",
+      "approvalResolutionFailedDescription": "No expenses were approved. Retry."
     },
     "progress": {
       "loadingExpenses": "Loading expenses…",
@@ -403,5 +420,53 @@
       "list": "List",
       "matrix": "Matrix"
     }
+  },
+  "dropdownImport": {
+    "dialogTitle": "Import dropdown data",
+    "dialogDescription": "Paste from Excel, Google Sheets, CSV, or a simple list — or upload a file.",
+    "tabPaste": "Paste data",
+    "tabUpload": "Upload file",
+    "pastePlaceholder": "Paste values here...\n\nEither a simple list (one per line) or a table with dependent columns copied straight from Excel or Google Sheets.",
+    "downloadSimpleSample": "Download simple-list sample",
+    "downloadDependentSample": "Download dependent-table sample",
+    "dropzoneTitle": "Drop a file here or click to choose",
+    "dropzoneSupported": "Supported: CSV, TSV, TXT, XLSX, XLS",
+    "loaded": "Loaded: {{fileName}}",
+    "unsupportedFileType": "Unsupported file type. Supported formats: CSV, TSV, TXT, XLSX, XLS.",
+    "noSheets": "This workbook has no sheets.",
+    "excelReadError": "Could not read this Excel file. It may be corrupt or password-protected.",
+    "genericReadError": "Could not read this file.",
+    "fileTooLarge": "File too large ({{sizeMB}} MB). Max is {{maxMB}} MB.",
+    "sheetLabel": "Sheet:",
+    "detectedFormat": "Detected format:",
+    "formatFlat": "Simple list",
+    "formatDependent": "Dependent dropdown table",
+    "parentColumnLabel": "Parent column:",
+    "dependentColumnsLabel": "Dependent columns:",
+    "firstRowIsHeader": "First row is a header",
+    "ambiguousHeadersTitle": "Some columns match more than one existing field — choose how to map them:",
+    "chooseField": "Choose a field",
+    "useExisting": "Use existing: {{name}}",
+    "createNewField": "Create new field",
+    "cannotApply": "Cannot apply",
+    "readyToApply": "Ready to apply",
+    "previewFlat": "Preview (first {{shown}} of {{total}})",
+    "previewDependent": "Preview (first {{shown}} of {{total}} rows)",
+    "importModeLabel": "Import mode",
+    "mergeTitle": "Merge with existing data",
+    "mergeDescription": "Keeps everything you already have; adds missing options/choices and preserves existing field settings and nested dependent branches.",
+    "replaceTitle": "Replace imported scope",
+    "replaceDescription": "Replaces choices only for the parent options and dependent fields that are actually part of this import. Everything else in the template is left untouched. Requires confirmation.",
+    "cancel": "Cancel",
+    "applyToDraft": "Apply to draft",
+    "replaceConfirmTitle": "Replace imported scope?",
+    "replaceConfirmIntro": "This will replace dependent-field choices only for the parent options and columns present in this import. Nothing outside that scope is affected.",
+    "replaceConfirmParentOptions": "Parent options affected ({{count}}): {{list}}",
+    "replaceConfirmFields": "Dependent fields affected ({{count}}): {{list}}",
+    "replaceConfirmBranchesRemoved": "Existing branches that will be replaced: {{count}}",
+    "replaceConfirmNestedRemoved": "{{count}} nested dependent branch(es) configured under those fields will also be removed.",
+    "replaceConfirmFinal": "This cannot be undone once you save the template.",
+    "replaceConfirmAction": "Replace and apply to draft",
+    "none": "none"
   }
 }

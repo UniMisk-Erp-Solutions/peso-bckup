@@ -23,6 +23,12 @@ interface CorrectionCustomFieldsSectionProps {
   allowNested?: boolean;
   organizationId?: string | null;
   userId?: string | null;
+  /** DOC-100 pt.2: fired when the reviewer changes a select-type template's
+   *  value, so the caller can fetch that ONE option's branches on demand
+   *  (fetchCorrectionOptionBranches) instead of every option ever having
+   *  been downloaded up front. Optional so this component still works
+   *  standalone/in tests without it. */
+  onSelectOptionValue?: (templateId: string, optionValue: string) => void;
 }
 
 export function CorrectionCustomFieldsSection(props: CorrectionCustomFieldsSectionProps) {
@@ -40,6 +46,7 @@ export function CorrectionCustomFieldsSection(props: CorrectionCustomFieldsSecti
         allowNested={props.allowNested ?? false}
         organizationId={props.organizationId}
         userId={props.userId}
+        onSelectOptionValue={props.onSelectOptionValue}
       />
     </div>
   );

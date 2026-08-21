@@ -43,12 +43,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Plus,
@@ -68,6 +62,7 @@ import {
   ChevronUp,
   Square,
   CheckSquare,
+  Upload,
 } from "lucide-react";
 import {
   Popover,
@@ -81,22 +76,33 @@ import {
   deserializePresetSchema,
   serializePresetSchema,
   buildPresetMatrix,
+  inferMatrixColumnsFromDrafts,
   type ReusableSubFieldDefinition,
   type ReusableSubFieldSet,
   type PresetSummary,
   type ApplyPresetMode,
   type MatrixRow,
 } from "@/lib/formBuilder/subFieldPresets";
+import {
+  DropdownBulkImportDialog,
+  type DropdownBulkImportApplyPayload,
+} from "@/components/form-builder/DropdownBulkImportDialog";
+import { dedupePreservingFirst } from "@/lib/formBuilder/dropdownBulkImport";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useOperationProgress } from "@/hooks/useOperationProgress";
 import { AsyncOperationProgress } from "@/components/AsyncOperationProgress";
 import { OptionBranchEditor } from "@/components/OptionBranchEditor";
 import {
-  loadDraftBranchesForTemplate,
   saveOptionBranchConfigurationAtomically,
   type DraftOptionBranch,
 } from "@/lib/optionBranchPersistence";
+import { ServerPagedParentOptionsSection } from "@/components/form-builder/ServerPagedParentOptionsSection";
+import { MatrixEditorPanel } from "@/components/form-builder/MatrixEditorPanel";
+import { PresetToolbar } from "@/components/form-builder/PresetToolbar";
+import { LegacyOrphanGroupsDialog } from "@/components/form-builder/LegacyOrphanGroupsDialog";
+import { useTemplateEditorSummary } from "@/lib/formBuilder/useTemplateEditorSummary";
+import type { TemplateEditorSummary } from "@/lib/formBuilder/categoryServerSearchV2";
 import {
   buildIndexedOptions,
   buildBranchIndexes,
@@ -106,10 +112,8 @@ import {
   deleteParentOption,
   isSnapshotDirty,
   makeSnapshot,
-  mergeBulkOptions,
   pageCount,
   paginateItems,
-  parseBulkOptionValues,
   renameParentOption,
   validateTemplate,
   type TemplateEditorSnapshot,
@@ -176,10 +180,6 @@ export function FormFieldTemplateEditorDialog({
   const [optionPage, setOptionPage] = useState(1);
   const [optionPageSize, setOptionPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [newOptionValue, setNewOptionValue] = useState("");
-  const [bulkInput, setBulkInput] = useState("");
-  const [bulkFileName, setBulkFileName] = useState("");
-  const [bulkOpen, setBulkOpen] = useState(false);
-  const [lastBulkSummary, setLastBulkSummary] = useState("");
   const [deleteConfirmOption, setDeleteConfirmOption] = useState<{
     originalIndex: number;
     value: string;
@@ -206,6 +206,22 @@ export function FormFieldTemplateEditorDialog({
   const [presetsLoadState, setPresetsLoadState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [presetDbAvailable, setPresetDbAvailable] = useState<boolean | null>(null); // null = unknown
 
+  // ── Server-paged editor summary (existing templates only) ───────────────────
+  // Header badge counts for an existing template come from this tiny
+  // server-computed aggregate instead of the (no longer eagerly loaded)
+  // local options[]/branchDrafts arrays. See DOC-097 "Phase 2".
+  const summary = useTemplateEditorSummary(
+    organizationId,
+    open && selectedTemplate ? selectedTemplate.id : null,
+  );
+  // An EXISTING select/checkbox template edits its parent options and
+  // dependent fields through the server-paged sections (search → open →
+  // edit → save one option at a time) instead of the old fully-downloaded
+  // local options[]/branchDrafts arrays. A brand-new (unsaved) template has
+  // no id to search against yet, so it always keeps the old local flow.
+  const isServerPagedMode = Boolean(selectedTemplate) && (type === "select" || type === "checkbox");
+  const [orphanDialogOpen, setOrphanDialogOpen] = useState(false);
+
   // ── UI state ──────────────────────────────────────────────────────────────────
   const [activeSection, setActiveSection] = useState<Section>("basics");
   const [saving, setSaving] = useState(false);
@@ -214,6 +230,10 @@ export function FormFieldTemplateEditorDialog({
   // ── Dirty-state tracking ──────────────────────────────────────────────────────
   const openingSnapshot = useRef<string>("");
   const [discardOpen, setDiscardOpen] = useState(false);
+
+  // ── Bulk dropdown import (shared dialog, opened from Parent Options or
+  //    Dependent Fields — see DropdownBulkImportDialog.tsx) ────────────────────
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
 
   const currentSnapshot = useMemo(
     (): TemplateEditorSnapshot => ({
@@ -269,16 +289,18 @@ export function FormFieldTemplateEditorDialog({
   }, [options, configuredParentOptions, showConfiguredOnly, parentSearch]);
 
   // ── Validation ────────────────────────────────────────────────────────────────
-  const validationIssues = useMemo(
-    () =>
-      validateTemplate({
-        name,
-        type,
-        options,
-        branchDrafts,
-      }),
-    [name, type, options, branchDrafts],
-  );
+  const validationIssues = useMemo(() => {
+    // In server-paged mode, `options`/`branchDrafts` are deliberately never
+    // loaded here — validating them would spuriously flag "0 options" and
+    // "no choices" for every existing dropdown template. Each option is
+    // validated (client-side project-integrity + duplicate-key checks, plus
+    // the server RPC's own checks) independently at the moment it is saved,
+    // inside ServerPagedParentOptionsSection.
+    if (isServerPagedMode) {
+      return name.trim() ? [] : [{ severity: "error" as const, message: "Field name is required", section: "basics" as const }];
+    }
+    return validateTemplate({ name, type, options, branchDrafts });
+  }, [isServerPagedMode, name, type, options, branchDrafts]);
 
   const hasBlockingErrors = useMemo(
     () => validationIssues.some((i) => i.severity === "error"),
@@ -325,10 +347,7 @@ export function FormFieldTemplateEditorDialog({
     setOptionPage(1);
     setOptionPageSize(DEFAULT_PAGE_SIZE);
     setNewOptionValue("");
-    setBulkInput("");
-    setBulkFileName("");
-    setLastBulkSummary("");
-    setBulkOpen(false);
+    setBulkImportOpen(false);
     setBranchDrafts([]);
     setBranchLoadState("idle");
     setSelectedParentOption(null);
@@ -389,25 +408,15 @@ export function FormFieldTemplateEditorDialog({
         });
     }
 
-    // Load branch drafts for existing select templates
-    if (tmpl && allowConditionalDropdown && tp === "select" && organizationId) {
-      setBranchLoadState("loading");
-      loadDraftBranchesForTemplate(organizationId, tmpl.id)
-        .then((drafts) => {
-          setBranchDrafts(drafts);
-          setBranchLoadState("success");
-          // Update baseline to include loaded drafts
-          setTimeout(() => {
-            openingSnapshot.current = makeSnapshot({
-              name: n, type: tp, required: req, placeholder: ph,
-              defaultValue: dv, helpText: ht, min: mn, max: mx,
-              options: opts, branchDrafts: drafts,
-            });
-          }, 0);
-        })
-        .catch(() => {
-          setBranchLoadState("error");
-        });
+    // An EXISTING select/checkbox template no longer eagerly downloads its
+    // branch graph here — the Parent Options / Dependent Fields tabs use
+    // ServerPagedParentOptionsSection, which loads exactly one option's
+    // branches on demand when it's opened, and saves it independently.
+    // branchLoadState only needs to not read as "loading"/"error" so the
+    // dialog-wide Save button isn't blocked on a fetch that no longer
+    // happens here. See DOC-097 "Phase 2".
+    if (tmpl) {
+      setBranchLoadState("success");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, selectedTemplate?.id]);
@@ -495,41 +504,23 @@ export function FormFieldTemplateEditorDialog({
     setDeleteConfirmOption(null);
   }, [deleteConfirmOption, options, branchDrafts, selectedParentOption]);
 
-  const handleBulkAdd = useCallback(() => {
-    const incoming = parseBulkOptionValues(bulkInput);
-    const { next, added, skipped } = mergeBulkOptions(options, incoming);
-    setOptions(next);
-    setBulkInput("");
-    setLastBulkSummary(`${added} added, ${skipped} duplicate${skipped !== 1 ? "s" : ""} skipped`);
-    if (added > 0) {
-      toast({ description: `${added} option${added !== 1 ? "s" : ""} added (${skipped} skipped)` });
-    }
-  }, [bulkInput, options, toast]);
-
-  const handleFileUpload = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      setBulkFileName(file.name);
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const text = ev.target?.result as string;
-        const incoming = parseBulkOptionValues(text);
-        const { next, added, skipped } = mergeBulkOptions(options, incoming);
-        setOptions(next);
-        setLastBulkSummary(`${added} added, ${skipped} duplicate${skipped !== 1 ? "s" : ""} skipped`);
-        toast({ description: `Imported ${file.name}: ${added} added, ${skipped} skipped` });
-      };
-      reader.readAsText(file);
-      e.target.value = "";
+  // ── Shared bulk-import dialog (DropdownBulkImportDialog) ────────────────────
+  // Handles BOTH flat option-list imports and dependent-table imports (which
+  // populate options[] and branchDrafts[] together). Only ever folds the
+  // fully-computed result into local draft state — never touches Supabase.
+  const handleBulkImportApply = useCallback(
+    (payload: DropdownBulkImportApplyPayload) => {
+      setOptions(payload.options);
+      setBranchDrafts(payload.branchDrafts);
+      toast({ title: "Import applied to draft", description: payload.summaryText });
     },
-    [options, toast],
+    [toast],
   );
 
   // ── Save handler ──────────────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     if (!organizationId) return;
-    const totalSteps = selectedTemplate ? 5 : 4;
+    const totalSteps = isServerPagedMode ? 2 : selectedTemplate ? 5 : 4;
 
     try {
       setSaving(true);
@@ -551,7 +542,9 @@ export function FormFieldTemplateEditorDialog({
 
       // STEP 1 — Validate
       startOperation("Validating template…", {
-        description: `Checking ${options.length} parent options and ${branchDrafts.length} dependent fields.`,
+        description: isServerPagedMode
+          ? "Checking the field name, type and settings."
+          : `Checking ${options.length} parent options and ${branchDrafts.length} dependent fields.`,
         currentStep: 1,
         totalSteps,
       });
@@ -559,34 +552,57 @@ export function FormFieldTemplateEditorDialog({
 
       if (selectedTemplate) {
         // ── Existing template save order ────────────────────────────────────────
-        // Step 2: Save branches first (stale-edit guard uses templateUpdatedAt)
-        updateOperation("Saving dependent fields…", {
-          description: `Saving ${cleanedOptions.length} parent options and ${branchDrafts.length} dependent fields in one secure transaction.`,
-          currentStep: 2,
-          totalSteps,
-        });
-        if (allowConditionalDropdown && type === "select") {
-          const rpcResult = await saveOptionBranchConfigurationAtomically(
-            organizationId,
-            selectedTemplate.id,
-            templateUpdatedAt,
-            cleanedOptions,
-            branchDrafts,
-          );
-          setTemplateUpdatedAt(rpcResult.latest_updated_at);
-        }
+        if (isServerPagedMode) {
+          // Parent options and dependent fields are no longer downloaded into
+          // this dialog at all for an existing select/checkbox template —
+          // they're edited and saved independently, one option at a time, via
+          // ServerPagedParentOptionsSection's own Save button (the option-
+          // scoped save_parent_option_branch_configuration_atomically RPC).
+          // This button therefore updates ONLY Basics metadata, and must
+          // never send `options` (the local array is empty here — it was
+          // never loaded — and sending it would silently wipe the real
+          // options[] column). See DOC-097 "Phase 2".
+          updateOperation("Saving template details…", {
+            description: "Updating the field settings and metadata.",
+            currentStep: 2,
+            totalSteps,
+          });
+          const { options: _omitOptions, ...basicsOnlyData } = templateData;
+          const { error: updateError } = await supabase
+            .from("expense_form_field_templates")
+            .update(basicsOnlyData)
+            .eq("id", selectedTemplate.id);
+          if (updateError) throw updateError;
+        } else {
+          // Step 2: Save branches first (stale-edit guard uses templateUpdatedAt)
+          updateOperation("Saving dependent fields…", {
+            description: `Saving ${cleanedOptions.length} parent options and ${branchDrafts.length} dependent fields in one secure transaction.`,
+            currentStep: 2,
+            totalSteps,
+          });
+          if (allowConditionalDropdown && type === "select") {
+            const rpcResult = await saveOptionBranchConfigurationAtomically(
+              organizationId,
+              selectedTemplate.id,
+              templateUpdatedAt,
+              cleanedOptions,
+              branchDrafts,
+            );
+            setTemplateUpdatedAt(rpcResult.latest_updated_at);
+          }
 
-        // Step 3: Update template metadata
-        updateOperation("Saving template details…", {
-          description: "Updating the field settings and metadata.",
-          currentStep: 3,
-          totalSteps,
-        });
-        const { error: updateError } = await supabase
-          .from("expense_form_field_templates")
-          .update(templateData)
-          .eq("id", selectedTemplate.id);
-        if (updateError) throw updateError;
+          // Step 3: Update template metadata
+          updateOperation("Saving template details…", {
+            description: "Updating the field settings and metadata.",
+            currentStep: 3,
+            totalSteps,
+          });
+          const { error: updateError } = await supabase
+            .from("expense_form_field_templates")
+            .update(templateData)
+            .eq("id", selectedTemplate.id);
+          if (updateError) throw updateError;
+        }
 
       } else {
         // ── New template save order ─────────────────────────────────────────────
@@ -596,9 +612,17 @@ export function FormFieldTemplateEditorDialog({
           currentStep: 2,
           totalSteps,
         });
+        // The live table's batch_entry_mode column is NOT NULL even though a
+        // template that has never had the toggle touched builds batchEntryMode
+        // as null (meant as "legacy default, fall back to the per-assignment
+        // flag"). That fallback only matters for a template with existing
+        // category assignments — a brand-new template has none yet, so "per_line"
+        // (the same value the toggle itself already writes when switched off) is
+        // an exact, safe substitute here. Only the insert path needs this: the
+        // update path leaves batch_entry_mode untouched from whatever was loaded.
         const { data: inserted, error: insertError } = await supabase
           .from("expense_form_field_templates")
-          .insert(templateData)
+          .insert({ ...templateData, batch_entry_mode: templateData.batch_entry_mode ?? "per_line" })
           .select("id, updated_at")
           .single();
         if (insertError) throw insertError;
@@ -610,29 +634,66 @@ export function FormFieldTemplateEditorDialog({
             currentStep: 3,
             totalSteps,
           });
-          await saveOptionBranchConfigurationAtomically(
-            organizationId,
-            inserted.id,
-            inserted.updated_at ?? null,
-            cleanedOptions,
-            branchDrafts,
-          );
+          // New templates skip the stale-edit guard entirely (nothing to be stale
+          // against yet) — the RPC contract requires null here, not the just-inserted
+          // row's own updated_at.
+          try {
+            await saveOptionBranchConfigurationAtomically(
+              organizationId,
+              inserted.id,
+              null,
+              cleanedOptions,
+              branchDrafts,
+            );
+          } catch (branchError) {
+            // The template row above already committed as its own request. If
+            // branch persistence then fails, don't leave a template with no
+            // dependent-field configuration behind silently: compensate by
+            // deleting exactly this row. This is safe because (a) it is scoped
+            // to both its own id and this organization_id, so it can never
+            // touch another template or another org's data, and (b) a template
+            // whose branch save just failed has zero rows in any child table
+            // yet (every FK to expense_form_field_templates — branch presets,
+            // branch config revisions, option branches, category assignments,
+            // layout items, form field values — is ON DELETE CASCADE, verified
+            // against the live schema), so the cascade is a true no-op.
+            const { error: cleanupError } = await supabase
+              .from("expense_form_field_templates")
+              .delete()
+              .eq("id", inserted.id)
+              .eq("organization_id", organizationId);
+            if (cleanupError) {
+              const originalMsg =
+                branchError instanceof Error ? branchError.message : String(branchError);
+              throw new Error(
+                `orphan_cleanup_failed: The template's dependent fields failed to save, and automatic cleanup could not remove the incomplete template either. A template named "${name.trim()}" may now exist with no dependent fields configured — an administrator should check Form Field Templates and remove it manually if present. Original error: ${originalMsg}`,
+              );
+            }
+            throw branchError;
+          }
         }
       }
 
-      // Step 4 (new: 3 | existing: 4): Refresh templates
-      const refreshStep = selectedTemplate ? 4 : (allowConditionalDropdown && type === "select" ? 4 : 3);
+      // Refresh templates (last step)
+      const refreshStep = isServerPagedMode
+        ? 2
+        : selectedTemplate
+          ? 4
+          : (allowConditionalDropdown && type === "select" ? 4 : 3);
       updateOperation("Refreshing form templates…", {
         description: "Loading the latest saved template configuration.",
         currentStep: refreshStep,
         totalSteps,
       });
       onSaved();
+      if (isServerPagedMode) summary.refresh();
 
       // Success
       completeOperation(
         selectedTemplate
-          ? `Template updated — ${cleanedOptions.length} options saved`
+          ? isServerPagedMode
+            ? "Template details updated"
+            : `Template updated — ${cleanedOptions.length} options saved`
           : `Template created — "${name.trim()}" is ready to assign`,
       );
       toast({
@@ -645,10 +706,29 @@ export function FormFieldTemplateEditorDialog({
       // Close after success
       setTimeout(() => doClose(), 600);
     } catch (e: unknown) {
-      const err = e as { message?: string };
+      const err = e as { message?: string; code?: string; details?: string; hint?: string };
       const msg = err?.message ?? "";
+      // Structured save-failure diagnostic, matching this codebase's existing
+      // console.error(context, error) convention for handled catch blocks
+      // (see FileUpload.tsx, Layout.tsx, ProtectedRoute.tsx). Only ever logs
+      // the PostgrestError shape (code/message/details/hint) — never auth,
+      // session, header, or payload data.
+      console.error("[FormFieldTemplateEditorDialog] handleSave failed", {
+        code: err?.code,
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+      });
 
-      if (msg.startsWith("stale_edit:")) {
+      if (msg.startsWith("orphan_cleanup_failed:")) {
+        const detail = msg.replace(/^orphan_cleanup_failed:\s*/, "");
+        failOperation("Save failed — manual cleanup required", detail);
+        toast({
+          variant: "destructive",
+          title: "Save failed — check Form Field Templates",
+          description: detail,
+        });
+      } else if (msg.startsWith("stale_edit:")) {
         failOperation(
           "Save failed",
           "This template was modified by another session. Close and reopen the editor to load the latest version.",
@@ -677,6 +757,11 @@ export function FormFieldTemplateEditorDialog({
     } finally {
       setSaving(false);
     }
+    // summary.refresh (a stable useCallback reference from
+    // useTemplateEditorSummary) is the only piece of `summary` this callback
+    // reads; including the whole `summary` object would recreate handleSave
+    // on every summary refetch for no behavioral benefit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     organizationId,
     selectedTemplate,
@@ -690,6 +775,7 @@ export function FormFieldTemplateEditorDialog({
     max,
     options,
     branchDrafts,
+    batchEntryMode,
     userId,
     allowConditionalDropdown,
     templateUpdatedAt,
@@ -700,24 +786,34 @@ export function FormFieldTemplateEditorDialog({
     onSaved,
     toast,
     doClose,
+    isServerPagedMode,
+    summary.refresh,
   ]);
 
   // ── Section tab label helpers ─────────────────────────────────────────────────
   const sectionBadge = (s: Section) => {
     const errs = errorsBySection[s];
     if (s === "options" && (type === "select" || type === "checkbox")) {
-      const count = options.length;
+      // Server-computed count for an existing template's parent options —
+      // options[] is no longer loaded into this dialog to derive it from.
+      const count = isServerPagedMode ? summary.summary?.parentOptionCount : options.length;
       return (
         <span className="ml-1 text-xs text-muted-foreground">
-          {errs > 0 ? <span className="text-destructive">({errs} issue{errs !== 1 ? "s" : ""})</span> : `(${count})`}
+          {errs > 0 ? (
+            <span className="text-destructive">({errs} issue{errs !== 1 ? "s" : ""})</span>
+          ) : count != null ? (
+            `(${count})`
+          ) : null}
         </span>
       );
     }
     if (s === "dependent" && type === "select") {
-      const count = branchDrafts.filter((d) => d.name.trim()).length;
+      const count = isServerPagedMode
+        ? summary.summary?.totalActiveBranchCount
+        : branchDrafts.filter((d) => d.name.trim()).length;
       return (
         <span className="ml-1 text-xs text-muted-foreground">
-          {errs > 0 ? <span className="text-destructive">({errs})</span> : count > 0 ? `(${count})` : null}
+          {errs > 0 ? <span className="text-destructive">({errs})</span> : count ? `(${count})` : null}
         </span>
       );
     }
@@ -743,7 +839,13 @@ export function FormFieldTemplateEditorDialog({
 
   const handleSavePreset = useCallback(
     async (presetName: string, description: string, includeOptions: boolean) => {
-      if (!organizationId || !selectedTemplate?.id || !selectedParentOption) return;
+      if (!organizationId || !selectedParentOption) return;
+      if (!selectedTemplate?.id) {
+        toast({
+          description: "Save the template first, then create reusable sets from the Edit view.",
+        });
+        return;
+      }
       const rootDrafts = branchDrafts.filter(
         (d) => d.parent_branch_local_id === null && d.parent_option_value === selectedParentOption,
       );
@@ -839,7 +941,7 @@ export function FormFieldTemplateEditorDialog({
     branchLoadState === "error" ||
     hasBlockingErrors ||
     !name.trim() ||
-    (isSelectType && options.length === 0) ||
+    (isSelectType && !isServerPagedMode && options.length === 0) ||
     !organizationId;
 
   const savingLabel = (() => {
@@ -886,15 +988,50 @@ export function FormFieldTemplateEditorDialog({
                       Required
                     </Badge>
                   )}
-                  {isSelectType && options.length > 0 && (
-                    <Badge variant="outline" className="text-xs font-normal">
-                      {options.length} parent options
-                    </Badge>
-                  )}
-                  {showDependentTab && branchDrafts.filter((d) => d.name.trim()).length > 0 && (
-                    <Badge variant="outline" className="text-xs font-normal">
-                      {branchDrafts.filter((d) => d.name.trim()).length} dependent fields
-                    </Badge>
+                  {isServerPagedMode ? (
+                    summary.summary && (
+                      <>
+                        <Badge variant="outline" className="text-xs font-normal">
+                          {summary.summary.parentOptionCount} parent options
+                        </Badge>
+                        <Badge variant="outline" className="text-xs font-normal">
+                          {summary.summary.totalActiveBranchCount} dependent fields
+                        </Badge>
+                        {summary.summary.incompleteOptionCount > 0 && (
+                          <Badge variant="destructive" className="text-xs font-normal">
+                            {summary.summary.incompleteOptionCount} incomplete
+                          </Badge>
+                        )}
+                        {summary.summary.legacyOrphanGroupCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setOrphanDialogOpen(true)}
+                            className="focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
+                          >
+                            <Badge
+                              variant="outline"
+                              className="text-xs font-normal text-amber-600 border-amber-400 cursor-pointer hover:bg-amber-50"
+                            >
+                              {summary.summary.legacyOrphanGroupCount} legacy orphan group
+                              {summary.summary.legacyOrphanGroupCount !== 1 ? "s" : ""}
+                            </Badge>
+                          </button>
+                        )}
+                      </>
+                    )
+                  ) : (
+                    <>
+                      {isSelectType && options.length > 0 && (
+                        <Badge variant="outline" className="text-xs font-normal">
+                          {options.length} parent options
+                        </Badge>
+                      )}
+                      {showDependentTab && branchDrafts.filter((d) => d.name.trim()).length > 0 && (
+                        <Badge variant="outline" className="text-xs font-normal">
+                          {branchDrafts.filter((d) => d.name.trim()).length} dependent fields
+                        </Badge>
+                      )}
+                    </>
                   )}
                   {isDirty && (
                     <Badge variant="outline" className="text-xs text-amber-600 border-amber-400">
@@ -941,8 +1078,6 @@ export function FormFieldTemplateEditorDialog({
                   if (v !== "select") {
                     setOptions([]);
                     setOptionSearch("");
-                    setBulkInput("");
-                    setBulkFileName("");
                     setBranchDrafts([]);
                     setBranchLoadState("idle");
                     setSelectedParentOption(null);
@@ -958,8 +1093,37 @@ export function FormFieldTemplateEditorDialog({
               />
             </div>
 
-            {/* PARENT OPTIONS */}
-            {isSelectType && (
+            {/* PARENT OPTIONS + DEPENDENT FIELDS (server-paged mode) — a single
+                shared instance, since both tabs now search/browse/edit the
+                same server-paged option source (DOC-097 "Phase 2"). Rendering
+                two independent copies (one per tab, each merely CSS-hidden
+                when inactive) would double-fetch and desync search state
+                between tabs. */}
+            {isServerPagedMode && organizationId && selectedTemplate && (
+              <div
+                className={cn(
+                  "p-6 space-y-4",
+                  activeSection !== "options" && activeSection !== "dependent" && "hidden",
+                )}
+              >
+                <ServerPagedParentOptionsSection
+                  organizationId={organizationId}
+                  templateId={selectedTemplate.id}
+                  existingOptions={selectedTemplate.options ?? []}
+                  section={activeSection === "dependent" ? "dependent" : "options"}
+                  savedPresets={savedPresets}
+                  presetSummaries={presetSummaries}
+                  presetsLoadState={presetsLoadState}
+                  presetDbAvailable={presetDbAvailable}
+                  onPresetCreated={(preset) => setSavedPresets((prev) => [preset, ...prev])}
+                  allowNested
+                  onOptionSaved={summary.refresh}
+                />
+              </div>
+            )}
+
+            {/* PARENT OPTIONS (create-mode / non-select-type local flow) */}
+            {isSelectType && !isServerPagedMode && (
               <div className={cn("p-6 space-y-4", activeSection !== "options" && "hidden")}>
                 <OptionsPanel
                   options={options}
@@ -977,21 +1141,14 @@ export function FormFieldTemplateEditorDialog({
                   onAddOption={handleAddOption}
                   onRenameOption={handleRenameOption}
                   onDeleteOption={handleDeleteOptionRequest}
-                  bulkOpen={bulkOpen}
-                  setBulkOpen={setBulkOpen}
-                  bulkInput={bulkInput}
-                  setBulkInput={setBulkInput}
-                  bulkFileName={bulkFileName}
-                  lastBulkSummary={lastBulkSummary}
-                  onBulkAdd={handleBulkAdd}
-                  onFileUpload={handleFileUpload}
+                  onOpenBulkImport={() => setBulkImportOpen(true)}
                 />
               </div>
             )}
 
-            {/* DEPENDENT FIELDS */}
-            {showDependentTab && (
-              <div className={cn("flex h-full min-h-0", activeSection !== "dependent" && "hidden")}>
+            {/* DEPENDENT FIELDS (create-mode / non-select-type local flow) */}
+            {showDependentTab && !isServerPagedMode && (
+              <div className={cn("flex h-full min-h-0 flex-col", activeSection !== "dependent" && "hidden")}>
                 <DependentFieldsPanel
                   allOptions={options}
                   filteredParentOptions={filteredParentOptions}
@@ -1010,6 +1167,7 @@ export function FormFieldTemplateEditorDialog({
                   savedPresets={savedPresets}
                   presetSummaries={presetSummaries}
                   presetsLoadState={presetsLoadState}
+                  hasSavedTemplate={Boolean(selectedTemplate?.id)}
                   onSavePreset={handleSavePreset}
                   onApplyPreset={handleApplyPreset}
                   dependentViewMode={dependentViewMode}
@@ -1020,6 +1178,7 @@ export function FormFieldTemplateEditorDialog({
                   setMatrixPage={setMatrixPage}
                   matrixSelectedOptions={matrixSelectedOptions}
                   setMatrixSelectedOptions={setMatrixSelectedOptions}
+                  onOpenBulkImport={() => setBulkImportOpen(true)}
                 />
               </div>
             )}
@@ -1039,6 +1198,7 @@ export function FormFieldTemplateEditorDialog({
                 branchDrafts={branchDrafts}
                 validationIssues={validationIssues}
                 onGoToSection={setActiveSection}
+                serverSummary={isServerPagedMode ? summary.summary : null}
               />
             </div>
           </div>
@@ -1102,6 +1262,26 @@ export function FormFieldTemplateEditorDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Shared bulk-import dialog — opened from either Parent Options or
+          Dependent Fields; always folds its result into local draft state only. */}
+      <DropdownBulkImportDialog
+        open={bulkImportOpen}
+        onOpenChange={setBulkImportOpen}
+        existingOptions={options}
+        existingBranchDrafts={branchDrafts}
+        onApply={handleBulkImportApply}
+      />
+
+      {/* Legacy orphan groups inspector — read-only, admin-only. */}
+      {isServerPagedMode && organizationId && selectedTemplate && (
+        <LegacyOrphanGroupsDialog
+          open={orphanDialogOpen}
+          onOpenChange={setOrphanDialogOpen}
+          organizationId={organizationId}
+          templateId={selectedTemplate.id}
+        />
+      )}
 
       {/* Delete option confirmation */}
       {deleteConfirmOption && (
@@ -1291,14 +1471,7 @@ function OptionsPanel({
   onAddOption,
   onRenameOption,
   onDeleteOption,
-  bulkOpen,
-  setBulkOpen,
-  bulkInput,
-  setBulkInput,
-  bulkFileName,
-  lastBulkSummary,
-  onBulkAdd,
-  onFileUpload,
+  onOpenBulkImport,
 }: {
   options: string[];
   indexedOptions: IndexedOption[];
@@ -1315,17 +1488,8 @@ function OptionsPanel({
   onAddOption: (v: string) => void;
   onRenameOption: (originalIndex: number, value: string) => void;
   onDeleteOption: (originalIndex: number) => void;
-  bulkOpen: boolean;
-  setBulkOpen: (v: boolean) => void;
-  bulkInput: string;
-  setBulkInput: (v: string) => void;
-  bulkFileName: string;
-  lastBulkSummary: string;
-  onBulkAdd: () => void;
-  onFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onOpenBulkImport: () => void;
 }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-
   return (
     <div className="space-y-4">
       {/* Toolbar */}
@@ -1440,13 +1604,13 @@ function OptionsPanel({
         </p>
       )}
 
-      {/* Add single option */}
-      <div className="flex items-center gap-2 pt-1">
+      {/* Add manually / bulk import */}
+      <div className="flex flex-wrap items-center gap-2 pt-1">
         <Input
           value={newOptionValue}
           onChange={(e) => setNewOptionValue(e.target.value)}
           placeholder="Type option and press Enter or Add"
-          className="h-9 flex-1"
+          className="h-9 flex-1 min-w-40"
           onKeyDown={(e) => {
             if (e.key === "Enter") { e.preventDefault(); onAddOption(newOptionValue); }
             if (e.key === "Escape") setNewOptionValue("");
@@ -1463,413 +1627,17 @@ function OptionsPanel({
           <Plus className="h-4 w-4 mr-1" />
           Add option
         </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="h-9 shrink-0"
+          onClick={onOpenBulkImport}
+        >
+          <Upload className="h-4 w-4 mr-1" />
+          Paste / Import data
+        </Button>
       </div>
-
-      {/* Bulk add collapsible */}
-      <Collapsible open={bulkOpen} onOpenChange={setBulkOpen} className="border rounded-md">
-        <CollapsibleTrigger className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/50">
-          Bulk add parent options
-          <ChevronDown className={cn("h-4 w-4 transition-transform", bulkOpen && "rotate-180")} />
-        </CollapsibleTrigger>
-        <CollapsibleContent className="px-4 pb-4 space-y-3">
-          <Textarea
-            value={bulkInput}
-            onChange={(e) => setBulkInput(e.target.value)}
-            placeholder="Paste option values, one per line or comma-separated"
-            rows={4}
-          />
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={onBulkAdd} disabled={!bulkInput.trim()}>
-              Add pasted options
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
-              Upload CSV/TXT
-            </Button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".csv,.txt"
-              className="hidden"
-              onChange={onFileUpload}
-            />
-          </div>
-          {bulkFileName && (
-            <p className="text-xs text-muted-foreground">Last uploaded: {bulkFileName}</p>
-          )}
-          {lastBulkSummary && (
-            <p className="text-xs text-green-600 dark:text-green-400">{lastBulkSummary}</p>
-          )}
-        </CollapsibleContent>
-      </Collapsible>
-    </div>
-  );
-}
-
-// ─── MatrixCellEditor ─────────────────────────────────────────────────────────
-
-const MATRIX_PAGE_SIZE = 20;
-
-function MatrixCellEditor({
-  fieldKey,
-  fieldName,
-  fieldType,
-  currentOptions,
-  onSave,
-  children,
-}: {
-  fieldKey: string;
-  fieldName: string;
-  fieldType: string;
-  currentOptions: string[];
-  onSave: (options: string[]) => void;
-  children: React.ReactNode;
-}) {
-  const { t } = useTranslation("admin");
-  const [open, setOpen] = useState(false);
-  const [text, setText] = useState(currentOptions.join("\n"));
-
-  const needsChoices = fieldType === "select" || fieldType === "checkbox_group" || fieldType === "radio";
-
-  function handleSave() {
-    const lines = text
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-    onSave(lines);
-    setOpen(false);
-  }
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent className="w-64 p-3 space-y-2" side="right" align="start">
-        <p className="text-xs font-medium">{fieldName}</p>
-        {needsChoices ? (
-          <>
-            <p className="text-xs text-muted-foreground">{t("matrix.cellOnePerLine", { defaultValue: "One choice per line" })}</p>
-            <Textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              rows={5}
-              className="text-xs font-mono resize-none"
-              placeholder={t("matrix.choicesPlaceholder", { defaultValue: "Option A\nOption B\nOption C" })}
-            />
-          </>
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            {t("matrix.noChoicesHint", { fieldType, defaultValue: `This field type (${fieldType}) has no configurable choices. Tick its presence by clicking Save.` })}
-          </p>
-        )}
-        <div className="flex justify-end gap-1.5">
-          <Button size="sm" variant="outline" onClick={() => setOpen(false)}>
-            {t("matrix.cancel", { defaultValue: "Cancel" })}
-          </Button>
-          <Button size="sm" onClick={handleSave}>
-            {t("matrix.save", { defaultValue: "Save" })}
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-// ─── MatrixEditorPanel ────────────────────────────────────────────────────────
-
-function MatrixEditorPanel({
-  allOptions,
-  savedPresets,
-  branchDrafts,
-  setBranchDrafts,
-  branchIndexes,
-  matrixPresetId,
-  setMatrixPresetId,
-  matrixPage,
-  setMatrixPage,
-  matrixSelectedOptions,
-  setMatrixSelectedOptions,
-}: {
-  allOptions: string[];
-  savedPresets: ReusableSubFieldSet[];
-  branchDrafts: DraftOptionBranch[];
-  setBranchDrafts: (d: DraftOptionBranch[]) => void;
-  branchIndexes: ReturnType<typeof buildBranchIndexes>;
-  matrixPresetId: string;
-  setMatrixPresetId: (id: string) => void;
-  matrixPage: number;
-  setMatrixPage: (p: number) => void;
-  matrixSelectedOptions: Set<string>;
-  setMatrixSelectedOptions: (s: Set<string>) => void;
-}) {
-  const { t } = useTranslation("admin");
-  const selectedPreset = savedPresets.find((p) => p.id === matrixPresetId) ?? null;
-  const schema = selectedPreset ? deserializePresetSchema(selectedPreset.fieldSchema) : [];
-
-  const matrixRows: MatrixRow[] = useMemo(
-    () => (schema.length > 0 ? buildPresetMatrix(allOptions, schema, branchDrafts) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [allOptions, matrixPresetId, branchDrafts],
-  );
-
-  const totalPages = Math.max(1, Math.ceil(allOptions.length / MATRIX_PAGE_SIZE));
-  const pageOptions = paginateItems(allOptions, matrixPage, MATRIX_PAGE_SIZE);
-  const pageRows = matrixRows.filter((r) => pageOptions.includes(r.parentOptionValue));
-
-  const allPageSelected =
-    pageOptions.length > 0 && pageOptions.every((o) => matrixSelectedOptions.has(o));
-  const somePageSelected = pageOptions.some((o) => matrixSelectedOptions.has(o));
-
-  function togglePageAll() {
-    const next = new Set(matrixSelectedOptions);
-    if (allPageSelected) {
-      pageOptions.forEach((o) => next.delete(o));
-    } else {
-      pageOptions.forEach((o) => next.add(o));
-    }
-    setMatrixSelectedOptions(next);
-  }
-
-  function toggleRow(opt: string) {
-    const next = new Set(matrixSelectedOptions);
-    if (next.has(opt)) {
-      next.delete(opt);
-    } else {
-      next.add(opt);
-    }
-    setMatrixSelectedOptions(next);
-  }
-
-  function handleCellSave(
-    parentOptionValue: string,
-    fieldKey: string,
-    options: string[],
-  ) {
-    const rootsForOption = branchIndexes.rootsByParentOption.get(parentOptionValue) ?? [];
-    const existing = rootsForOption.find((b) => b.field_key === fieldKey);
-    if (existing) {
-      setBranchDrafts(
-        branchDrafts.map((b) =>
-          b.localId === existing.localId ? { ...b, options } : b,
-        ),
-      );
-    } else {
-      // Create a new draft for this option+field
-      const newDraft: DraftOptionBranch = {
-        localId: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        dbId: null,
-        parent_option_value: parentOptionValue,
-        parent_branch_local_id: null,
-        field_key: fieldKey,
-        name: schema.find((s) => s.fieldKey === fieldKey)?.name ?? fieldKey,
-        field_type: schema.find((s) => s.fieldKey === fieldKey)?.fieldType ?? "text",
-        required: schema.find((s) => s.fieldKey === fieldKey)?.required ?? false,
-        placeholder: schema.find((s) => s.fieldKey === fieldKey)?.placeholder ?? "",
-        help_text: schema.find((s) => s.fieldKey === fieldKey)?.helpText ?? "",
-        options,
-        display_order: schema.findIndex((s) => s.fieldKey === fieldKey),
-      };
-      setBranchDrafts([...branchDrafts, newDraft]);
-    }
-  }
-
-  function applyPresetToSelected() {
-    if (!selectedPreset) return;
-    const targets = Array.from(matrixSelectedOptions);
-    const result = applyPresetToParentOptions(branchDrafts, schema, targets, "merge");
-    setBranchDrafts(result.drafts);
-    setMatrixSelectedOptions(new Set());
-  }
-
-  if (savedPresets.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-8 text-center">
-        <p className="text-muted-foreground text-sm">
-          {t("matrix.noPresets", { defaultValue: "No saved presets. Save a preset from the list view first to use the matrix editor." })}
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col flex-1 min-h-0">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b shrink-0">
-        <span className="text-xs text-muted-foreground shrink-0">{t("matrix.presetColumnsLabel", { defaultValue: "Preset columns:" })}</span>
-        <Select value={matrixPresetId} onValueChange={setMatrixPresetId}>
-          <SelectTrigger className="h-7 text-xs flex-1 max-w-[220px]">
-            <SelectValue placeholder={t("matrix.selectPresetPlaceholder", { defaultValue: "Select a preset…" })} />
-          </SelectTrigger>
-          <SelectContent>
-            {savedPresets.map((p) => (
-              <SelectItem key={p.id} value={p.id} className="text-xs">
-                {p.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        {matrixSelectedOptions.size > 0 && (
-          <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={applyPresetToSelected}>
-            {t("matrix.applyToSelected", { count: matrixSelectedOptions.size, defaultValue: `Apply preset to selected (${matrixSelectedOptions.size})` })}
-          </Button>
-        )}
-
-        <div className="flex items-center gap-1 ml-auto">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7"
-            disabled={matrixPage <= 1}
-            onClick={() => setMatrixPage(matrixPage - 1)}
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </Button>
-          <span className="text-xs text-muted-foreground whitespace-nowrap">
-            {matrixPage} / {totalPages}
-          </span>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7"
-            disabled={matrixPage >= totalPages}
-            onClick={() => setMatrixPage(matrixPage + 1)}
-          >
-            <ChevronRight className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
-
-      {/* Matrix table */}
-      {!selectedPreset || schema.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center p-8 text-center">
-          <p className="text-muted-foreground text-sm">
-            {t("matrix.selectPresetPrompt", { defaultValue: "Select a preset to define matrix columns." })}
-          </p>
-        </div>
-      ) : (
-        <div className="flex-1 overflow-auto">
-          <table className="text-xs border-collapse w-full">
-            <thead className="sticky top-0 z-10 bg-background">
-              <tr>
-                {/* Sticky checkbox header cell */}
-                <th className="sticky left-0 z-20 bg-background border-b border-r px-2 py-1.5 w-6">
-                  <button
-                    type="button"
-                    aria-label={allPageSelected ? t("matrix.deselectAllPage", { defaultValue: "Deselect all on page" }) : t("matrix.selectAllPage", { defaultValue: "Select all on page" })}
-                    onClick={togglePageAll}
-                    className="flex items-center justify-center"
-                  >
-                    {allPageSelected ? (
-                      <CheckSquare className="h-3.5 w-3.5 text-primary" />
-                    ) : somePageSelected ? (
-                      <Minus className="h-3.5 w-3.5 text-muted-foreground" />
-                    ) : (
-                      <Square className="h-3.5 w-3.5 text-muted-foreground" />
-                    )}
-                  </button>
-                </th>
-                {/* Sticky option-name header */}
-                <th className="sticky left-7 z-20 bg-background border-b border-r px-3 py-1.5 text-left font-medium text-muted-foreground min-w-[140px]">
-                  {t("matrix.columnOption", { defaultValue: "Option" })}
-                </th>
-                {/* Field columns */}
-                {schema.map((col) => (
-                  <th
-                    key={col.fieldKey}
-                    className="border-b border-r px-3 py-1.5 text-left font-medium text-muted-foreground whitespace-nowrap min-w-[100px]"
-                  >
-                    {col.name}
-                    {col.required && <span className="text-destructive ml-0.5">*</span>}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.map((row) => (
-                <tr
-                  key={row.parentOptionValue}
-                  className={cn(
-                    "hover:bg-muted/30 transition-colors",
-                    matrixSelectedOptions.has(row.parentOptionValue) && "bg-primary/5",
-                  )}
-                >
-                  {/* Checkbox */}
-                  <td className="sticky left-0 z-10 bg-inherit border-b border-r px-2 py-1.5 w-6">
-                    <button
-                      type="button"
-                      aria-label={t("matrix.toggleRow", { option: row.parentOptionValue, defaultValue: `Toggle ${row.parentOptionValue}` })}
-                      onClick={() => toggleRow(row.parentOptionValue)}
-                      className="flex items-center justify-center"
-                    >
-                      {matrixSelectedOptions.has(row.parentOptionValue) ? (
-                        <CheckSquare className="h-3.5 w-3.5 text-primary" />
-                      ) : (
-                        <Square className="h-3.5 w-3.5 text-muted-foreground" />
-                      )}
-                    </button>
-                  </td>
-                  {/* Option name */}
-                  <td className="sticky left-7 z-10 bg-inherit border-b border-r px-3 py-1.5 font-medium truncate max-w-[160px]">
-                    {row.parentOptionValue}
-                  </td>
-                  {/* Cells */}
-                  {row.cells.map((cell) => {
-                    const fieldDef = schema.find((s) => s.fieldKey === cell.fieldKey);
-                    const needsChoices =
-                      fieldDef?.fieldType === "select" ||
-                      fieldDef?.fieldType === "checkbox_group" ||
-                      fieldDef?.fieldType === "radio";
-
-                    let cellIcon: React.ReactNode;
-                    if (cell.isComplete) {
-                      cellIcon = <Check className="h-3.5 w-3.5 text-green-600" />;
-                    } else if (cell.draft !== null) {
-                      cellIcon = <AlertCircle className="h-3.5 w-3.5 text-amber-500" />;
-                    } else {
-                      cellIcon = <X className="h-3.5 w-3.5 text-muted-foreground/40" />;
-                    }
-
-                    return (
-                      <td key={cell.fieldKey} className="border-b border-r px-3 py-1.5">
-                        <MatrixCellEditor
-                          fieldKey={cell.fieldKey}
-                          fieldName={fieldDef?.name ?? cell.fieldKey}
-                          fieldType={fieldDef?.fieldType ?? "text"}
-                          currentOptions={cell.draft?.options ?? []}
-                          onSave={(opts) =>
-                            handleCellSave(row.parentOptionValue, cell.fieldKey, opts)
-                          }
-                        >
-                          <button
-                            type="button"
-                            className={cn(
-                              "flex items-center gap-1 rounded px-1 py-0.5 transition-colors text-xs",
-                              "hover:bg-muted cursor-pointer",
-                            )}
-                            title={
-                              cell.isComplete
-                                ? t(cell.choiceCount !== 1 ? "matrix.cellConfiguredPlural" : "matrix.cellConfigured", { count: cell.choiceCount, defaultValue: `Configured (${cell.choiceCount} choice${cell.choiceCount !== 1 ? "s" : ""})` })
-                                : cell.draft !== null
-                                ? t("matrix.cellDraftNoChoices", { defaultValue: "Draft exists but no choices" })
-                                : needsChoices
-                                ? t("matrix.cellNotConfigured", { defaultValue: "Not configured — click to add choices" })
-                                : t("matrix.cellMarkPresent", { defaultValue: "Click to mark as present" })
-                            }
-                          >
-                            {cellIcon}
-                            {needsChoices && cell.choiceCount > 0 && (
-                              <span className="text-muted-foreground">{cell.choiceCount}</span>
-                            )}
-                          </button>
-                        </MatrixCellEditor>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   );
 }
@@ -1894,6 +1662,7 @@ function DependentFieldsPanel({
   savedPresets,
   presetSummaries,
   presetsLoadState,
+  hasSavedTemplate,
   onSavePreset,
   onApplyPreset,
   dependentViewMode,
@@ -1904,6 +1673,7 @@ function DependentFieldsPanel({
   setMatrixPage,
   matrixSelectedOptions,
   setMatrixSelectedOptions,
+  onOpenBulkImport,
 }: {
   allOptions: string[];
   filteredParentOptions: string[];
@@ -1922,6 +1692,7 @@ function DependentFieldsPanel({
   savedPresets: ReusableSubFieldSet[];
   presetSummaries: PresetSummary[];
   presetsLoadState: "idle" | "loading" | "success" | "error";
+  hasSavedTemplate: boolean;
   onSavePreset: (name: string, description: string, includeOptions: boolean) => Promise<void>;
   onApplyPreset: (preset: ReusableSubFieldSet, targetOptions: string[], mode: ApplyPresetMode) => void;
   dependentViewMode: "list" | "matrix";
@@ -1932,6 +1703,7 @@ function DependentFieldsPanel({
   setMatrixPage: (p: number) => void;
   matrixSelectedOptions: Set<string>;
   setMatrixSelectedOptions: (s: Set<string>) => void;
+  onOpenBulkImport: () => void;
 }) {
   const { t } = useTranslation("admin");
   if (branchLoadState === "loading") {
@@ -1962,10 +1734,15 @@ function DependentFieldsPanel({
 
   if (allOptions.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8 text-center">
-        <p className="text-muted-foreground text-sm">
-          Add parent options first, then configure dependent fields here.
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 text-center">
+        <p className="text-muted-foreground text-sm max-w-sm">
+          Add parent options first (or import a dependent-dropdown table — it will create the parent
+          options and dependent fields together).
         </p>
+        <Button type="button" variant="secondary" size="sm" onClick={onOpenBulkImport}>
+          <Upload className="h-4 w-4 mr-1.5" />
+          Import data
+        </Button>
       </div>
     );
   }
@@ -2063,6 +1840,16 @@ function DependentFieldsPanel({
             <LayoutGrid className="h-3 w-3" />
             {t("matrix.view.matrix", { defaultValue: "Matrix" })}
           </button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 ml-auto text-xs"
+            onClick={onOpenBulkImport}
+          >
+            <Upload className="h-3.5 w-3.5 mr-1" />
+            Import data
+          </Button>
         </div>
 
         {dependentViewMode === "matrix" ? (
@@ -2108,6 +1895,7 @@ function DependentFieldsPanel({
                       savedPresets={savedPresets}
                       presetSummaries={presetSummaries}
                       presetsLoadState={presetsLoadState}
+                      hasSavedTemplate={hasSavedTemplate}
                       onSavePreset={onSavePreset}
                       onApplyPreset={onApplyPreset}
                     />
@@ -2144,6 +1932,7 @@ function ReviewPanel({
   branchDrafts,
   validationIssues,
   onGoToSection,
+  serverSummary,
 }: {
   name: string;
   type: string;
@@ -2157,6 +1946,10 @@ function ReviewPanel({
   branchDrafts: DraftOptionBranch[];
   validationIssues: ReturnType<typeof validateTemplate>;
   onGoToSection: (s: Section) => void;
+  /** When set (server-paged mode), the "Configuration summary" section is
+   *  sourced from this server aggregate instead of options/branchDrafts,
+   *  which are never fully downloaded in that mode. */
+  serverSummary?: TemplateEditorSummary | null;
 }) {
   const namedBranches = branchDrafts.filter((d) => d.name.trim());
   const rootBranches = namedBranches.filter((d) => !d.parent_branch_local_id);
@@ -2188,22 +1981,49 @@ function ReviewPanel({
       {(type === "select" || type === "checkbox") && (
         <section className="space-y-2">
           <h3 className="font-semibold">Configuration summary</h3>
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-            <dt className="text-muted-foreground">Parent options</dt>
-            <dd>{options.length}</dd>
-            {type === "select" && (
-              <>
-                <dt className="text-muted-foreground">Configured options</dt>
-                <dd>{configuredParents.size}</dd>
-                <dt className="text-muted-foreground">Root dependent fields</dt>
-                <dd>{rootBranches.length}</dd>
-                <dt className="text-muted-foreground">Nested dependent fields</dt>
-                <dd>{nestedBranches.length}</dd>
-                <dt className="text-muted-foreground">Total dependent fields</dt>
-                <dd>{namedBranches.length}</dd>
-              </>
-            )}
-          </dl>
+          {serverSummary ? (
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+              <dt className="text-muted-foreground">Parent options</dt>
+              <dd>{serverSummary.parentOptionCount}</dd>
+              <dt className="text-muted-foreground">Configured options</dt>
+              <dd>{serverSummary.configuredParentOptionCount}</dd>
+              <dt className="text-muted-foreground">Root dependent fields</dt>
+              <dd>{serverSummary.activeRootBranchCount}</dd>
+              <dt className="text-muted-foreground">Nested dependent fields</dt>
+              <dd>{serverSummary.activeNestedBranchCount}</dd>
+              <dt className="text-muted-foreground">Total dependent fields</dt>
+              <dd>{serverSummary.totalActiveBranchCount}</dd>
+              {serverSummary.incompleteOptionCount > 0 && (
+                <>
+                  <dt className="text-destructive">Incomplete options</dt>
+                  <dd className="text-destructive">{serverSummary.incompleteOptionCount}</dd>
+                </>
+              )}
+              {serverSummary.legacyOrphanGroupCount > 0 && (
+                <>
+                  <dt className="text-amber-600">Legacy orphan groups</dt>
+                  <dd className="text-amber-600">{serverSummary.legacyOrphanGroupCount}</dd>
+                </>
+              )}
+            </dl>
+          ) : (
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+              <dt className="text-muted-foreground">Parent options</dt>
+              <dd>{options.length}</dd>
+              {type === "select" && (
+                <>
+                  <dt className="text-muted-foreground">Configured options</dt>
+                  <dd>{configuredParents.size}</dd>
+                  <dt className="text-muted-foreground">Root dependent fields</dt>
+                  <dd>{rootBranches.length}</dd>
+                  <dt className="text-muted-foreground">Nested dependent fields</dt>
+                  <dd>{nestedBranches.length}</dd>
+                  <dt className="text-muted-foreground">Total dependent fields</dt>
+                  <dd>{namedBranches.length}</dd>
+                </>
+              )}
+            </dl>
+          )}
         </section>
       )}
 
@@ -2252,311 +2072,6 @@ function ReviewPanel({
           Ready to save
         </section>
       )}
-    </div>
-  );
-}
-
-// ─── PresetToolbar (Phase 2) ───────────────────────────────────────────────────
-
-function PresetToolbar({
-  selectedParentOption,
-  allOptions,
-  branchDrafts,
-  savedPresets,
-  presetSummaries,
-  presetsLoadState,
-  onSavePreset,
-  onApplyPreset,
-}: {
-  selectedParentOption: string;
-  allOptions: string[];
-  branchDrafts: DraftOptionBranch[];
-  savedPresets: ReusableSubFieldSet[];
-  presetSummaries: PresetSummary[];
-  presetsLoadState: "idle" | "loading" | "success" | "error";
-  onSavePreset: (name: string, description: string, includeOptions: boolean) => Promise<void>;
-  onApplyPreset: (preset: ReusableSubFieldSet, targetOptions: string[], mode: ApplyPresetMode) => void;
-}) {
-  const { t } = useTranslation("admin");
-  const [saveOpen, setSaveOpen] = useState(false);
-  const [applyOpen, setApplyOpen] = useState(false);
-
-  const rootDraftCount = branchDrafts.filter(
-    (d) => d.parent_branch_local_id === null && d.parent_option_value === selectedParentOption && d.name.trim(),
-  ).length;
-
-  return (
-    <div className="flex items-center gap-1">
-      {/* Save current structure as preset */}
-      <Popover open={saveOpen} onOpenChange={setSaveOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs gap-1"
-            disabled={rootDraftCount === 0}
-            title={rootDraftCount === 0
-              ? t("presets.saveAsSetDisabled", { defaultValue: "Configure at least one field first" })
-              : t("presets.saveAsSetEnabled", { defaultValue: "Save current structure as a reusable set" })}
-          >
-            <Save className="h-3 w-3" />
-            {t("presets.saveAsSet", { defaultValue: "Save as set" })}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent align="end" className="w-72 p-0">
-          <SavePresetForm
-            onSave={async (name, description, includeOptions) => {
-              await onSavePreset(name, description, includeOptions);
-              setSaveOpen(false);
-            }}
-            onCancel={() => setSaveOpen(false)}
-          />
-        </PopoverContent>
-      </Popover>
-
-      {/* Apply a saved preset */}
-      <Popover open={applyOpen} onOpenChange={setApplyOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs gap-1"
-            title={t("presets.applySetTitle", { defaultValue: "Apply a saved set to options" })}
-          >
-            <BookOpen className="h-3 w-3" />
-            {t("presets.applySet", { defaultValue: "Apply set" })}
-            {presetSummaries.length > 0 && (
-              <Badge variant="secondary" className="h-4 text-xs ml-0.5 px-1">
-                {presetSummaries.length}
-              </Badge>
-            )}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent align="end" className="w-80 p-0">
-          <ApplyPresetPanel
-            savedPresets={savedPresets}
-            presetSummaries={presetSummaries}
-            presetsLoadState={presetsLoadState}
-            selectedParentOption={selectedParentOption}
-            allOptions={allOptions}
-            branchDrafts={branchDrafts}
-            onApply={(preset, targetOptions, mode) => {
-              onApplyPreset(preset, targetOptions, mode);
-              setApplyOpen(false);
-            }}
-          />
-        </PopoverContent>
-      </Popover>
-    </div>
-  );
-}
-
-// ─── SavePresetForm (inline in popover) ───────────────────────────────────────
-
-function SavePresetForm({
-  onSave,
-  onCancel,
-}: {
-  onSave: (name: string, description: string, includeOptions: boolean) => Promise<void>;
-  onCancel: () => void;
-}) {
-  const { t } = useTranslation("admin");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [includeOptions, setIncludeOptions] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  return (
-    <div className="p-3 space-y-3">
-      <p className="text-sm font-medium">{t("presets.saveForm.heading", { defaultValue: "Save structure as reusable set" })}</p>
-      <div className="space-y-1.5">
-        <Label htmlFor="preset-name" className="text-xs">{t("presets.saveForm.nameLabel", { defaultValue: "Set name" })} <span className="text-destructive">*</span></Label>
-        <Input
-          id="preset-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={t("presets.saveForm.namePlaceholder", { defaultValue: "e.g., Project Details" })}
-          className="h-8 text-sm"
-          autoFocus
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="preset-desc" className="text-xs">{t("presets.saveForm.descriptionLabel", { defaultValue: "Description (optional)" })}</Label>
-        <Input
-          id="preset-desc"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder={t("presets.saveForm.descriptionPlaceholder", { defaultValue: "What fields does this set contain?" })}
-          className="h-8 text-sm"
-        />
-      </div>
-      <div className="flex items-center justify-between">
-        <Label htmlFor="preset-opts" className="text-xs">{t("presets.saveForm.includeChoicesLabel", { defaultValue: "Include dropdown choices" })}</Label>
-        <Switch
-          id="preset-opts"
-          checked={includeOptions}
-          onCheckedChange={setIncludeOptions}
-          className="scale-75"
-        />
-      </div>
-      <p className="text-xs text-muted-foreground">
-        {includeOptions
-          ? t("presets.saveForm.includeChoicesOnHint", { defaultValue: "Choices will be copied to options that don't already have choices." })
-          : t("presets.saveForm.includeChoicesOffHint", { defaultValue: "Only field structure is saved — each option keeps its own choices." })}
-      </p>
-      <div className="flex gap-2 justify-end pt-1">
-        <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>{t("presets.saveForm.cancel", { defaultValue: "Cancel" })}</Button>
-        <Button
-          size="sm"
-          disabled={!name.trim() || saving}
-          onClick={async () => {
-            setSaving(true);
-            try { await onSave(name, description, includeOptions); }
-            finally { setSaving(false); }
-          }}
-        >
-          {saving ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : null}
-          {t("presets.saveForm.save", { defaultValue: "Save set" })}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ─── ApplyPresetPanel (inline in popover) ────────────────────────────────────
-
-function ApplyPresetPanel({
-  savedPresets,
-  presetSummaries,
-  presetsLoadState,
-  selectedParentOption,
-  allOptions,
-  branchDrafts,
-  onApply,
-}: {
-  savedPresets: ReusableSubFieldSet[];
-  presetSummaries: PresetSummary[];
-  presetsLoadState: "idle" | "loading" | "success" | "error";
-  selectedParentOption: string;
-  allOptions: string[];
-  branchDrafts: DraftOptionBranch[];
-  onApply: (preset: ReusableSubFieldSet, targetOptions: string[], mode: ApplyPresetMode) => void;
-}) {
-  const { t } = useTranslation("admin");
-  const [selectedPresetId, setSelectedPresetId] = useState<string>("");
-  const [mode, setMode] = useState<ApplyPresetMode>("merge");
-  const [applyTo, setApplyTo] = useState<"current" | "unconfigured" | "all">("current");
-
-  const unconfiguredCount = useMemo(
-    () => getUnconfiguredOptions(allOptions, branchDrafts).length,
-    [allOptions, branchDrafts],
-  );
-
-  const selectedPreset = savedPresets.find((p) => p.id === selectedPresetId) ?? null;
-
-  if (presetsLoadState === "loading") {
-    return (
-      <div className="p-4 text-xs text-muted-foreground text-center">
-        <RefreshCw className="h-3.5 w-3.5 animate-spin mx-auto mb-1.5" />
-        {t("presets.applyPanel.loading", { defaultValue: "Loading saved sets…" })}
-      </div>
-    );
-  }
-
-  if (presetsLoadState === "error") {
-    return (
-      <div className="p-4 text-xs text-muted-foreground text-center">
-        {t("presets.applyPanel.unavailable", { defaultValue: "Preset storage unavailable." })}
-        <br />{t("presets.applyPanel.unavailableHint", { defaultValue: "Run the pending database migration to enable this feature." })}
-      </div>
-    );
-  }
-
-  if (presetSummaries.length === 0) {
-    return (
-      <div className="p-4 text-xs text-muted-foreground text-center">
-        {t("presets.applyPanel.empty", { defaultValue: "No saved sets yet." })}
-        <br />{t("presets.applyPanel.emptyHint", { defaultValue: "Configure some fields and click \"Save as set\"." })}
-      </div>
-    );
-  }
-
-  return (
-    <div className="p-3 space-y-3">
-      <p className="text-sm font-medium">{t("presets.applyPanel.heading", { defaultValue: "Apply a saved set" })}</p>
-
-      {/* Preset selector */}
-      <div className="space-y-1.5">
-        <Label className="text-xs">{t("presets.applyPanel.selectSetLabel", { defaultValue: "Select set" })}</Label>
-        <Select value={selectedPresetId} onValueChange={setSelectedPresetId}>
-          <SelectTrigger className="h-8 text-sm">
-            <SelectValue placeholder={t("presets.applyPanel.selectSetPlaceholder", { defaultValue: "Choose a set…" })} />
-          </SelectTrigger>
-          <SelectContent>
-            {presetSummaries.map((p) => (
-              <SelectItem key={p.id} value={p.id}>
-                {p.name}
-                <span className="ml-1 text-xs text-muted-foreground">({p.fieldCount} fields)</span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {/* Apply scope */}
-      <div className="space-y-1.5">
-        <Label className="text-xs">{t("presets.applyPanel.applyToLabel", { defaultValue: "Apply to" })}</Label>
-        <Select value={applyTo} onValueChange={(v) => setApplyTo(v as typeof applyTo)}>
-          <SelectTrigger className="h-8 text-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="current">{t("presets.applyPanel.currentOnly", { defaultValue: "Current option only" })}</SelectItem>
-            <SelectItem value="unconfigured">
-              {t("presets.applyPanel.unconfigured", { count: unconfiguredCount, defaultValue: `Unconfigured options (${unconfiguredCount})` })}
-            </SelectItem>
-            <SelectItem value="all">{t("presets.applyPanel.allOptions", { count: allOptions.length, defaultValue: `All options (${allOptions.length})` })}</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      {/* Apply mode */}
-      <div className="space-y-1.5">
-        <Label className="text-xs">{t("presets.applyPanel.whenExistLabel", { defaultValue: "When fields already exist" })}</Label>
-        <Select value={mode} onValueChange={(v) => setMode(v as ApplyPresetMode)}>
-          <SelectTrigger className="h-8 text-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="merge">{t("presets.applyPanel.modeMerge", { defaultValue: "Merge — add missing fields only" })}</SelectItem>
-            <SelectItem value="sync">{t("presets.applyPanel.modeSync", { defaultValue: "Sync — update names, types, and order" })}</SelectItem>
-            <SelectItem value="replace">{t("presets.applyPanel.modeReplace", { defaultValue: "Replace — remove existing, apply set" })}</SelectItem>
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">
-          {mode === "merge" && t("presets.applyPanel.mergeHint", { defaultValue: "Skips options that already have all fields from this set." })}
-          {mode === "sync" && t("presets.applyPanel.syncHint", { defaultValue: "Updates field names and types from the set; keeps each option's own dropdown choices." })}
-          {mode === "replace" && t("presets.applyPanel.replaceHint", { defaultValue: "Removes all existing dependent fields for affected options, then applies the set. Cannot be undone." })}
-        </p>
-      </div>
-
-      <Button
-        size="sm"
-        className="w-full"
-        disabled={!selectedPreset}
-        onClick={() => {
-          if (!selectedPreset) return;
-          const targets =
-            applyTo === "current"
-              ? [selectedParentOption]
-              : applyTo === "unconfigured"
-                ? getUnconfiguredOptions(allOptions, branchDrafts)
-                : allOptions;
-          onApply(selectedPreset, targets, mode);
-        }}
-      >
-        {t("presets.applyPanel.apply", { defaultValue: "Apply set" })}
-      </Button>
     </div>
   );
 }

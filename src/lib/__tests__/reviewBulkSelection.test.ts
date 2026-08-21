@@ -9,6 +9,7 @@ import {
   pageSelectableKeys,
   selectAllState,
   selectionKey,
+  splitSelectedKeys,
 } from "@/lib/reviewBulkSelection";
 
 const r = (id: string, state: SelectableRow["state"], batch_id?: string): SelectableRow => ({
@@ -132,5 +133,38 @@ describe("canProceedWithApproval — override gating", () => {
   });
   it("blocks PROCEED when nothing is actually approvable (only over-limit)", () => {
     expect(canProceedWithApproval(overOnly, false)).toBe(false);
+  });
+});
+
+describe("splitSelectedKeys — DOC-098 batch vs singular routing", () => {
+  it("splits a mix of batch and expense keys into two id arrays", () => {
+    const selected = new Set(["batch:b1", "expense:e1", "batch:b2", "expense:e2"]);
+    expect(splitSelectedKeys(selected)).toEqual({
+      batchIds: ["b1", "b2"],
+      singularIds: ["e1", "e2"],
+    });
+  });
+
+  it("returns empty arrays for an empty selection", () => {
+    expect(splitSelectedKeys(new Set())).toEqual({ batchIds: [], singularIds: [] });
+  });
+
+  it("returns only batch ids when nothing singular is selected (TEST A/C fixture)", () => {
+    const selected = new Set(["batch:efbb8ce0"]);
+    expect(splitSelectedKeys(selected)).toEqual({ batchIds: ["efbb8ce0"], singularIds: [] });
+  });
+
+  it("keeps multiple batch ids independent (TEST D: A valid, B blocked, C valid)", () => {
+    const selected = new Set(["batch:A", "batch:B", "batch:C"]);
+    const { batchIds } = splitSelectedKeys(selected);
+    expect(batchIds).toEqual(["A", "B", "C"]);
+  });
+
+  it("splits one singular and two batches without duplicate processing (TEST E)", () => {
+    const selected = new Set(["expense:e1", "batch:b1", "batch:b2"]);
+    expect(splitSelectedKeys(selected)).toEqual({
+      batchIds: ["b1", "b2"],
+      singularIds: ["e1"],
+    });
   });
 });

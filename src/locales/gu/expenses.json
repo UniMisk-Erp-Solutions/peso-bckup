@@ -267,6 +267,7 @@
     "customFieldsLoadFailed": "કેટલાક કસ્ટમ ફીલ્ડ મૂલ્યો લોડ થઈ શક્યા નથી. નીચે બતાવેલ મૂલ્યો અધૂરા હોઈ શકે છે.",
     "noEligible": "કોઈ પાત્ર ખર્ચ નથી",
     "noEligibleDescription": "પસંદ કરેલા ખર્ચમાંથી કોઈ પણ તેમની વર્તમાન સ્થિતિમાં {{action}} થઈ શકતા નથી.",
+    "verifyBatch": "બેચ ચકાસો ({{count}})",
     "actionVerify": "ચકાસાયેલ",
     "actionApprove": "મંજૂર",
     "actionReject": "નકારેલ",

@@ -167,63 +167,92 @@ export function mergeFilterableFieldsWithEmployeeData(
   );
 }
 
+/**
+ * DOC-100 pt.3: PostgREST silently caps a single unpaged `.select()` at its
+ * default row limit (the exact failure mode this whole hotfix exists to
+ * close — see the RPC-name-truncation and Parent-Options-search fixes
+ * earlier in this branch). Loop with `.range()` until a page comes back
+ * short, same auto-paged full-scan pattern this file already uses for
+ * `scanExpenseValues` below, instead of trusting one request to return
+ * everything.
+ */
+async function fetchAllPages<T>(
+  fetchPage: (offset: number, pageSize: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+  context: string,
+  pageSize = 1000,
+): Promise<T[]> {
+  const rows: T[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await fetchPage(offset, pageSize);
+    if (error) {
+      console.warn(context, error);
+      break;
+    }
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+    offset += pageSize;
+  }
+  return rows;
+}
+
 export async function fetchFilterableCustomFieldDefinitions(
   organizationId: string,
 ): Promise<FilterableCustomField[]> {
   const map = new Map<string, FilterableCustomField>();
 
-  const { data: templates, error: templatesError } = await supabase
-    .from("expense_form_field_templates")
-    .select("id, name, field_type, options")
-    .eq("organization_id", organizationId)
-    .in("field_type", ["select", "checkbox"])
-    .order("name", { ascending: true });
-
-  if (templatesError) {
-    console.warn("expense_form_field_templates (filters)", templatesError);
-  } else {
-    for (const row of templates || []) {
-      if (row.field_type === "select" || row.field_type === "checkbox") {
-        upsertFilterableField(map, row.name, row.field_type, row.options);
-      }
+  const templates = await fetchAllPages<{ name: string; field_type: string; options: unknown }>(
+    (offset, pageSize) =>
+      supabase
+        .from("expense_form_field_templates")
+        .select("id, name, field_type, options")
+        .eq("organization_id", organizationId)
+        .in("field_type", ["select", "checkbox"])
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1),
+    "expense_form_field_templates (filters)",
+  );
+  for (const row of templates) {
+    if (row.field_type === "select" || row.field_type === "checkbox") {
+      upsertFilterableField(map, row.name, row.field_type, row.options);
     }
   }
 
-  const { data: assignments, error: assignmentsError } = await supabase
-    .from("expense_category_form_fields")
-    .select("expense_form_field_templates(name, field_type, options)")
-    .eq("organization_id", organizationId);
-
-  if (assignmentsError) {
-    console.warn("expense_category_form_fields (filters)", assignmentsError);
-  } else {
-    for (const row of assignments || []) {
-      const tpl = row.expense_form_field_templates as {
-        name?: string;
-        field_type?: string;
-        options?: unknown;
-      } | null;
-      if (!tpl?.name) continue;
-      if (tpl.field_type === "select" || tpl.field_type === "checkbox") {
-        upsertFilterableField(map, tpl.name, tpl.field_type, tpl.options);
-      }
+  const assignments = await fetchAllPages<{
+    expense_form_field_templates: { name?: string; field_type?: string; options?: unknown } | null;
+  }>(
+    (offset, pageSize) =>
+      supabase
+        .from("expense_category_form_fields")
+        .select("id, expense_form_field_templates(name, field_type, options)")
+        .eq("organization_id", organizationId)
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1),
+    "expense_category_form_fields (filters)",
+  );
+  for (const row of assignments) {
+    const tpl = row.expense_form_field_templates;
+    if (!tpl?.name) continue;
+    if (tpl.field_type === "select" || tpl.field_type === "checkbox") {
+      upsertFilterableField(map, tpl.name, tpl.field_type, tpl.options);
     }
   }
 
-  const { data: branches, error: branchesError } = await supabase
-    .from("expense_form_field_option_branches")
-    .select("id, name, field_type, options")
-    .eq("organization_id", organizationId)
-    .in("field_type", ["select", "checkbox"])
-    .order("name", { ascending: true });
-
-  if (branchesError) {
-    console.warn("expense_form_field_option_branches (filters)", branchesError);
-  } else {
-    for (const row of branches || []) {
-      if (row.field_type === "select" || row.field_type === "checkbox") {
-        upsertFilterableField(map, row.name, row.field_type, row.options);
-      }
+  const branches = await fetchAllPages<{ name: string; field_type: string; options: unknown }>(
+    (offset, pageSize) =>
+      supabase
+        .from("expense_form_field_option_branches")
+        .select("id, name, field_type, options")
+        .eq("organization_id", organizationId)
+        .in("field_type", ["select", "checkbox"])
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1),
+    "expense_form_field_option_branches (filters)",
+  );
+  for (const row of branches) {
+    if (row.field_type === "select" || row.field_type === "checkbox") {
+      upsertFilterableField(map, row.name, row.field_type, row.options);
     }
   }
 
@@ -261,13 +290,18 @@ export async function fetchFilterableCustomFields(
     { name: string; fieldType: "select" | "checkbox"; options: unknown }
   >();
 
-  const { data: templates } = await supabase
-    .from("expense_form_field_templates")
-    .select("id, name, field_type, options")
-    .eq("organization_id", organizationId)
-    .in("field_type", ["select", "checkbox"]);
-
-  for (const row of templates || []) {
+  const templates = await fetchAllPages<{ id: string; name: string; field_type: string; options: unknown }>(
+    (offset, pageSize) =>
+      supabase
+        .from("expense_form_field_templates")
+        .select("id, name, field_type, options")
+        .eq("organization_id", organizationId)
+        .in("field_type", ["select", "checkbox"])
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1),
+    "expense_form_field_templates (filter value scan)",
+  );
+  for (const row of templates) {
     if (row.id && (row.field_type === "select" || row.field_type === "checkbox")) {
       templateMetaById.set(row.id, {
         name: row.name,
@@ -277,13 +311,18 @@ export async function fetchFilterableCustomFields(
     }
   }
 
-  const { data: branches } = await supabase
-    .from("expense_form_field_option_branches")
-    .select("id, name, field_type, options")
-    .eq("organization_id", organizationId)
-    .in("field_type", ["select", "checkbox"]);
-
-  for (const row of branches || []) {
+  const branches = await fetchAllPages<{ id: string; name: string; field_type: string; options: unknown }>(
+    (offset, pageSize) =>
+      supabase
+        .from("expense_form_field_option_branches")
+        .select("id, name, field_type, options")
+        .eq("organization_id", organizationId)
+        .in("field_type", ["select", "checkbox"])
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1),
+    "expense_form_field_option_branches (filter value scan)",
+  );
+  for (const row of branches) {
     if (row.id && (row.field_type === "select" || row.field_type === "checkbox")) {
       branchMetaById.set(row.id, {
         name: row.name,

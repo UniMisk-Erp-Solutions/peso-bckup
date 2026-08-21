@@ -60,6 +60,7 @@ import {
   deserializePresetSchema,
   buildPresetMatrix,
   countPresetFields,
+  inferMatrixColumnsFromDrafts,
   type ReusableSubFieldDefinition,
 } from "../subFieldPresets";
 
@@ -475,5 +476,57 @@ describe("object reference isolation", () => {
     const y = drafts.find((d) => d.parent_option_value === "OptY")!;
     x.options.push("mutation");
     expect(y.options).not.toContain("mutation");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// inferMatrixColumnsFromDrafts — matrix works without a saved preset
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("inferMatrixColumnsFromDrafts", () => {
+  it("builds one column per distinct field_key across all parent options", () => {
+    const drafts = [
+      makeDraft({ localId: "a1", parent_option_value: "U1", field_key: "project_id", name: "Project ID", field_type: "select", display_order: 0 }),
+      makeDraft({ localId: "a2", parent_option_value: "U2", field_key: "project_id", name: "Project ID", field_type: "select", display_order: 0 }),
+      makeDraft({ localId: "b1", parent_option_value: "U1", field_key: "project_name", name: "Project Name", field_type: "select", display_order: 1 }),
+    ];
+    const columns = inferMatrixColumnsFromDrafts(drafts);
+    expect(columns.map((c) => c.fieldKey)).toEqual(["project_id", "project_name"]);
+  });
+
+  it("lets the matrix be built immediately from a bulk import with no saved preset", () => {
+    const drafts = [
+      makeDraft({ localId: "a1", parent_option_value: "U1", field_key: "project_id", name: "Project ID", field_type: "select", options: ["P-101"] }),
+      makeDraft({ localId: "a2", parent_option_value: "U2", field_key: "project_id", name: "Project ID", field_type: "select", options: [] }),
+    ];
+    const columns = inferMatrixColumnsFromDrafts(drafts);
+    const matrix = buildPresetMatrix(["U1", "U2"], columns, drafts);
+    expect(matrix[0].cells[0].choiceCount).toBe(1);
+    expect(matrix[1].cells[0].choiceCount).toBe(0);
+  });
+
+  it("ignores nested (non-root) branches", () => {
+    const root = makeDraft({ localId: "root", parent_option_value: "U1", field_key: "project_id", name: "Project ID" });
+    const nested = makeDraft({ localId: "nested", parent_option_value: "sub", field_key: "sub_key", name: "Sub", parent_branch_local_id: "root" });
+    const columns = inferMatrixColumnsFromDrafts([root, nested]);
+    expect(columns.map((c) => c.fieldKey)).toEqual(["project_id"]);
+  });
+
+  it("ignores unnamed (not-yet-configured) drafts", () => {
+    const unnamed = makeDraft({ localId: "u", parent_option_value: "U1", field_key: "field_u", name: "" });
+    expect(inferMatrixColumnsFromDrafts([unnamed])).toEqual([]);
+  });
+
+  it("orders columns by display_order", () => {
+    const drafts = [
+      makeDraft({ localId: "b", parent_option_value: "U1", field_key: "b_key", name: "B", display_order: 5 }),
+      makeDraft({ localId: "a", parent_option_value: "U1", field_key: "a_key", name: "A", display_order: 1 }),
+    ];
+    const columns = inferMatrixColumnsFromDrafts(drafts);
+    expect(columns.map((c) => c.fieldKey)).toEqual(["a_key", "b_key"]);
+  });
+
+  it("returns an empty array when there are no root branches", () => {
+    expect(inferMatrixColumnsFromDrafts([])).toEqual([]);
   });
 });

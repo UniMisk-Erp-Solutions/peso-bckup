@@ -520,6 +520,46 @@ export function buildPresetMatrix(
   });
 }
 
+/**
+ * Build matrix columns directly from whatever root dependent fields already
+ * exist in the draft — no saved ReusableSubFieldSet required. One column per
+ * distinct field_key across ALL parent options (the same "shared identity
+ * across parents" model bulk import and the rest of this file already use),
+ * using the first-seen root branch as that column's representative metadata.
+ * Columns are ordered by their representative's display_order.
+ *
+ * This lets the matrix editor work immediately after a bulk import (which
+ * produces branchDrafts but no preset), while a saved preset remains the
+ * cleanest way to define/reuse a standard column set across templates.
+ */
+export function inferMatrixColumnsFromDrafts(
+  allDrafts: DraftOptionBranch[],
+): ReusableSubFieldDefinition[] {
+  const byFieldKey = new Map<string, DraftOptionBranch>();
+  for (const d of allDrafts) {
+    if (d.parent_branch_local_id !== null) continue;
+    if (!d.name.trim()) continue;
+    const key = d.field_key.trim().toLowerCase();
+    if (!key || byFieldKey.has(key)) continue;
+    byFieldKey.set(key, d);
+  }
+
+  return Array.from(byFieldKey.values())
+    .sort((a, b) => a.display_order - b.display_order)
+    .map((d) => ({
+      localSchemaId: d.localId,
+      fieldKey: d.field_key,
+      name: d.name,
+      fieldType: d.field_type,
+      required: d.required,
+      placeholder: d.placeholder,
+      helpText: d.help_text,
+      options: [],
+      displayOrder: d.display_order,
+      children: [],
+    }));
+}
+
 // ─── Layout types ─────────────────────────────────────────────────────────────
 
 export type FieldLayoutContext = "review" | "detail";

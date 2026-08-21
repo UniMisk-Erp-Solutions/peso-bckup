@@ -163,6 +163,73 @@ export function getBrowserTimezoneAbbr(): string {
   }
 }
 
+// ── DD/MM/YYYY maintenance display formatters ──────────────────────────────
+//
+// The owner explicitly requested DD/MM/YYYY for all human-readable
+// maintenance dates, with time and timezone shown clearly (e.g.
+// "15/08/2026 • 5:30 PM IST"). These are hand-built rather than delegated
+// to toLocaleDateString(navigator.language, ...) so the format is fixed and
+// predictable regardless of the visitor's browser locale — a US-locale
+// visitor must see the same DD/MM/YYYY shape as everyone else. Storage
+// remains UTC timestamptz; these always render in the VIEWER's local
+// timezone (matching the rest of this file's existing local-time
+// conventions), which is the whole reason the timezone abbreviation is
+// shown alongside the time.
+
+/** "15/08/2026" — day/month/year, always two-digit day and month. */
+export function formatMaintenanceDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  return `${day}/${month}/${d.getFullYear()}`;
+}
+
+/** "5:30 PM" — explicit 12-hour clock with AM/PM, independent of locale. */
+export function formatMaintenanceTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  let hours = d.getHours();
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  const period = hours < 12 ? "AM" : "PM";
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  return `${hours}:${minutes} ${period}`;
+}
+
+/**
+ * "15/08/2026 • 5:30 PM" or, with `withTimezone`, "15/08/2026 • 5:30 PM IST".
+ * Returns "" for a missing/invalid input rather than a partial string.
+ */
+export function formatMaintenanceDateTime(
+  iso: string | null | undefined,
+  opts?: { withTimezone?: boolean },
+): string {
+  const date = formatMaintenanceDate(iso);
+  const time = formatMaintenanceTime(iso);
+  if (!date || !time) return "";
+  if (opts?.withTimezone) {
+    const tz = getBrowserTimezoneAbbr();
+    return tz ? `${date} • ${time} ${tz}` : `${date} • ${time}`;
+  }
+  return `${date} • ${time}`;
+}
+
+/** "1h 12m" / "45m" / "3h" — a short countdown label from a millisecond
+ * duration. Never negative (clamped to 0m). Display-only: the countdown
+ * text does NOT determine when maintenance actually ends — the lease/state
+ * machine in maintenanceLeaseState.ts does. */
+export function formatMaintenanceCountdown(msRemaining: number): string {
+  const totalMinutes = Math.max(0, Math.floor(msRemaining / 60_000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}m`;
+  if (minutes === 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
+}
+
 // ── Time picker helpers ─────────────────────────────────────────────────────
 
 /**

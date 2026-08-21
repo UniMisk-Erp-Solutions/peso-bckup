@@ -267,6 +267,7 @@
     "customFieldsLoadFailed": "कुछ कस्टम फ़ील्ड मान लोड नहीं हो सके। नीचे दिखाए गए मान अधूरे हो सकते हैं।",
     "noEligible": "कोई पात्र व्यय नहीं",
     "noEligibleDescription": "चयनित व्ययों में से कोई भी अपनी वर्तमान स्थिति में {{action}} नहीं किया जा सकता।",
+    "verifyBatch": "बैच सत्यापित करें ({{count}})",
     "actionVerify": "सत्यापित",
     "actionApprove": "स्वीकृत",
     "actionReject": "अस्वीकृत",

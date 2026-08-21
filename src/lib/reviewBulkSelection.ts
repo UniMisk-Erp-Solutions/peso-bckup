@@ -56,6 +56,24 @@ export function selectAllState(
 }
 
 /**
+ * Split selected keys into batch ids and singular expense ids (DOC-098 §4A).
+ * Used by Bulk Verify to decide, per selection, whether to call the
+ * server-authoritative atomic batch RPC (one call per batch id, never
+ * expanded over browser-held rows) or the existing per-expense path.
+ */
+export function splitSelectedKeys(
+  selectedKeys: ReadonlySet<string>,
+): { batchIds: string[]; singularIds: string[] } {
+  const batchIds: string[] = [];
+  const singularIds: string[] = [];
+  for (const key of selectedKeys) {
+    if (key.startsWith("batch:")) batchIds.push(key.slice(6));
+    else if (key.startsWith("expense:")) singularIds.push(key.slice(8));
+  }
+  return { batchIds, singularIds };
+}
+
+/**
  * Expand selected keys to the concrete expense ids to act on, over all held
  * rows (a batch key expands to every one of its non-terminal children). Terminal
  * rows are never included even if their key were somehow selected.

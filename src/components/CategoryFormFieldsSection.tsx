@@ -36,6 +36,19 @@ type CategoryFormFieldsSectionProps = {
   allowNested: boolean;
   organizationId?: string | null;
   userId?: string | null;
+  /** DOC-097 hotfix pt.3: when set, fired whenever a select-type template's
+   *  value changes so the caller can fetch that ONE option's branches
+   *  on-demand (useOnDemandOptionBranches) instead of the whole template
+   *  ever having downloaded all of them up front. Optional so this
+   *  component still works standalone/in tests without it. */
+  onSelectOptionValue?: (templateId: string, optionValue: string) => void;
+  /** DOC-100 pt.2: scopes every generated `id`/`htmlFor` to this instance.
+   *  Required whenever more than one CategoryFormFieldsSection for the SAME
+   *  template can be mounted at once (e.g. one per batch line) — without it,
+   *  every instance renders the identical `field-${template.id}` DOM id,
+   *  breaking label/input association. Single-instance callers (the single
+   *  expense form, one shared-field renderer per template) can omit it. */
+  instanceId?: string;
 };
 
 export function CategoryFormFieldsSection({
@@ -48,8 +61,11 @@ export function CategoryFormFieldsSection({
   allowNested,
   organizationId,
   userId,
+  onSelectOptionValue,
+  instanceId,
 }: CategoryFormFieldsSectionProps) {
   const { t } = useTranslation("expenses");
+  const idScope = instanceId ? `${instanceId}-` : "";
 
   const selectFieldRefs = useMemo(() => {
     const refs: Array<{ fieldKey: string; fieldKind: FormFieldKind; options: string[] }> = [];
@@ -82,6 +98,12 @@ export function CategoryFormFieldsSection({
   const handleTemplateSelectChange = (templateId: string, val: string) => {
     const nextTemplate = { ...formFieldValues, [templateId]: val };
     onFormFieldValuesChange(nextTemplate);
+    // DOC-097 hotfix pt.3: this option's own branches may not be loaded yet
+    // (they're now fetched on-demand, not eagerly for every option) --
+    // buildInitialBranchValues below only clears/derives from whatever is
+    // ALREADY in optionBranches, so it correctly no-ops until the caller's
+    // fetch resolves and a re-render supplies the real branches.
+    onSelectOptionValue?.(templateId, val);
     const nextBranch = buildInitialBranchValues(
       optionBranches,
       nextTemplate,
@@ -115,7 +137,7 @@ export function CategoryFormFieldsSection({
       <h3 className="font-semibold text-sm">{t("form.customFields.sectionTitle")}</h3>
       {categoryFormFields.map((field) => {
         const template = field.template;
-        const fieldId = `field-${template.id}`;
+        const fieldId = `field-${idScope}${template.id}`;
         const isRequired = field.required !== null ? field.required : template.required;
         const value = formFieldValues[template.id] || "";
 
@@ -207,7 +229,7 @@ export function CategoryFormFieldsSection({
                     )}
                     branchValues={branchValues}
                     onBranchChange={handleBranchChange}
-                    idPrefix={`tpl-${template.id}`}
+                    idPrefix={`tpl-${idScope}${template.id}`}
                     recommendedByKey={recommendedByKey}
                   />
                 )}

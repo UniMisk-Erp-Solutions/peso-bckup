@@ -40,7 +40,7 @@ export type DailyReportEmployeeProfile = {
   employee_id: string | null;
 };
 
-function formatTrackDate(tripStart: string | null): string {
+export function formatTrackDate(tripStart: string | null): string {
   if (!tripStart) return "";
   const d = tripStart.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return "";
@@ -82,7 +82,7 @@ function emptyCostBuckets(): Record<DailyReportCostColumnKey, number> {
   };
 }
 
-function costColumnToHeader(key: DailyReportCostColumnKey): keyof DailyProjectExpenseReportRow {
+export function costColumnToHeader(key: DailyReportCostColumnKey): keyof DailyProjectExpenseReportRow {
   const map: Record<DailyReportCostColumnKey, keyof DailyProjectExpenseReportRow> = {
     petrol_cost: "Petrol Cost",
     material_cost: "Material Cost",
@@ -128,6 +128,92 @@ export function dailyReportResultsToRows(
   return results.map((result) => result.row);
 }
 
+/**
+ * One logical Daily Project Report row before final shaping.
+ *
+ * A report row is NOT an expense: it is the (trackDate, userId, projectId)
+ * grouping. Both the legacy all-in-browser pipeline and the server-paged
+ * pipeline (DOC-101) produce this shape and hand it to
+ * `finalizeDailyReportGroups`, so the two cannot drift in row ordering,
+ * `percent`, or any cell value.
+ */
+export type DailyReportGroup = {
+  /** Already formatted DD-MM-YYYY, or "" when the expense has no usable date. */
+  trackDate: string;
+  userId: string;
+  projectId: string;
+  projectName: string;
+  location: string;
+  voucherNo: string;
+  employeeName: string;
+  employeeCode: string;
+  costs: Record<DailyReportCostColumnKey, number>;
+  sourceExpenses: DailyReportSourceExpense[];
+};
+
+/**
+ * Sort the COMPLETE set of report groups and shape each into a workbook row.
+ *
+ * `percent` is derived here from the full set, because
+ * payrollPercentForEmployeeDay splits 100 across every project row an employee
+ * has on that day. Handing this a partial set silently produces wrong
+ * percentages — which is exactly why the server-paged export coordinator
+ * refuses to build a workbook until it has proven it holds every row.
+ */
+export function finalizeDailyReportGroups(
+  groups: DailyReportGroup[],
+): DailyProjectExpenseReportBuildResult[] {
+  const projectsPerEmployeeDay = new Map<string, number>();
+  for (const group of groups) {
+    const dayKey = employeeDayKey(group.trackDate, group.userId);
+    projectsPerEmployeeDay.set(dayKey, (projectsPerEmployeeDay.get(dayKey) ?? 0) + 1);
+  }
+
+  return [...groups]
+    .sort((a, b) => {
+      const dateCmp = a.trackDate.localeCompare(b.trackDate);
+      if (dateCmp !== 0) return dateCmp;
+      const nameCmp = a.employeeName.localeCompare(b.employeeName);
+      if (nameCmp !== 0) return nameCmp;
+      const projCmp = a.projectId.localeCompare(b.projectId);
+      if (projCmp !== 0) return projCmp;
+      return a.projectName.localeCompare(b.projectName);
+    })
+    .map((g) => ({
+      row: (() => {
+        const row = {} as DailyProjectExpenseReportRow;
+        for (const header of DAILY_PROJECT_REPORT_HEADERS) {
+          row[header] = "";
+        }
+        row["Track Date"] = g.trackDate;
+        row["Voucher No"] = g.voucherNo;
+        row["project id"] = g.projectId;
+        row["project name"] = g.projectName;
+        row["Employee"] = g.employeeName;
+        row["Employee Code"] = g.employeeCode;
+        row["Location"] = g.location;
+        row["Presence"] = "P";
+        row["percent"] = payrollPercentForEmployeeDay(
+          projectsPerEmployeeDay.get(employeeDayKey(g.trackDate, g.userId)) ?? 1,
+        );
+
+        for (const colKey of Object.keys(g.costs) as DailyReportCostColumnKey[]) {
+          const amount = g.costs[colKey];
+          if (amount > 0) {
+            row[costColumnToHeader(colKey)] = amount;
+          }
+        }
+
+        return row;
+      })(),
+      sourceExpenses: [...g.sourceExpenses].sort((a, b) => {
+        const dateCmp = String(a.trip_start ?? "").localeCompare(String(b.trip_start ?? ""));
+        if (dateCmp !== 0) return dateCmp;
+        return String(a.category ?? "").localeCompare(String(b.category ?? ""));
+      }),
+    }));
+}
+
 export function buildDailyProjectExpenseReportRows(input: {
   expenses: RawDailyReportExpense[];
   profilesByUserId: Record<string, DailyReportEmployeeProfile>;
@@ -139,18 +225,7 @@ export function buildDailyProjectExpenseReportRows(input: {
 }): DailyProjectExpenseReportBuildResult[] {
   const { expenses, profilesByUserId, fieldValuesByExpenseId } = input;
 
-  type Group = {
-    trackDate: string;
-    userId: string;
-    projectId: string;
-    projectName: string;
-    location: string;
-    voucherNo: string;
-    costs: Record<DailyReportCostColumnKey, number>;
-    sourceExpenses: DailyReportSourceExpense[];
-  };
-
-  const groups = new Map<string, Group>();
+  const groups = new Map<string, DailyReportGroup>();
 
   for (const exp of expenses) {
     const trackDate = formatTrackDate(exp.trip_start);
@@ -171,6 +246,8 @@ export function buildDailyProjectExpenseReportRows(input: {
         projectName: String(fields.projectName ?? "").trim(),
         location: String(fields.location ?? "").trim(),
         voucherNo: resolveVoucherNo(exp),
+        employeeName: profilesByUserId[exp.user_id]?.name ?? "",
+        employeeCode: profilesByUserId[exp.user_id]?.employee_id ?? "",
         costs: emptyCostBuckets(),
         sourceExpenses: [],
       };
@@ -201,58 +278,7 @@ export function buildDailyProjectExpenseReportRows(input: {
     });
   }
 
-  const projectsPerEmployeeDay = new Map<string, number>();
-  for (const group of groups.values()) {
-    const dayKey = employeeDayKey(group.trackDate, group.userId);
-    projectsPerEmployeeDay.set(dayKey, (projectsPerEmployeeDay.get(dayKey) ?? 0) + 1);
-  }
-
-  return [...groups.values()]
-    .sort((a, b) => {
-      const dateCmp = a.trackDate.localeCompare(b.trackDate);
-      if (dateCmp !== 0) return dateCmp;
-      const empA = profilesByUserId[a.userId]?.name ?? "";
-      const empB = profilesByUserId[b.userId]?.name ?? "";
-      const nameCmp = empA.localeCompare(empB);
-      if (nameCmp !== 0) return nameCmp;
-      const projCmp = a.projectId.localeCompare(b.projectId);
-      if (projCmp !== 0) return projCmp;
-      return a.projectName.localeCompare(b.projectName);
-    })
-    .map((g) => ({
-      row: (() => {
-        const profile = profilesByUserId[g.userId];
-        const row = {} as DailyProjectExpenseReportRow;
-        for (const header of DAILY_PROJECT_REPORT_HEADERS) {
-          row[header] = "";
-        }
-        row["Track Date"] = g.trackDate;
-        row["Voucher No"] = g.voucherNo;
-        row["project id"] = g.projectId;
-        row["project name"] = g.projectName;
-        row["Employee"] = profile?.name ?? "";
-        row["Employee Code"] = profile?.employee_id ?? "";
-        row["Location"] = g.location;
-        row["Presence"] = "P";
-        row["percent"] = payrollPercentForEmployeeDay(
-          projectsPerEmployeeDay.get(employeeDayKey(g.trackDate, g.userId)) ?? 1,
-        );
-
-        for (const colKey of Object.keys(g.costs) as DailyReportCostColumnKey[]) {
-          const amount = g.costs[colKey];
-          if (amount > 0) {
-            row[costColumnToHeader(colKey)] = amount;
-          }
-        }
-
-        return row;
-      })(),
-      sourceExpenses: [...g.sourceExpenses].sort((a, b) => {
-        const dateCmp = String(a.trip_start ?? "").localeCompare(String(b.trip_start ?? ""));
-        if (dateCmp !== 0) return dateCmp;
-        return String(a.category ?? "").localeCompare(String(b.category ?? ""));
-      }),
-    }));
+  return finalizeDailyReportGroups([...groups.values()]);
 }
 
 async function fetchFieldValuesForMappings(

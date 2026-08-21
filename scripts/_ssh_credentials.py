@@ -14,7 +14,11 @@ Resolution order:
 
   1. SSH private key   -- COOLIFY_SSH_KEY (path) or COOLIFY_SSH_KEY_DATA (PEM)
   2. Password from env -- COOLIFY_SSH_PASSWORD
-  3. Interactive prompt -- only when a TTY is attached
+  3. Password from a local gitignored file -- .local-sensitive-data/coolify_ssh_password.txt
+     (a persistent env var set via `setx` is invisible to a session's already-running
+     process tree until that process restarts; this file is read fresh every call and
+     sidesteps that entirely -- see CLAUDE.md's ".local-sensitive-data/" policy)
+  4. Interactive prompt -- only when a TTY is attached
 
 Nothing here returns, logs or repr()s a secret. `SshCredentials.__repr__` is
 overridden precisely so an accidental print in a caller cannot leak it.
@@ -92,6 +96,17 @@ def load_ssh_credentials(
     password = os.environ.get(PASSWORD_ENV)
     if password:
         return SshCredentials(host=host, user=user, password=password)
+
+    password_file = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        ".local-sensitive-data",
+        "coolify_ssh_password.txt",
+    )
+    if os.path.isfile(password_file):
+        with open(password_file, "r", encoding="utf-8") as handle:
+            file_password = handle.read().strip()
+        if file_password:
+            return SshCredentials(host=host, user=user, password=file_password)
 
     if allow_prompt and sys.stdin.isatty():
         entered = getpass.getpass(f"SSH password for {user}@{host}: ")

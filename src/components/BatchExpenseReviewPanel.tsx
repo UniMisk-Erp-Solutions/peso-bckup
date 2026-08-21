@@ -18,6 +18,7 @@ import {
   batchReviewActionLabel,
   expensesEligibleForBatchAction,
   fetchBatchExpenseCustomFields,
+  hierarchyReviewerActionsForExpense,
   type BatchReviewAction,
   type BatchReviewExpenseRow,
   type BatchReviewRole,
@@ -52,6 +53,8 @@ import { AsyncOperationProgress } from "@/components/AsyncOperationProgress";
 import {
   loadCorrectionCustomFields,
   validateCorrectionCustomFields,
+  fetchCorrectionOptionBranches,
+  mergeCorrectionOptionBranches,
   type CorrectionCustomFieldsModel,
   EMPTY_CORRECTION_FIELDS,
 } from "@/lib/loadCorrectionCustomFields";
@@ -360,6 +363,21 @@ export function BatchExpenseReviewPanel({
     [selectedExpenses, role, engineerApprovalLimit],
   );
 
+  /**
+   * Hierarchy-tier (team_leader/executive) Verify count, computed over the
+   * WHOLE loaded batch — never `selectedExpenses` (DOC-098 Part 23). Verify
+   * for this role means "verify the batch"; a reviewer unchecking a child row
+   * must not change whether the batch action is available, since the server
+   * verifies every eligible current child regardless of local selection.
+   * Used for button enablement/label only — never as the gate on whether the
+   * atomic RPC is called (see runBatchAction).
+   */
+  const hierarchyVerifyEligibleCount = useMemo(() => {
+    if (role !== "team_leader" && role !== "executive") return 0;
+    return expenses.filter((e) => hierarchyReviewerActionsForExpense(e.status, role).includes("verify"))
+      .length;
+  }, [expenses, role]);
+
   const batchColDefaults = useMemo(
     () => ({
       title: 160,
@@ -374,8 +392,15 @@ export function BatchExpenseReviewPanel({
   const { colWidth, startResize } = useResizableColumns("pw_batch_review_cols", batchColDefaults);
 
   const runBatchAction = async (action: BatchReviewAction) => {
+    const isHierarchyVerify = action === "verify" && (role === "team_leader" || role === "executive");
     const targets = eligible(action);
-    if (targets.length === 0) {
+    // Hierarchy-tier Verify NEVER gates the RPC call on client eligibility
+    // (DOC-098 Part 4): the server owns batch-membership/eligibility
+    // resolution, so a stale/incomplete local view (off-page children,
+    // unchecked rows, a not-yet-refreshed page) must never prevent the
+    // atomic RPC from running. Approve/Reject and engineer/admin Verify keep
+    // the existing selection-based gate.
+    if (targets.length === 0 && !isHierarchyVerify) {
       toast({
         variant: "destructive",
         title: t("batchReview.noEligible"),
@@ -393,6 +418,51 @@ export function BatchExpenseReviewPanel({
 
     setActionLoading(action);
     try {
+      // Hierarchy-tier Verify (team_leader/executive) goes through the SAME
+      // server-authoritative atomic RPC as /review's Bulk Verify (DOC-098) --
+      // ONE call for the whole batch, resolved server-side, all-or-nothing.
+      // Always called for this action+role, regardless of `targets`/selection
+      // -- the server resolves batch membership and eligibility itself and
+      // reports back success / already-complete / blockers. Approve/Reject and
+      // engineer/admin Verify are unchanged (§6A) -- they are not proven to
+      // share Verify's split-batch defect, and this task's scope is Verify.
+      if (isHierarchyVerify) {
+        const result = await ExpenseService.verifyBatchAtomic(
+          batchId,
+          userId,
+          reviewComment.trim() || "Batch verified",
+          { reviewerRole: role },
+        );
+        if (result.ok) {
+          toast({
+            title: t("batchReview.complete"),
+            description: t("batchReview.completeDescription", {
+              success: result.verifiedCount,
+              failures: "",
+            }),
+          });
+        } else if (result.code === "batch_not_found") {
+          toast({
+            variant: "destructive",
+            title: t("batchReview.failed"),
+            description: t("batchReview.allFailed"),
+          });
+        } else {
+          // Structured, per-transaction detail -- never an aggregate-only message.
+          const detail = result.blockers
+            .map((b) => `#${b.transactionNumber || "—"}: ${b.reason}`)
+            .join("; ");
+          toast({
+            variant: "destructive",
+            title: t("batchReview.failed"),
+            description: detail || t("batchReview.allFailed"),
+          });
+        }
+        await loadBatch();
+        onReviewComplete?.();
+        return;
+      }
+
       const { results, successCount, failureCount } = await ExpenseService.processBatchReview(
         targets.map((e) => e.id),
         userId,
@@ -460,7 +530,12 @@ export function BatchExpenseReviewPanel({
     );
   }
 
-  const verifyCount = eligible("verify").length;
+  // For team_leader/executive, the count reflects the WHOLE batch (never the
+  // checkbox selection) -- see hierarchyVerifyEligibleCount above.
+  const verifyCount =
+    role === "team_leader" || role === "executive"
+      ? hierarchyVerifyEligibleCount
+      : eligible("verify").length;
   const approveCount = eligible("approve").length;
   const rejectCount = eligible("reject").length;
   const openDetailExpense = openDetailId
@@ -512,6 +587,21 @@ export function BatchExpenseReviewPanel({
     setCorrectionDialogOpen(true);
   };
 
+  /** DOC-100 pt.2: the reviewer changing a parent select's value mid-correction
+   *  must load that option's tree on demand -- the initial load only ever
+   *  fetched whichever value was SAVED when the dialog opened. */
+  const handleCorrectionSelectOptionValue = async (templateId: string, optionValue: string) => {
+    if (!organizationId || !optionValue) return;
+    const result = await fetchCorrectionOptionBranches(supabase, organizationId, templateId, optionValue);
+    setCorrFieldModel((prev) => ({
+      ...prev,
+      optionBranches: mergeCorrectionOptionBranches(prev.optionBranches, templateId, result.branches),
+      loadError: result.error
+        ? "Could not load additional field configuration for the selected option. Please retry."
+        : undefined,
+    }));
+  };
+
   const submitCorrection = async () => {
     if (!selectedSingleExpense) return;
     const amount = Number(corrAmount);
@@ -521,6 +611,11 @@ export function BatchExpenseReviewPanel({
         title: t("common:error"),
         description: "Amount must be a positive number.",
       });
+      return;
+    }
+
+    if (corrFieldModel.loadError) {
+      toast({ variant: "destructive", title: t("common:error"), description: corrFieldModel.loadError });
       return;
     }
 
@@ -875,7 +970,9 @@ export function BatchExpenseReviewPanel({
                 onClick={() => runBatchAction("verify")}
               >
                 {actionLoading === "verify" && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                {batchReviewActionLabel("verify", verifyCount)}
+                {role === "team_leader" || role === "executive"
+                  ? t("batchReview.verifyBatch", { count: verifyCount })
+                  : batchReviewActionLabel("verify", verifyCount)}
               </Button>
               <Button
                 disabled={!!actionLoading || approveCount === 0}
@@ -958,6 +1055,11 @@ export function BatchExpenseReviewPanel({
                 onChange={(e) => setCorrAmount(e.target.value)}
               />
             </div>
+            {corrFieldModel.loadError && (
+              <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                {corrFieldModel.loadError}
+              </p>
+            )}
             <CorrectionCustomFieldsSection
               categoryFormFields={corrFieldModel.categoryFormFields}
               formFieldValues={corrFieldModel.formFieldValues}
@@ -972,6 +1074,7 @@ export function BatchExpenseReviewPanel({
               organizationId={organizationId}
               userId={userId}
               allowNested={allowNestedConditional}
+              onSelectOptionValue={handleCorrectionSelectOptionValue}
             />
             <div>
               <Label htmlFor="batch-corr-reason">Reason for correction (audit)</Label>

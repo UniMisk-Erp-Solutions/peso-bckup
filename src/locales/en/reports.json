@@ -36,7 +36,22 @@
     "generatingReport": "Generating report…",
     "noRows": "No approved expenses in this period for the selected filters.",
     "configRequiredTitle": "Mappings required",
-    "configRequiredHint": "Configure project fields and category mappings in Settings before generating this report."
+    "configRequiredHint": "Configure project fields and category mappings in Settings before generating this report.",
+    "preparingProgress": "{{received}} of {{total}} rows prepared",
+    "errors": {
+      "generic": "The report could not be completed. No partial report was generated.",
+      "page_failed": "The report could not be completed because one data page failed to load. No partial report was generated.",
+      "incomplete": "The report could not be completed because some rows were missing. No partial report was generated.",
+      "duplicate_row": "The report could not be completed because a row was returned twice. No partial report was generated.",
+      "snapshot_changed": "The data changed while the report was being prepared. Please run the report again.",
+      "cancelled": "Report generation was cancelled. No report was generated.",
+      "malformed_response": "The report could not be completed because the server sent an unexpected response.",
+      "malformed_cursor": "The report could not be completed because the server sent an unexpected response.",
+      "missing_cursor": "The report could not be completed because the server sent an unexpected response.",
+      "missing_total": "The report could not be completed because the server did not report how many rows to expect.",
+      "schema_version_mismatch": "This app version cannot read the report format returned by the server. Please reload the page.",
+      "too_many_pages": "The report could not be completed because it exceeded the maximum size."
+    }
   },
   "liveRefresh": {
     "initialLoading": "Loading report…",

@@ -31,7 +31,8 @@ import {
   ExternalLink
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { ExpenseService } from "@/services/ExpenseService";
+import { ExpenseService, type BatchVerifyResult, type BatchVerifyBlocker } from "@/services/ExpenseService";
+import { waitingReasonLabel } from "@/lib/reviewWaitingReason";
 import { format, subDays, subMonths, subYears } from "date-fns";
 import { formatINR, formatCreatedDateTime, parseLocalDate } from "@/lib/format";
 import { getDateLocale } from "@/lib/formatLocale";
@@ -46,6 +47,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   batchReviewState,
   isTerminalReviewStatus,
@@ -127,7 +129,6 @@ import {
 import {
   type ApprovalClassification,
   type SelectableRow,
-  canProceedWithApproval,
   classifyForApproval,
   expandSelectionToExpenseIds,
   isRowSelectable,
@@ -135,6 +136,7 @@ import {
   pageSelectableKeys,
   selectAllState,
   selectionKey,
+  splitSelectedKeys as splitSelectedKeysBySelection,
 } from "@/lib/reviewBulkSelection";
 import {
   fetchHierarchyReviewerExpenses,
@@ -159,6 +161,8 @@ import {
 import {
   loadCorrectionCustomFields,
   validateCorrectionCustomFields,
+  fetchCorrectionOptionBranches,
+  mergeCorrectionOptionBranches,
   type CorrectionCustomFieldsModel,
   EMPTY_CORRECTION_FIELDS,
 } from "@/lib/loadCorrectionCustomFields";
@@ -599,7 +603,21 @@ export default function ManagerReview() {
     selectedTotal: number;
     /** "single" = from an open expense's Approve; "bulk" = from the bulk bar. */
     mode: "single" | "bulk";
+    /** Fresh-resolved rows behind the classification, for per-item detail (§7B). */
+    targets: Expense[];
   } | null>(null);
+  /** Whether the waiting-items detail list is expanded (§7E "View N waiting items"). */
+  const [approvalWarningShowWaiting, setApprovalWarningShowWaiting] = useState(false);
+  /** Second explicit confirmation gate before ANY override RPC runs (§7G). */
+  const [overrideConfirmOpen, setOverrideConfirmOpen] = useState(false);
+  /**
+   * Per-batch blocker detail from the last Bulk Verify run (DOC-098 §5B) —
+   * shown instead of an aggregate-only "N failed" toast. Cleared on dismiss;
+   * NOTHING was mutated for a blocked batch.
+   */
+  const [batchVerifyBlockers, setBatchVerifyBlockers] = useState<
+    Array<{ batchId: string; blockers: BatchVerifyBlocker[] }>
+  >([]);
 
   const fetchSeqRef = useRef(0);
   /** Expense ids whose optional badges (resubmitted/corrected/custom) were requested. */
@@ -2554,12 +2572,29 @@ export default function ManagerReview() {
     setCorrectionDialogOpen(true);
   };
 
+  /** DOC-100 pt.2: the reviewer changing a parent select's value mid-correction
+   *  must load that option's tree on demand -- the initial load only ever
+   *  fetched whichever value was SAVED when the dialog opened. */
+  const handleCorrectionSelectOptionValue = async (templateId: string, optionValue: string) => {
+    if (!organizationId || !optionValue) return;
+    const result = await fetchCorrectionOptionBranches(supabase, organizationId, templateId, optionValue);
+    setCorrFieldModel((prev) => ({
+      ...prev,
+      optionBranches: mergeCorrectionOptionBranches(prev.optionBranches, templateId, result.branches),
+      loadError: result.error
+        ? "Could not load additional field configuration for the selected option. Please retry."
+        : undefined,
+    }));
+  };
+
   const submitExpenseCorrection = async () => {
     if (!selectedExpense || !user?.id) return;
     setCorrectionLoading(true);
     try {
       const amt = Number(corrAmount);
       if (!Number.isFinite(amt) || amt <= 0) throw new Error("Amount must be a positive number");
+
+      if (corrFieldModel.loadError) throw new Error(corrFieldModel.loadError);
 
       const vResult = validateCorrectionCustomFields(
         corrFieldModel.categoryFormFields,
@@ -2694,6 +2729,7 @@ export default function ManagerReview() {
         classification: classifySelection([exp]),
         selectedTotal: Number(exp.total_amount || 0),
         mode: "single",
+        targets: [exp],
       });
       return;
     }
@@ -3003,80 +3039,251 @@ export default function ManagerReview() {
       (e) => isPendingForCurrentReviewer(e) && !isTerminalReviewStatus(e.status),
     );
 
+  /**
+   * Bulk Verify (DOC-098): batch selections are NEVER expanded over
+   * browser-held `allExpenses` — each selected batch is verified with ONE
+   * call to the server-authoritative atomic RPC, which resolves the batch's
+   * current children itself and either advances all of them or none. Batches
+   * are processed one at a time (not Promise.all): Review actions are
+   * financial-adjacent and the server already runs under heavy load (§15).
+   * Singular selections keep the existing per-expense path unchanged.
+   */
   const handleBulkVerify = async () => {
     if (!user) return;
-    // Verify only rows at this reviewer's stage; waiting/terminal are skipped.
-    const targets = readyNowTargets();
-    if (!targets.length) return;
+    const { batchIds, singularIds } = splitSelectedKeysBySelection(selectedKeys);
+    if (batchIds.length === 0 && singularIds.length === 0) return;
+
     setBulkActionLoading(true);
-    let succeeded = 0, failed = 0;
-    for (const exp of targets) {
+    setBatchVerifyBlockers([]);
+
+    const batchResults: BatchVerifyResult[] = [];
+    for (const batchId of batchIds) {
       try {
-        await ExpenseService.verifyExpense(exp.id, user!.id, "Bulk verified", { reviewerRole: userRole });
-        succeeded++;
-      } catch {
-        failed++;
+        const result = await ExpenseService.verifyBatchAtomic(
+          batchId,
+          user.id,
+          "Bulk verified",
+          { reviewerRole: userRole },
+        );
+        batchResults.push(result);
+      } catch (e) {
+        batchResults.push({
+          ok: false,
+          batchId,
+          code: "batch_verification_blocked",
+          blockers: [
+            {
+              expenseId: "",
+              transactionNumber: null,
+              employeeId: null,
+              status: "",
+              approvalTier: null,
+              reason: e instanceof Error ? e.message : "Request failed",
+            },
+          ],
+        });
       }
     }
+
+    // Singular expenses at this reviewer's stage; waiting/terminal skipped
+    // (unchanged from before — this path never touched batch children).
+    const allSelected = selectedExpenseTargets();
+    const singularTargets = allSelected.filter(
+      (e) =>
+        !e.batch_id &&
+        singularIds.includes(e.id) &&
+        isPendingForCurrentReviewer(e) &&
+        !isTerminalReviewStatus(e.status),
+    );
+    let singularSucceeded = 0;
+    let singularFailed = 0;
+    const failedSingularIds = new Set<string>();
+    for (const exp of singularTargets) {
+      try {
+        await ExpenseService.verifyExpense(exp.id, user.id, "Bulk verified", {
+          reviewerRole: userRole,
+        });
+        singularSucceeded++;
+      } catch {
+        singularFailed++;
+        failedSingularIds.add(exp.id);
+      }
+    }
+
     setBulkActionLoading(false);
-    setSelectedKeys(new Set());
+
+    // Selection retention (§5C): successful batches and successful singular
+    // rows are removed; blocked batches and failed singular rows STAY
+    // selected. Never a blanket setSelectedKeys(new Set()) on partial
+    // completion — that would hide exactly what still needs attention.
+    const succeededBatchIds = new Set(
+      batchResults.filter((r) => r.ok).map((r) => r.batchId),
+    );
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      for (const batchId of succeededBatchIds) next.delete(`batch:${batchId}`);
+      for (const exp of singularTargets) {
+        if (!failedSingularIds.has(exp.id)) next.delete(`expense:${exp.id}`);
+      }
+      return next;
+    });
+
     refreshCurrentReviewQuery();
-    toast({ title: `Verified ${succeeded} expense${succeeded !== 1 ? "s" : ""}${failed ? `, ${failed} failed` : ""}` });
+
+    const blockedResults = batchResults.filter(
+      (r): r is Extract<BatchVerifyResult, { ok: false; code: "batch_verification_blocked" }> =>
+        !r.ok && r.code === "batch_verification_blocked",
+    );
+    if (blockedResults.length > 0) {
+      setBatchVerifyBlockers(
+        blockedResults.map((r) => ({ batchId: r.batchId, blockers: r.blockers })),
+      );
+    }
+
+    const batchesVerified = batchResults.filter((r) => r.ok).length;
+    const batchesBlocked = batchResults.length - batchesVerified;
+    const verifiedExpenseCount =
+      batchResults
+        .filter((r): r is Extract<BatchVerifyResult, { ok: true }> => r.ok)
+        .reduce((sum, r) => sum + r.verifiedCount, 0) + singularSucceeded;
+
+    const parts: string[] = [];
+    if (verifiedExpenseCount > 0) {
+      const batchSuffix =
+        batchesVerified > 0 ? ` across ${batchesVerified} batch${batchesVerified !== 1 ? "es" : ""}` : "";
+      parts.push(`Verified ${verifiedExpenseCount} expense${verifiedExpenseCount !== 1 ? "s" : ""}${batchSuffix}`);
+    }
+    if (batchesBlocked > 0) {
+      parts.push(
+        `${batchesBlocked} batch${batchesBlocked !== 1 ? "es" : ""} could not be verified — see details`,
+      );
+    }
+    if (singularFailed > 0) parts.push(`${singularFailed} failed`);
+    toast({ title: parts.join(", ") || "Nothing to verify" });
   };
 
   /** Manager override is usable only when the server capability is installed AND the real limit is known (§8). */
   const overrideEffective = managerOverrideReady && approvalLimitLoaded;
 
   /**
-   * Resolve the concrete expenses to act on at APPROVAL time (§10/§11):
-   *  - singular selections use the loaded row;
-   *  - each selected batch key is expanded from a FRESH server fetch of its
-   *    current children, so off-page / not-yet-loaded children are included and a
-   *    stale loaded copy is superseded by current status/tier/amount.
-   * The server still re-authorizes every mutation — this only improves the
-   * client-side classification the dialog shows.
+   * Resolve the concrete expenses to act on at APPROVAL time (§10/§11, and the
+   * DOC-098 same-day fail-closed correction below):
+   *  - singular selections use the loaded row (safe — Approve remains
+   *    per-expense and server-re-authorized regardless);
+   *  - each selected BATCH key MUST resolve from a FRESH server fetch of its
+   *    current children. A batch selection is never defined by browser-held
+   *    rows: off-page / not-yet-loaded / stale children must never be silently
+   *    excluded from the classification a human reviewer is about to confirm.
+   *
+   * FAIL-CLOSED CORRECTION: the previous implementation wrapped the fresh
+   * batch fetch in a try/catch whose catch body was empty, and additionally
+   * discarded the Supabase `error` entirely (destructuring only `data`) — so
+   * a network failure, an RLS error, OR a non-throwing Postgrest error all
+   * silently fell back to whatever partial/stale batch children happened to
+   * already be loaded in the browser (`selectedExpenseTargets()`), with the
+   * caller unable to tell the difference from a real, complete resolution.
+   * A manager could then see (or skip straight past, if none of the partial
+   * rows needed a warning) an approval dialog built from an incomplete batch.
+   * This function now returns a discriminated result: on ANY batch-fetch
+   * failure (thrown error OR a returned Postgrest error) the whole resolution
+   * fails — nothing is merged, nothing is guessed — and the caller must stop
+   * without approving anything and offer a retry. The server still
+   * re-authorizes every mutation regardless; this only guarantees the
+   * confirmation dialog a human approves is never silently partial.
    */
-  const resolveApprovalTargets = async (): Promise<Expense[]> => {
+  const resolveApprovalTargets = async (): Promise<
+    { ok: true; targets: Expense[] } | { ok: false }
+  > => {
     const byId = new Map<string, Expense>();
-    for (const e of selectedExpenseTargets()) byId.set(e.id, e);
+    // Singular (non-batch) selections may use the loaded/current row — Approve
+    // stays per-expense and is always re-authorized server-side.
+    for (const e of selectedExpenseTargets()) {
+      if (!e.batch_id) byId.set(e.id, e);
+    }
     const batchIds: string[] = [];
     for (const key of selectedKeys) if (key.startsWith("batch:")) batchIds.push(key.slice(6));
-    if (batchIds.length > 0 && organizationId) {
-      try {
-        const { data } = await supabase
-          .from("expenses")
-          .select("id, user_id, batch_id, status, approval_tier, total_amount, title, trip_start, created_at")
-          .eq("organization_id", organizationId)
-          .in("batch_id", batchIds);
-        for (const row of (data ?? []) as Record<string, unknown>[]) {
-          const e = toCoreExpense(row);
-          byId.set(e.id, e); // fresh server row supersedes any stale loaded copy
-        }
-      } catch {
-        // Fall back to loaded children; the server remains the final authority.
+
+    if (batchIds.length > 0) {
+      if (!organizationId) return { ok: false };
+      const { data, error } = await supabase
+        .from("expenses")
+        .select(
+          "id, user_id, batch_id, status, approval_tier, total_amount, title, trip_start, created_at, transaction_number",
+        )
+        .eq("organization_id", organizationId)
+        .in("batch_id", batchIds);
+      if (error) return { ok: false };
+      for (const row of (data ?? []) as Record<string, unknown>[]) {
+        const e = toCoreExpense(row);
+        byId.set(e.id, e); // fresh server row is the ONLY source for batch children
       }
     }
-    return [...byId.values()];
+
+    // Hydrate employee identity (name/employee id) for any target missing it
+    // (fresh batch-fetched rows) in ONE batched query — never N+1 (§7B). A
+    // failure here degrades display only (name/employee id may show "—"); it
+    // must NOT fail the whole resolution, since identity is not what the
+    // ready/waiting/over-limit classification depends on.
+    const needIdentity = [...byId.values()].filter((e) => !e.user_name || !e.user_employee_id);
+    if (needIdentity.length > 0 && organizationId) {
+      const userIds = needIdentity.map((e) => e.user_id);
+      try {
+        const profiles = await fetchProfilesByUserIds(
+          supabase,
+          organizationId,
+          userIds,
+          "user_id, name, employee_id",
+        );
+        const profileById = new Map(
+          (profiles ?? []).map((p: Record<string, unknown>) => [p.user_id as string, p]),
+        );
+        for (const e of needIdentity) {
+          const p = profileById.get(e.user_id) as Record<string, unknown> | undefined;
+          if (!p) continue;
+          byId.set(e.id, {
+            ...e,
+            user_name: (p.name as string | undefined) ?? e.user_name,
+            user_employee_id: (p.employee_id as string | undefined) ?? e.user_employee_id,
+          });
+        }
+      } catch {
+        // Dialog falls back to whatever identity is already on the row.
+      }
+    }
+
+    return { ok: true, targets: [...byId.values()] };
   };
 
   /**
-   * Sequential (concurrency 1) approval. Ready-now rows go through the normal V2
-   * atomic path; waiting-but-eligible rows go through the Manager override RPC.
-   * Never Promise.all — the same employee's rows must settle in order.
+   * Sequential (concurrency 1) approval. `readyIds` go through the normal V2
+   * atomic path; `waitingIds` go through the Manager override RPC — callers
+   * decide which set(s) to pass, so a ready-only call NEVER touches the
+   * override path (§7C/§8). Never Promise.all — the same employee's rows
+   * must settle in order. `closeDialog` clears the confirmation dialogs;
+   * `keepSelectionForIds` are removed from the selection AFTER success,
+   * leaving anything not yet processed (waiting/blocked) still selected —
+   * never a blanket setSelectedKeys(new Set()) on a partial run (§5C/§8A).
    */
-  const runBulkApproval = async (readyIds: string[], waitingIds: string[], skippedCount = 0) => {
+  const runBulkApproval = async (
+    readyIds: string[],
+    waitingIds: string[],
+    skippedCount = 0,
+    options?: { closeDialog?: boolean },
+  ) => {
     if (!user || (readyIds.length === 0 && waitingIds.length === 0)) {
-      setApprovalWarning(null);
+      if (options?.closeDialog !== false) setApprovalWarning(null);
       return;
     }
     setBulkActionLoading(true);
     let approvedNormal = 0;
     let approvedOverride = 0;
     let failed = 0;
+    const processedExpenseIds = new Set<string>();
     for (const id of readyIds) {
       try {
         await ExpenseService.approveExpense(id, user!.id, "Bulk approved");
         approvedNormal++;
+        processedExpenseIds.add(id);
       } catch {
         failed++;
       }
@@ -3085,13 +3292,29 @@ export default function ManagerReview() {
       try {
         await ExpenseService.approveExpenseManagerOverride(id, "Bulk approved (Manager override)");
         approvedOverride++;
+        processedExpenseIds.add(id);
       } catch {
         failed++;
       }
     }
     setBulkActionLoading(false);
-    setSelectedKeys(new Set());
-    setApprovalWarning(null);
+
+    // Remove only the singular `expense:<id>` keys for rows that were
+    // actually processed this run. Batch keys are left as-is (Approve is
+    // per-expense, not batch-atomic — a batch key naturally clears once the
+    // page refresh shows none of its children remain selectable).
+    if (processedExpenseIds.size > 0) {
+      setSelectedKeys((prev) => {
+        const next = new Set(prev);
+        for (const id of processedExpenseIds) next.delete(`expense:${id}`);
+        return next;
+      });
+    }
+    if (options?.closeDialog !== false) {
+      setApprovalWarning(null);
+      setOverrideConfirmOpen(false);
+      setApprovalWarningShowWaiting(false);
+    }
     // Close the detail modal if this ran from a single open expense (no-op for
     // the bulk bar, where nothing is open).
     setSelectedExpense(null);
@@ -3122,14 +3345,25 @@ export default function ManagerReview() {
 
   const handleBulkApprove = async () => {
     if (!user) return;
-    const targets = await resolveApprovalTargets();
+    const resolution = await resolveApprovalTargets();
+    if (!resolution.ok) {
+      // Fail closed (DOC-098): a selected batch could not be freshly resolved —
+      // show nothing, approve nothing, never fall back to a partial/stale view.
+      toast({
+        variant: "destructive",
+        title: t("admin:review.toast.approvalResolutionFailed"),
+        description: t("admin:review.toast.approvalResolutionFailedDescription"),
+      });
+      return;
+    }
+    const targets = resolution.targets;
     if (!targets.length) return;
     const classification = classifySelection(targets);
     // Anything not immediately approvable (waiting / over-limit / terminal) must be
     // confirmed first. This mutates NOTHING — the dialog decides.
     if (needsApprovalWarning(classification)) {
       const selectedTotal = targets.reduce((s, e) => s + Number(e.total_amount || 0), 0);
-      setApprovalWarning({ classification, selectedTotal, mode: "bulk" });
+      setApprovalWarning({ classification, selectedTotal, mode: "bulk", targets });
       return;
     }
     await runBulkApproval(classification.readyNow, [], 0);
@@ -3205,23 +3439,102 @@ export default function ManagerReview() {
 
   const stats = getStats();
 
-  const approvalWarningProceedable =
-    approvalWarning != null &&
-    canProceedWithApproval(approvalWarning.classification, overrideEffective);
+  /**
+   * Bulk Verify blocker detail (DOC-098 §5B) — replaces an aggregate-only "N
+   * failed" toast with the exact transactions/employees that blocked each
+   * batch and why. Nothing was mutated for any blocked batch.
+   */
+  const batchVerifyBlockersDialog = (
+    <AlertDialog
+      open={batchVerifyBlockers.length > 0}
+      onOpenChange={(open) => {
+        if (!open) setBatchVerifyBlockers([]);
+      }}
+    >
+      <AlertDialogContent data-testid="batch-verify-blockers-dialog" className="max-w-lg">
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {t("admin:review.batchVerifyBlockers.title", { count: batchVerifyBlockers.length })}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {t("admin:review.batchVerifyBlockers.description")}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <ScrollArea className="max-h-72 rounded border" data-testid="batch-verify-blockers-list">
+          <div className="divide-y">
+            {batchVerifyBlockers.map(({ batchId, blockers }) => (
+              <div key={batchId} className="p-2 text-xs">
+                <div className="font-medium text-muted-foreground">
+                  {blockers[0]?.employeeId
+                    ? `${t("admin:review.approvalWarning.employeeIdShort")} ${blockers[0].employeeId}`
+                    : batchId}
+                </div>
+                {blockers.map((b, i) => (
+                  <div key={`${b.expenseId || i}`} className="mt-1">
+                    <span className="font-medium">#{b.transactionNumber || "—"}</span>{" "}
+                    <span className="text-amber-700">
+                      {b.approvalTier
+                        ? waitingReasonLabel({ approval_tier: b.approvalTier, status: b.status })
+                        : b.reason}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+        <AlertDialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => setBatchVerifyBlockers([])}
+            data-testid="batch-verify-blockers-close"
+          >
+            {t("admin:review.batchVerifyBlockers.close")}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
+  /** Waiting-item rows resolved from `approvalWarning.targets`, richest-detail-first (§7A/§7B). */
+  const approvalWarningWaitingItems: Expense[] = approvalWarning
+    ? approvalWarning.targets.filter((e) => approvalWarning.classification.waiting.includes(e.id))
+    : [];
+
+  const approveReadyOnly = () => {
+    if (!approvalWarning) return;
+    const c = approvalWarning.classification;
+    const skipped = c.overLimit.length + c.terminal.length + c.waiting.length;
+    // Ready-only: NEVER calls Manager Override, NEVER mutates a waiting row (§7C/§8).
+    void runBulkApproval(c.readyNow, [], skipped, { closeDialog: false });
+  };
+
+  const confirmManagerOverride = () => {
+    if (!approvalWarning) return;
+    const c = approvalWarning.classification;
+    void runBulkApproval([], c.waiting, 0, { closeDialog: false });
+    setOverrideConfirmOpen(false);
+  };
 
   /**
    * Shared pre-approval warning dialog (desktop + mobile). Rendering it while
-   * `approvalWarning` is set has mutated nothing — STOP closes with zero effect
-   * and keeps the selection; PROCEED approves only the ready-now rows.
+   * `approvalWarning` is set has mutated nothing. "Approve N ready now" is the
+   * primary action and only ever approves classification.readyNow — zero
+   * Manager Override calls, zero waiting-row mutation. Manager Override is a
+   * separate secondary action gated behind its own explicit second
+   * confirmation (§7).
    */
   const approvalWarningDialog = (
     <AlertDialog
-      open={approvalWarning != null}
+      open={approvalWarning != null && !overrideConfirmOpen}
       onOpenChange={(open) => {
-        if (!open) setApprovalWarning(null);
+        if (!open) {
+          setApprovalWarning(null);
+          setApprovalWarningShowWaiting(false);
+        }
       }}
     >
-      <AlertDialogContent data-testid="approval-warning-dialog">
+      <AlertDialogContent data-testid="approval-warning-dialog" className="max-w-lg">
         <AlertDialogHeader>
           <AlertDialogTitle>{t("admin:review.approvalWarning.title")}</AlertDialogTitle>
           <AlertDialogDescription>
@@ -3238,12 +3551,55 @@ export default function ManagerReview() {
                 {approvalWarning.classification.readyNow.length}
               </span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex items-center justify-between">
               <span>{t("admin:review.approvalWarning.waiting")}</span>
-              <span className="font-medium text-amber-700" data-testid="approval-warning-waiting">
-                {approvalWarning.classification.waiting.length}
+              <span className="flex items-center gap-2">
+                <span className="font-medium text-amber-700" data-testid="approval-warning-waiting">
+                  {approvalWarning.classification.waiting.length}
+                </span>
+                {approvalWarning.classification.waiting.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0 text-xs"
+                    onClick={() => setApprovalWarningShowWaiting((v) => !v)}
+                    data-testid="approval-warning-view-waiting"
+                  >
+                    {approvalWarningShowWaiting
+                      ? t("admin:review.approvalWarning.hideWaiting")
+                      : t("admin:review.approvalWarning.viewWaiting", {
+                          count: approvalWarning.classification.waiting.length,
+                        })}
+                  </Button>
+                )}
               </span>
             </div>
+            {approvalWarningShowWaiting && approvalWarningWaitingItems.length > 0 && (
+              <ScrollArea className="max-h-48 rounded border" data-testid="approval-warning-waiting-list">
+                <div className="divide-y">
+                  {approvalWarningWaitingItems.map((item) => (
+                    <div key={item.id} className="p-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium">
+                          #{(item as unknown as { transaction_number?: string }).transaction_number || "—"}
+                        </span>
+                        {item.batch_id && (
+                          <Badge variant="outline" className="text-[10px]">
+                            {t("admin:review.approvalWarning.batchBadge")}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-muted-foreground">
+                        {item.user_name || "—"}
+                        {item.user_employee_id ? ` · ${t("admin:review.approvalWarning.employeeIdShort")} ${item.user_employee_id}` : ""}
+                      </div>
+                      <div className="text-amber-700">{waitingReasonLabel(item)}</div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            )}
             <div className="flex justify-between">
               <span>{t("admin:review.approvalWarning.overLimit")}</span>
               <span className="font-medium text-red-700" data-testid="approval-warning-overlimit">
@@ -3268,48 +3624,114 @@ export default function ManagerReview() {
                 {t("admin:review.approvalWarning.overrideUnavailable")}
               </p>
             )}
-            {approvalWarning.classification.waiting.length > 0 && overrideEffective && (
-              <p
-                className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"
-                data-testid="approval-warning-override-note-ready"
-              >
-                {t("admin:review.approvalWarning.overrideWillApply", {
-                  count: approvalWarning.classification.waiting.length,
-                })}
-              </p>
-            )}
           </div>
         )}
-        <AlertDialogFooter>
+        <AlertDialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
           <Button
             variant="outline"
-            onClick={() => setApprovalWarning(null)}
+            onClick={() => {
+              setApprovalWarning(null);
+              setApprovalWarningShowWaiting(false);
+            }}
             disabled={bulkActionLoading}
             data-testid="approval-warning-stop"
           >
             {t("admin:review.approvalWarning.stop")}
           </Button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {overrideEffective && (approvalWarning?.classification.waiting.length ?? 0) > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                className="border-amber-400 text-amber-800 hover:bg-amber-50"
+                onClick={() => setOverrideConfirmOpen(true)}
+                disabled={bulkActionLoading}
+                data-testid="approval-warning-override-open"
+              >
+                {t("admin:review.approvalWarning.managerOverride", {
+                  count: approvalWarning?.classification.waiting.length ?? 0,
+                })}
+              </Button>
+            )}
+            <Button
+              onClick={approveReadyOnly}
+              disabled={
+                (approvalWarning?.classification.readyNow.length ?? 0) === 0 || bulkActionLoading
+              }
+              data-testid="approval-warning-proceed"
+            >
+              {t("admin:review.approvalWarning.approveReadyNow", {
+                count: approvalWarning?.classification.readyNow.length ?? 0,
+              })}
+            </Button>
+          </div>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
+  /**
+   * Second explicit confirmation before ANY Manager Override RPC runs (§7G).
+   * Lists every waiting item by name so the reviewer sees exactly what
+   * they're bypassing normal verification for. Cancel returns to the primary
+   * dialog with zero mutation.
+   */
+  const managerOverrideConfirmDialog = (
+    <AlertDialog
+      open={overrideConfirmOpen}
+      onOpenChange={(open) => {
+        if (!open) setOverrideConfirmOpen(false);
+      }}
+    >
+      <AlertDialogContent data-testid="override-confirm-dialog" className="max-w-lg">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("admin:review.overrideConfirm.title")}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t("admin:review.overrideConfirm.description", {
+              count: approvalWarning?.classification.waiting.length ?? 0,
+            })}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <ScrollArea className="max-h-64 rounded border" data-testid="override-confirm-list">
+          <div className="divide-y">
+            {approvalWarningWaitingItems.map((item) => (
+              <div key={item.id} className="p-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">
+                    #{(item as unknown as { transaction_number?: string }).transaction_number || "—"}
+                  </span>
+                  {item.batch_id && (
+                    <Badge variant="outline" className="text-[10px]">
+                      {t("admin:review.approvalWarning.batchBadge")}
+                    </Badge>
+                  )}
+                </div>
+                <div className="text-muted-foreground">
+                  {item.user_name || "—"}
+                  {item.user_employee_id ? ` · ${t("admin:review.approvalWarning.employeeIdShort")} ${item.user_employee_id}` : ""}
+                </div>
+                <div className="text-amber-700">{waitingReasonLabel(item)}</div>
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+        <AlertDialogFooter>
           <Button
-            onClick={() => {
-              if (!approvalWarning) return;
-              const c = approvalWarning.classification;
-              // Ready-now → V2; waiting → override (only when the capability is
-              // effective, else those rows are skipped). Over-limit and terminal
-              // are always skipped.
-              const waitingIds = overrideEffective ? c.waiting : [];
-              const skipped =
-                c.overLimit.length +
-                c.terminal.length +
-                (overrideEffective ? 0 : c.waiting.length);
-              void runBulkApproval(c.readyNow, waitingIds, skipped);
-            }}
-            disabled={!approvalWarningProceedable || bulkActionLoading}
-            data-testid="approval-warning-proceed"
+            variant="outline"
+            onClick={() => setOverrideConfirmOpen(false)}
+            disabled={bulkActionLoading}
+            data-testid="override-confirm-cancel"
           >
-            {t("admin:review.approvalWarning.proceed", {
-              count:
-                (approvalWarning?.classification.readyNow.length ?? 0) +
-                (overrideEffective ? (approvalWarning?.classification.waiting.length ?? 0) : 0),
+            {t("admin:review.overrideConfirm.cancel")}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={confirmManagerOverride}
+            disabled={bulkActionLoading}
+            data-testid="override-confirm-proceed"
+          >
+            {t("admin:review.overrideConfirm.confirm", {
+              count: approvalWarning?.classification.waiting.length ?? 0,
             })}
           </Button>
         </AlertDialogFooter>
@@ -3486,6 +3908,8 @@ export default function ManagerReview() {
           }}
         />
         {approvalWarningDialog}
+        {managerOverrideConfirmDialog}
+        {batchVerifyBlockersDialog}
       </>
     );
   }
@@ -4604,6 +5028,7 @@ export default function ManagerReview() {
               allowNested={allowNestedConditional}
               organizationId={organizationId}
               userId={user?.id}
+              onSelectOptionValue={handleCorrectionSelectOptionValue}
             />
             <div>
               <Label htmlFor="eng-corr-reason">Reason for correction (audit)</Label>

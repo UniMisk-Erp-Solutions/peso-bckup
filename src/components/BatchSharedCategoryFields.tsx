@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
-import { ExpenseService } from "@/services/ExpenseService";
+import { useEffect } from "react";
 import { CategoryFormFieldsSection } from "@/components/CategoryFormFieldsSection";
-import type { OptionBranchDefinition } from "@/lib/conditionalFormFieldTypes";
+import { useOnDemandOptionBranches } from "@/hooks/useOnDemandOptionBranches";
 import type { SharedBatchField } from "@/lib/batchFieldPlan";
 
 type BatchSharedCategoryFieldsProps = {
@@ -17,6 +16,10 @@ type BatchSharedCategoryFieldsProps = {
   allowConditionalDropdown: boolean;
   allowNested: boolean;
   userId?: string | null;
+  /** Fires whenever this shared field's most recent branch fetch failed vs.
+   *  succeeded, so the parent can block submission rather than silently
+   *  treating a failed fetch as "no conditional fields configured". */
+  onLoadErrorChange?: (hasError: boolean) => void;
 };
 
 export function BatchSharedCategoryFields({
@@ -29,25 +32,27 @@ export function BatchSharedCategoryFields({
   allowConditionalDropdown,
   allowNested,
   userId,
+  onLoadErrorChange,
 }: BatchSharedCategoryFieldsProps) {
-  const [optionBranches, setOptionBranches] = useState<OptionBranchDefinition[]>([]);
+  // DOC-097 hotfix pt.3: no more eager whole-template branch fetch --
+  // branches for the shared select field load on demand for whichever
+  // option is actually picked (see onSelectOptionValue below).
+  const { optionBranches, selectOptionValue, reset, hasError } = useOnDemandOptionBranches(organizationId);
 
   useEffect(() => {
-    if (!allowConditionalDropdown || sharedField.assignment.template?.field_type !== "select") {
-      setOptionBranches([]);
-      return;
+    onLoadErrorChange?.(hasError);
+  }, [hasError, onLoadErrorChange]);
+
+  useEffect(() => {
+    reset();
+    if (allowConditionalDropdown && sharedField.assignment.template?.field_type === "select") {
+      const preselected = fields[sharedField.templateId];
+      if (preselected) void selectOptionValue(sharedField.templateId, preselected);
     }
-    let cancelled = false;
-    void (async () => {
-      const result = await ExpenseService.fetchOptionBranchesForTemplates(
-        organizationId,
-        [sharedField.templateId],
-      );
-      if (!cancelled) setOptionBranches(result);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    // Only re-run when the shared field itself (or the org/toggle) changes --
+    // NOT on every `fields` edit, which would otherwise reset the cache on
+    // every keystroke of an unrelated field in the same batch line.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [organizationId, sharedField.templateId, sharedField.assignment.template?.field_type, allowConditionalDropdown]);
 
   const categoryLabel =
@@ -70,6 +75,7 @@ export function BatchSharedCategoryFields({
         allowNested={allowNested}
         organizationId={organizationId}
         userId={userId}
+        onSelectOptionValue={allowConditionalDropdown ? selectOptionValue : undefined}
       />
     </div>
   );

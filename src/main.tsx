@@ -1,17 +1,17 @@
 import { createRoot } from "react-dom/client";
 import { HelmetProvider } from "react-helmet-async";
-import App from "./App.tsx";
-import { AuthProvider } from "@/contexts/AuthContext";
-import { I18nProvider } from "@/i18n/I18nProvider";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppErrorFallback } from "@/components/AppErrorFallback";
-import { SystemAvailabilityProvider } from "@/contexts/SystemAvailabilityContext";
+import { MaintenanceBootstrap } from "@/maintenance/MaintenanceBootstrap";
+import {
+  MaintenanceAdminApplication,
+  isMaintenanceAdminPath,
+} from "@/maintenance/MaintenanceAdminApplication";
 import {
   capturePwaInstallPromptEarly,
   registerPwaServiceWorker,
 } from "@/lib/pwaInstallCapture";
 import "./index.css";
-import { bootstrapAuthSession } from "@/lib/authSession";
 import { initMonitoring } from "@/lib/monitoring";
 import { installPreloadErrorHandler } from "@/lib/chunkRecovery";
 
@@ -24,31 +24,31 @@ initMonitoring();
 capturePwaInstallPromptEarly();
 registerPwaServiceWorker();
 
-let appRendered = false;
-function renderApp() {
-  if (appRendered) return;
-  appRendered = true;
-  createRoot(document.getElementById("root")!).render(
-    <ErrorBoundary fallback={AppErrorFallback}>
-      <HelmetProvider>
-        <SystemAvailabilityProvider>
-          <AuthProvider>
-            <I18nProvider>
-              <App />
-            </I18nProvider>
-          </AuthProvider>
-        </SystemAvailabilityProvider>
-      </HelmetProvider>
-    </ErrorBoundary>
-  );
+// bootstrapAuthSession() (local-Supabase session bootstrap) NO LONGER runs
+// here. It has moved into LocalPesoWiseBootstrap, which MaintenanceBootstrap
+// only ever mounts once the Cloud maintenance check resolves to something
+// other than an active block. See
+// docs/maintenance/CLOUD_MAINTENANCE_CONTROL_PLANE.md §2/§5 for why running
+// it before the maintenance decision defeated the whole point of the Cloud
+// control plane: local Supabase must never be contacted while fresh Cloud
+// state says maintenance is active.
+//
+// /admin/maintenance* is decided by a PLAIN pathname check — deliberately
+// not a React Router hook — because this decision is made above any router
+// and must remain reachable independently of both the maintenance gate and
+// the local application (Decision E: the admin path never depends on local
+// Supabase or on the Cloud maintenance state itself).
+function Root() {
+  if (isMaintenanceAdminPath(window.location.pathname)) {
+    return <MaintenanceAdminApplication />;
+  }
+  return <MaintenanceBootstrap />;
 }
 
-// Render as soon as the auth pre-check settles, but NEVER block the UI on it for more than
-// a short cap. A slow/unreachable self-hosted auth server must not leave the page blank —
-// AuthProvider re-validates the session and shows its own loading state once mounted.
-// bootstrapAuthSession keeps running in the background to finish any token cleanup.
-const BOOTSTRAP_RENDER_CAP_MS = 1500;
-void Promise.race([
-  bootstrapAuthSession(),
-  new Promise<void>((resolve) => setTimeout(resolve, BOOTSTRAP_RENDER_CAP_MS)),
-]).finally(renderApp);
+createRoot(document.getElementById("root")!).render(
+  <ErrorBoundary fallback={AppErrorFallback}>
+    <HelmetProvider>
+      <Root />
+    </HelmetProvider>
+  </ErrorBoundary>
+);
