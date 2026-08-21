@@ -25,6 +25,8 @@ import {
   type DailyReportExportProgress,
 } from "@/lib/dailyProjectReportPaging";
 import { downloadDailyProjectExpenseReportFile } from "@/lib/exportDailyProjectExpenseReport";
+import { saveGeneratedReport } from "@/lib/generatedReportStore";
+import { SavedReportsPanel } from "@/components/SavedReportsPanel";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -636,6 +638,8 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
   const [dailyReportSourceOpen, setDailyReportSourceOpen] = useState(false);
   /** Live page progress for the server-paged Daily Project Report (DOC-101). */
   const [dailyProgress, setDailyProgress] = useState<DailyReportExportProgress | null>(null);
+  /** Id of the most recent server-stored snapshot (DOC-103), for the "saved" hint. */
+  const [lastSavedReportId, setLastSavedReportId] = useState<string | null>(null);
   const [selectedDailyReportResult, setSelectedDailyReportResult] =
     useState<DailyProjectExpenseReportBuildResult | null>(null);
   const [dailyReportConfig, setDailyReportConfig] = useState<DailyExpenseReportConfig | null>(null);
@@ -825,13 +829,25 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
   const dailyAllTime = dailyPeriodMode === "all_time";
 
   // ── Report queries ─────────────────────────────────────────────────────────
+  // Reports are the most expensive reads in the app — the Daily Project Report
+  // alone pages a whole organisation's approved expenses through a server RPC
+  // 250 rows at a time. `staleTime: 0` + `refetchOnMount: "always"` meant every
+  // switch between the four report tabs re-ran that entire pipeline, and
+  // `refetchOnWindowFocus` re-ran it again on every alt-tab. That is the same
+  // refetch storm App.tsx disables globally ("Don't re-hit the API just because
+  // the user switched tabs and came back") — this file was overriding it.
+  //
+  // Freshness is not lost: the realtime subscription below invalidates these
+  // queries whenever an `expenses` row actually changes, and each tab has an
+  // explicit refresh/Generate control. `keepPreviousData` is retained so a
+  // refresh triggered by either of those never blanks the table (DOC-054).
   const QUERY_DEFAULTS = {
-    staleTime: 0,
+    staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     placeholderData: keepPreviousData,
-    refetchOnMount: "always" as const,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: 1,
   } as const;
 
@@ -929,7 +945,7 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
     queryFn: async ({ signal }) => {
       setDailyProgress({ received: 0, total: null, pages: 0 });
       try {
-        return await loadDailyReport({
+        const results = await loadDailyReport({
           organizationId: organizationId!,
           teamScoped,
           teamMemberUserIds,
@@ -940,6 +956,33 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
           signal,
           onProgress: setDailyProgress,
         });
+
+        // DOC-103 — persist the generation server-side. Deliberately not
+        // awaited into the render path and never allowed to throw: a storage
+        // failure must not discard a report the user is already looking at,
+        // and it must not make the report look like it failed. The RPC
+        // dedupes by content hash, so re-running the same filters over
+        // unchanged data records the run without rewriting the payload.
+        if (organizationId && !signal?.aborted) {
+          const snapshotRows = dailyReportResultsToRows(results);
+          void saveGeneratedReport({
+            organizationId,
+            reportType: "daily_project_expense",
+            filters: {
+              period: dailyPeriodMode,
+              date_from: dailyAllTime ? null : dailyDateFrom,
+              date_to: dailyAllTime ? null : dailyDateTo,
+              employee: selectedEmployee,
+              team_scoped: teamScoped,
+            },
+            payload: snapshotRows,
+            rowCount: snapshotRows.length,
+          }).then((saved) => {
+            if (saved) setLastSavedReportId(saved.report_id);
+          });
+        }
+
+        return results;
       } finally {
         setDailyProgress(null);
       }
@@ -2894,6 +2937,15 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                 )}
               </CardContent>
             </Card>
+
+            {/* DOC-103 — where a generated report goes. Every Generate click is
+                persisted server-side; this lists those snapshots and reopens
+                them without re-running the query. */}
+            <SavedReportsPanel
+              organizationId={organizationId}
+              reportType="daily_project_expense"
+              refreshToken={lastSavedReportId}
+            />
           </TabsContent>
         )}
       </Tabs>
