@@ -1,0 +1,5 @@
+# JWT is verified inside the handler (service-role key OR a valid user token),
+# matching every other function here. The gateway check stays off so the handler
+# can return its own typed error rather than an opaque gateway 401.
+[functions.run-report-export-job]
+verify_jwt = false
