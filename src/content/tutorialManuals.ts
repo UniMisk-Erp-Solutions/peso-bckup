@@ -21,7 +21,7 @@ export interface TutorialManual {
   sections: TutorialSection[];
 }
 
-/** @deprecated Runtime uses src/locales/*/help.json; generator script only. */
+/** @deprecated Runtime uses src/locales/<lang>/help.json; generator script only. */
 export const tutorialManuals: Partial<Record<TutorialRole, TutorialManual>> = {
   admin: {
     role: "admin",
