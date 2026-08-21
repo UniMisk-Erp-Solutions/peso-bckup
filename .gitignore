@@ -125,3 +125,8 @@ scripts/data/local/
 # Synthetic templates are the documented exception and stay tracked.
 !scripts/data/examples/
 !scripts/data/examples/**
+
+# Production database dumps — never commit (CLAUDE.md §1: database dumps)
+*_db.sql
+*_db.sql.gz
+Pesowise-main_*.sql
