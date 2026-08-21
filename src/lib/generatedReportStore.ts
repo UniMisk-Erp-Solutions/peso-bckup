@@ -13,6 +13,14 @@
  */
 import { supabase } from "@/integrations/supabase/client";
 
+/**
+ * The generated `types.ts` predates these RPCs, so the typed client rejects
+ * them by name. Narrow, commented escape; regenerating that file is a separate
+ * change. Matches the existing pattern in AuthContext.tsx.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = supabase as any;
+
 export type GeneratedReportType =
   | "daily_project_expense"
   | "detailed_expense"
@@ -115,12 +123,12 @@ export async function saveGeneratedReport(input: {
       p: input.payload,
     });
 
-    const { data, error } = await supabase.rpc("save_generated_report_v1", {
+    const { data, error } = await db.rpc("save_generated_report_v1", {
       p_organization_id: input.organizationId,
       p_report_type: input.reportType,
       p_content_hash: contentHash,
-      p_filters: input.filters as never,
-      p_payload: input.payload as never,
+      p_filters: input.filters,
+      p_payload: input.payload,
       p_row_count: input.rowCount,
       p_snapshot_at: input.snapshotAt ?? null,
       p_retention_days: input.retentionDays ?? 90,
@@ -143,7 +151,7 @@ export async function listGeneratedReports(
   reportType?: GeneratedReportType,
   limit = 50,
 ): Promise<GeneratedReportListItem[]> {
-  const { data, error } = await supabase.rpc("list_generated_reports_v1", {
+  const { data, error } = await db.rpc("list_generated_reports_v1", {
     p_organization_id: organizationId,
     p_report_type: reportType ?? null,
     p_limit: limit,
@@ -166,7 +174,7 @@ export async function loadGeneratedReport(reportId: string): Promise<{
   generation_count: number;
   expires_at: string;
 }> {
-  const { data, error } = await supabase.rpc("get_generated_report_v1", {
+  const { data, error } = await db.rpc("get_generated_report_v1", {
     p_report_id: reportId,
   });
   if (error) throw new Error(error.message);

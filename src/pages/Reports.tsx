@@ -27,6 +27,7 @@ import {
 import { downloadDailyProjectExpenseReportFile } from "@/lib/exportDailyProjectExpenseReport";
 import { saveGeneratedReport } from "@/lib/generatedReportStore";
 import { SavedReportsPanel } from "@/components/SavedReportsPanel";
+import { ServerReportExportPanel } from "@/components/ServerReportExportPanel";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -987,7 +988,13 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
         setDailyProgress(null);
       }
     },
+    // DOC-104 — the browser no longer generates this report. Opening the tab
+    // used to page the whole organisation's approved expenses into memory here
+    // (~4,290 rows on Production) purely to render a preview table. Generation
+    // is now a server job; this query stays defined so the code path and its
+    // tests remain intact, but it never runs.
     enabled:
+      false &&
       activeTab === "daily" &&
       dailyProjectReportEnabled &&
       dailyConfigReady &&
@@ -2749,29 +2756,21 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                       </Select>
                     </div>
                   </div>
-                  <div className="flex gap-2 pt-2">
-                    <Button
-                      onClick={() => void dailyQuery.refetch()}
-                      disabled={dailyQuery.isFetching || !dailyConfigReady}
-                    >
-                      {dailyQuery.isFetching ? t("daily.generating") : t("generate")}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => exportDailyProjectReport("csv")}
-                      disabled={dailyQuery.isFetching || !dailyConfigReady || dailyReportRows.length === 0}
-                      title={dailyQuery.isFetching ? t("liveRefresh.exportWait") : undefined}
-                    >
-                      {t("exportCsv")}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => exportDailyProjectReport("xlsx")}
-                      disabled={dailyQuery.isFetching || !dailyConfigReady || dailyReportRows.length === 0}
-                      title={dailyQuery.isFetching ? t("liveRefresh.exportWait") : undefined}
-                    >
-                      {t("exportXlsx")}
-                    </Button>
+                  {/* DOC-104 — generation moved off the browser entirely. This
+                      enqueues a job, the worker builds the whole CSV server-side
+                      and writes it to Storage, and the panel then offers a
+                      download. The old buttons paged the report into this tab
+                      and serialised the file here; nothing of that runs now. */}
+                  <div className="pt-2">
+                    <ServerReportExportPanel
+                      organizationId={organizationId}
+                      dateFrom={dailyAllTime ? null : dailyDateFrom}
+                      dateTo={dailyAllTime ? null : dailyDateTo}
+                      userId={selectedEmployee !== "all" ? selectedEmployee : null}
+                      userIds={teamScoped ? teamMemberUserIds : null}
+                      teamScoped={teamScoped}
+                      disabled={!dailyConfigReady}
+                    />
                   </div>
                 </div>
 
