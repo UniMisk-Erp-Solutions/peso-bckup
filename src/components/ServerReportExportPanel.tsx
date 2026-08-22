@@ -18,7 +18,9 @@ import {
   downloadExportJobFile,
   isTerminalStatus,
   formatBytes,
+  enqueueExpenseReportExport,
   type ExportJob,
+  type ExpenseReportType,
 } from "@/lib/reportExportJobs";
 
 interface ServerReportExportPanelProps {
@@ -29,6 +31,11 @@ interface ServerReportExportPanelProps {
   userIds: string[] | null;
   teamScoped: boolean;
   disabled?: boolean;
+  /** Omitted = the Daily Project Report (DOC-104). */
+  reportType?: ExpenseReportType;
+  /** Only meaningful for the expense-based reports (DOC-105). */
+  category?: string | null;
+  engineerStatus?: string | null;
 }
 
 const POLL_MS = 2000;
@@ -43,6 +50,9 @@ export function ServerReportExportPanel({
   userIds,
   teamScoped,
   disabled = false,
+  reportType,
+  category,
+  engineerStatus,
 }: ServerReportExportPanelProps) {
   const { toast } = useToast();
   const [job, setJob] = useState<ExportJob | null>(null);
@@ -68,14 +78,17 @@ export function ServerReportExportPanel({
     let cancelled = false;
     void (async () => {
       try {
-        const latest = await fetchLatestExportJob(organizationId);
+        const latest = await fetchLatestExportJob(
+          organizationId,
+          reportType ?? "daily_project_report",
+        );
         if (!cancelled && latest && latest.status === "completed") setJob(latest);
       } catch {
         /* a missing previous job is not an error worth surfacing */
       }
     })();
     return () => { cancelled = true; };
-  }, [organizationId]);
+  }, [organizationId, reportType]);
 
   const poll = useCallback(
     (jobId: string) => {
@@ -111,9 +124,14 @@ export function ServerReportExportPanel({
     setError(null);
     setJob(null);
     try {
-      const res = await enqueueDailyProjectReportExport({
-        organizationId, dateFrom, dateTo, userId, userIds, teamScoped, format: "csv",
-      });
+      const res = reportType
+        ? await enqueueExpenseReportExport({
+            organizationId, reportType, category, userId, userIds,
+            engineerStatus, dateFrom, dateTo, teamScoped,
+          })
+        : await enqueueDailyProjectReportExport({
+            organizationId, dateFrom, dateTo, userId, userIds, teamScoped, format: "csv",
+          });
       // Nudge the worker, then poll regardless of whether the nudge landed.
       void triggerExportWorker();
       const initial = await fetchExportJob(res.job_id);

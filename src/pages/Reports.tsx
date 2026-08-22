@@ -869,7 +869,11 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
         selectedCategory,
         engineerStatus,
       }),
+    // DOC-105 — the browser no longer generates this report; generation is a
+    // server job. The query stays defined so its code path and tests remain
+    // intact, but it never runs.
     enabled:
+      false &&
       activeTab === "verification" &&
       Boolean(organizationId) &&
       canViewReports &&
@@ -894,7 +898,11 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
         selectedCategory,
         engineerStatus,
       }),
+    // DOC-105 — the browser no longer generates this report; generation is a
+    // server job. The query stays defined so its code path and tests remain
+    // intact, but it never runs.
     enabled:
+      false &&
       activeTab === "approval" &&
       Boolean(organizationId) &&
       canViewReports &&
@@ -922,7 +930,11 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
         selectedYear,
         selectedMonth,
       }),
+    // DOC-105 — the browser no longer generates this report; generation is a
+    // server job. The query stays defined so its code path and tests remain
+    // intact, but it never runs.
     enabled:
+      false &&
       activeTab === "detailed" &&
       Boolean(organizationId) &&
       canViewReports &&
@@ -1850,6 +1862,22 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
 
   const showDetailedBalanceColumns = Boolean(selectedUser);
 
+  // DOC-105 — the year/month pickers become the export job's date window,
+  // computed the same way loadDetailedReport did before it moved server-side.
+  const [detailedDateFrom, detailedDateTo] = useMemo<[string | null, string | null]>(() => {
+    if (!selectedYear) return [null, null];
+    if (selectedMonth !== "all") {
+      const m = parseInt(selectedMonth, 10);
+      const from = new Date(parseInt(selectedYear, 10), m - 1, 1);
+      const to = new Date(parseInt(selectedYear, 10), m, 0);
+      return [
+        from.toISOString().split("T")[0],
+        to.toISOString().split("T")[0],
+      ];
+    }
+    return [`${selectedYear}-01-01`, `${selectedYear}-12-31`];
+  }, [selectedYear, selectedMonth]);
+
   const userBalancesByUserId = useMemo(
     () => Object.fromEntries(users.map((u) => [u.user_id, u.balance])),
     [users]
@@ -1998,15 +2026,23 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                     </Select>
                   </div>
                 </div>
-                <div className="flex gap-2 pt-2">
-                  <Button onClick={() => void verificationQuery.refetch()} disabled={verificationQuery.isFetching}>Submit</Button>
-                  <Button variant="outline" onClick={clearFilters}>Clear</Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => openExportDialog("verification")}
-                    disabled={verificationQuery.isFetching || filteredVerificationExpenses.length === 0}
-                    title={verificationQuery.isFetching ? t("liveRefresh.exportWait") : undefined}
-                  >Export</Button>
+                {/* DOC-105 — generation moved off the browser. Enqueues a
+                    server job; the worker builds the whole CSV and the panel
+                    offers a download. The old Submit/Export pair paged every
+                    row into this tab and serialised the file here. */}
+                <div className="pt-2 space-y-2">
+                  <ServerReportExportPanel
+                    organizationId={organizationId}
+                    reportType="claim_verification"
+                    category={selectedCategory}
+                    engineerStatus={engineerStatus}
+                    dateFrom={null}
+                    dateTo={null}
+                    userId={selectedEmployee !== "all" ? selectedEmployee : null}
+                    userIds={teamScoped ? teamMemberUserIds : null}
+                    teamScoped={teamScoped}
+                  />
+                  <Button variant="outline" onClick={clearFilters}>Clear filters</Button>
                 </div>
                 <ExpenseCustomFieldFilters
                   fields={filterableCustomFields}
@@ -2192,15 +2228,23 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                     </Select>
                   </div>
                 </div>
-                <div className="flex gap-2 pt-2">
-                  <Button onClick={() => void approvalQuery.refetch()} disabled={approvalQuery.isFetching}>Submit</Button>
-                  <Button variant="outline" onClick={clearFilters}>Clear</Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => openExportDialog("approval")}
-                    disabled={approvalQuery.isFetching || filteredApprovalExpenses.length === 0}
-                    title={approvalQuery.isFetching ? t("liveRefresh.exportWait") : undefined}
-                  >Export</Button>
+                {/* DOC-105 — generation moved off the browser. Enqueues a
+                    server job; the worker builds the whole CSV and the panel
+                    offers a download. The old Submit/Export pair paged every
+                    row into this tab and serialised the file here. */}
+                <div className="pt-2 space-y-2">
+                  <ServerReportExportPanel
+                    organizationId={organizationId}
+                    reportType="claim_approval"
+                    category={selectedCategory}
+                    engineerStatus={null}
+                    dateFrom={null}
+                    dateTo={null}
+                    userId={selectedEmployee !== "all" ? selectedEmployee : null}
+                    userIds={teamScoped ? teamMemberUserIds : null}
+                    teamScoped={teamScoped}
+                  />
+                  <Button variant="outline" onClick={clearFilters}>Clear filters</Button>
                 </div>
                 <ExpenseCustomFieldFilters
                   fields={filterableCustomFields}
@@ -2440,32 +2484,24 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                   <p className="text-xs text-muted-foreground">Loading custom field options…</p>
                 )}
 
-                <div className="flex gap-2 pt-1">
-                  <Button
-                    onClick={() => void detailedQuery.refetch()}
-                    disabled={detailedQuery.isFetching || loadingEmployeeFieldOptions}
-                  >
-                    Submit
-                  </Button>
+                {/* DOC-105 — generation moved off the browser. The year/month
+                    filters become the job's date window; picking one employee
+                    yields the credit/debit ledger, All employees a flat list. */}
+                <div className="pt-1 space-y-2">
+                  <ServerReportExportPanel
+                    organizationId={organizationId}
+                    reportType="detailed_expense"
+                    category={selectedCategory}
+                    engineerStatus={null}
+                    dateFrom={detailedDateFrom}
+                    dateTo={detailedDateTo}
+                    userId={selectedEmployee !== "all" ? selectedEmployee : null}
+                    userIds={teamScoped ? teamMemberUserIds : null}
+                    teamScoped={teamScoped}
+                    disabled={loadingEmployeeFieldOptions}
+                  />
                   <Button variant="outline" onClick={clearFilters}>
-                    Clear
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => openExportDialog("detailed")}
-                    disabled={detailedQuery.isFetching || filteredDetailedExpenses.length === 0}
-                    title={detailedQuery.isFetching ? t("liveRefresh.exportWait") : undefined}
-                  >
-                    Export
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => window.print()}
-                    disabled={detailedQuery.isFetching || filteredDetailedExpenses.length === 0}
-                    className="print:inline-flex print:visible"
-                  >
-                    <Printer className="h-4 w-4 mr-2" />
-                    Print report
+                    Clear filters
                   </Button>
                 </div>
               </div>

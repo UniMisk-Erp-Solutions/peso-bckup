@@ -63,6 +63,49 @@ export async function enqueueDailyProjectReportExport(input: {
   return data as unknown as EnqueueResult;
 }
 
+export type ExpenseReportType =
+  | "claim_verification"
+  | "claim_approval"
+  | "detailed_expense";
+
+/**
+ * DOC-105 — enqueue Claim Verification / Claim Approval / Detailed Expense.
+ *
+ * Filters go over as one jsonb blob and form the dedupe key, so two people
+ * asking for the same report while it is still running share a single job.
+ */
+export async function enqueueExpenseReportExport(input: {
+  organizationId: string;
+  reportType: ExpenseReportType;
+  category?: string | null;
+  userId?: string | null;
+  userIds?: string[] | null;
+  engineerStatus?: string | null;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  teamScoped?: boolean;
+}): Promise<EnqueueResult> {
+  const filters: Record<string, unknown> = {};
+  if (input.category && input.category !== "all") filters.category = input.category;
+  if (input.userId && input.userId !== "all") filters.user_id = input.userId;
+  if (input.userIds?.length) filters.user_ids = input.userIds;
+  if (input.engineerStatus && input.engineerStatus !== "all") {
+    filters.engineer_status = input.engineerStatus;
+  }
+  if (input.dateFrom) filters.date_from = input.dateFrom;
+  if (input.dateTo) filters.date_to = input.dateTo;
+
+  const { data, error } = await db.rpc("create_expense_report_export_job_v1", {
+    p_organization_id: input.organizationId,
+    p_report_type: input.reportType,
+    p_filters: filters,
+    p_team_scoped: input.teamScoped ?? false,
+    p_format: "csv",
+  });
+  if (error) throw new Error(error.message);
+  return data as unknown as EnqueueResult;
+}
+
 /**
  * Ask the worker to drain the queue.
  *
@@ -94,6 +137,7 @@ export async function fetchExportJob(jobId: string): Promise<ExportJob | null> {
 /** Most recent job for this org, so a finished report survives a page reload. */
 export async function fetchLatestExportJob(
   organizationId: string,
+  reportType = "daily_project_report",
 ): Promise<ExportJob | null> {
   const { data, error } = await db
     .from("report_export_jobs")
@@ -101,7 +145,7 @@ export async function fetchLatestExportJob(
       "id, status, progress_current, progress_total, filename, storage_path, file_size_bytes, error_message_safe, created_at, completed_at",
     )
     .eq("organization_id", organizationId)
-    .eq("report_type", "daily_project_report")
+    .eq("report_type", reportType)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();

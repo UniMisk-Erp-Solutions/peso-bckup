@@ -28,6 +28,25 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsPreflightResponse, jsonResponse } from "../_shared/cors.ts";
+import {
+  fetchAllExpenseRows,
+  buildClaimCsv,
+  buildDetailedCsv,
+  type AllocationRow,
+} from "./expenseReports.ts";
+
+/** Statuses each report selects, mirroring the client loaders it replaces. */
+const REPORT_STATUSES: Record<string, string[]> = {
+  claim_verification: ["verified", "level_1_verified", "level_2_verified"],
+  claim_approval: ["approved"],
+  detailed_expense: ["approved"],
+};
+
+const REPORT_FILENAMES: Record<string, string> = {
+  claim_verification: "claim-verification-list",
+  claim_approval: "claim-approval-list",
+  detailed_expense: "detailed-expense-report",
+};
 
 const BUCKET = "generated-reports";
 const PAGE_SIZE = 250;
@@ -172,6 +191,89 @@ function toCsv(rows: Record<string, string | number>[]): string {
   return "﻿" + lines.join("\r\n") + "\r\n";
 }
 
+/**
+ * DOC-105 — build one of the three expense-based reports.
+ *
+ * The engineer-status filter narrows Claim Verification to a single verified
+ * stage; absent or "all" it keeps every stage, matching the tab's default.
+ */
+async function buildExpenseReport(
+  svc: ServiceClient,
+  args: {
+    reportType: string;
+    jobId: string;
+    orgId: string;
+    workerId: string;
+    params: Record<string, unknown>;
+    deadline: () => boolean;
+  },
+): Promise<{ csv: string; rowCount: number; pages: number }> {
+  const { reportType, jobId, orgId, workerId, params, deadline } = args;
+
+  const engineerStatus = params.engineer_status ? String(params.engineer_status) : "all";
+  const statuses = reportType === "claim_verification" && engineerStatus !== "all"
+    ? [engineerStatus]
+    : REPORT_STATUSES[reportType];
+  if (!statuses) throw new Error(`Unsupported report type: ${reportType}`);
+
+  const userIds = Array.isArray(params.user_ids) && params.user_ids.length
+    ? (params.user_ids as string[])
+    : null;
+  const singleUserId = params.user_id ? String(params.user_id) : null;
+  const effectiveUserIds = singleUserId ? [singleUserId] : userIds;
+
+  const { rows, total, pages } = await fetchAllExpenseRows(
+    svc,
+    {
+      organizationId: orgId,
+      statuses,
+      category: params.category ? String(params.category) : null,
+      userIds: effectiveUserIds,
+      dateFrom: params.date_from ? String(params.date_from) : null,
+      dateTo: params.date_to ? String(params.date_to) : null,
+      sortColumn: reportType === "detailed_expense" ? "trip_start" : "created_at",
+    },
+    async (received, runningTotal) => {
+      await svc.rpc("report_export_job_heartbeat_v1", {
+        p_job_id: jobId,
+        p_worker_id: workerId,
+        p_progress_current: received,
+        p_progress_total: runningTotal,
+        p_snapshot_at: null,
+      });
+    },
+    deadline,
+  );
+
+  // Same invariant as the Daily worker: never write a partial file.
+  if (total != null && rows.length !== total) {
+    throw new Error(`Incomplete: expected ${total} rows, assembled ${rows.length}`);
+  }
+
+  if (reportType === "claim_verification" || reportType === "claim_approval") {
+    const built = buildClaimCsv(rows, reportType);
+    return { ...built, pages };
+  }
+
+  // Detailed: a single employee gets the credit/debit ledger; "All employees"
+  // has no one wallet to walk, so it stays a flat list — the split the UI makes.
+  let allocations: AllocationRow[] = [];
+  if (singleUserId) {
+    const { data, error } = await svc.rpc("report_expense_allocations_v1", {
+      p_organization_id: orgId,
+      p_user_id: singleUserId,
+      p_date_from: params.date_from ? String(params.date_from) : null,
+      p_date_to: params.date_to ? String(params.date_to) : null,
+    });
+    if (error) throw new Error(`allocations: ${error.message}`);
+    allocations = (data ?? []) as AllocationRow[];
+  }
+
+  const closingBalance = singleUserId ? Number(rows[0]?.user_balance ?? 0) : 0;
+  const built = buildDetailedCsv(rows, allocations, singleUserId, closingBalance);
+  return { ...built, pages };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse();
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
@@ -210,6 +312,57 @@ Deno.serve(async (req) => {
   const params = (job.parameters ?? {}) as Record<string, unknown>;
   const format = String(job.format ?? "csv");
   const config = (job.config_snapshot ?? {}) as Record<string, unknown>;
+  const reportType = String(job.report_type ?? "daily_project_report");
+
+  // DOC-105 — the three expense-based reports. Same claim/heartbeat/upload/
+  // complete lifecycle; only the row source and the file body differ.
+  if (reportType !== "daily_project_report") {
+    try {
+      const result = await buildExpenseReport(svc, {
+        reportType, jobId, orgId, workerId, params,
+        deadline: () => Date.now() - startedAt > SOFT_DEADLINE_MS,
+      });
+      const bytes = new TextEncoder().encode(result.csv);
+      const stamp = new Date().toISOString().slice(0, 10);
+      const filename = `${REPORT_FILENAMES[reportType] ?? "report"}_${stamp}.csv`;
+      const storagePath = `${orgId}/${jobId}/${filename}`;
+
+      const { error: upErr } = await svc.storage
+        .from(BUCKET)
+        .upload(storagePath, bytes, { contentType: "text/csv", upsert: true });
+      if (upErr) throw new Error(`upload: ${upErr.message}`);
+
+      const { error: doneErr } = await svc.rpc("complete_report_export_job_v1", {
+        p_job_id: jobId,
+        p_worker_id: workerId,
+        p_storage_path: storagePath,
+        p_filename: filename,
+        p_mime_type: "text/csv",
+        p_file_size_bytes: bytes.byteLength,
+        p_row_count: result.rowCount,
+      });
+      if (doneErr) throw new Error(`complete: ${doneErr.message}`);
+
+      return jsonResponse({
+        claimed: true, job_id: jobId, status: "completed",
+        report_type: reportType, row_count: result.rowCount,
+        pages: result.pages, bytes: bytes.byteLength, format,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Export failed";
+      await svc.rpc("fail_report_export_job_v1", {
+        p_job_id: jobId,
+        p_worker_id: workerId,
+        p_error_code: "worker_error",
+        p_error_message_safe: message.slice(0, 300),
+        p_retryable: true,
+      });
+      return jsonResponse(
+        { claimed: true, job_id: jobId, status: "failed", error: message },
+        500,
+      );
+    }
+  }
 
   try {
     const groups: Group[] = [];
