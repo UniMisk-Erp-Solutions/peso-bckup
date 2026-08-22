@@ -1,6 +1,6 @@
 # Server-side report generation (all four Reports tabs)
 
-**Doc ID:** DOC-104 / DOC-105
+**Doc ID:** DOC-104 / DOC-105 / DOC-106
 **Status:** deployed (backup instance) — not yet applied to Production
 **Last updated:** 2026-08-22
 **Owner / area:** Reports, Supabase Edge Functions, Storage
@@ -18,6 +18,7 @@ short-lived signed URL.
 
 - **DOC-104** — the Daily Project Report worker (the piece DOC-102 never shipped).
 - **DOC-105** — Claim Verification, Claim Approval and Detailed Expense.
+- **DOC-106** — per-report generation history with re-download.
 
 ---
 
@@ -177,8 +178,58 @@ with correct column headers and readable names.
 
 ---
 
+## 8) Generation history (DOC-106)
+
+Every generated report already left a row in `report_export_jobs` recording who
+asked for it, when, how many rows and where the file went. Nothing surfaced it,
+so a user wanting yesterday's file had to regenerate it. Each of the four tabs
+now shows its **own** history under the Generate panel: filename, date and time,
+who generated it, row count, size, and a **Download** button.
+
+`list_report_export_jobs_v1(p_organization_id, p_report_type, p_limit)` — an RPC
+rather than a PostgREST select, because the history needs the requester's *name*
+from `profiles`. Letting the client join `profiles` to satisfy a report list
+would widen what it can read about colleagues; resolving the name inside a
+`SECURITY DEFINER` function keeps that surface closed. It is gated by the same
+`daily_report_caller_can_view_v1` check as the reports themselves: if you may
+not view the report, you may not see who has been generating it.
+
+**Files expire.** `expires_at` defaults to `now() + 7 days` and
+`expire_report_export_files_v1` clears them. The RPC returns a `downloadable`
+flag computed from status, expiry *and* the object actually existing in the
+bucket, so an expired row stays visible as a record of who generated what but
+shows "File expired" instead of a button that would 404.
+
+The history refreshes on mount and again the moment a job reaches a terminal
+state, so a newly generated report appears without a reload.
+
+### Dead preview UI removed
+
+The three tabs previously rendered "No expenses found" whenever their (now
+disabled) query returned nothing — which is always. That claim was false: rows
+exist, they are simply no longer fetched. Those empty states and the
+`ReportLiveRefreshBar` instances, which tracked queries that never run, were
+removed.
+
+### Verified
+
+| Report type | History entries | Scoped correctly |
+|---|---|---|
+| `daily_project_report` | 1 | ✅ |
+| `claim_verification` | 2 | ✅ |
+| `claim_approval` | 1 | ✅ |
+| `detailed_expense` | 0 | ✅ |
+
+`requested_by_name` resolved to the real display name and `downloadable` was
+`true` for every present file. Migration:
+`20260822160000_report_export_history.sql` — **user runs SQL manually**, and the
+PostgREST schema cache must be reloaded afterwards.
+
+---
+
 ## Revision log
 
 | Date | Change | By |
 |---|---|---|
 | 2026-08-22 | DOC-104 worker + DOC-105 three expense reports; migration applied and proven on the backup instance; all 14 edge functions deployed to Coolify | Claude |
+| 2026-08-22 | DOC-106 per-report generation history (who / when / rows / size + re-download, expiry-aware); removed the dead preview empty-states and live-refresh bars | Claude |

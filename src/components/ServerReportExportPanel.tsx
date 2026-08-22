@@ -7,7 +7,9 @@
  * signed URL, so even a multi-megabyte export never passes through a JS buffer.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Loader2, AlertCircle, FileSpreadsheet, RotateCw } from "lucide-react";
+import {
+  Download, Loader2, AlertCircle, FileSpreadsheet, RotateCw, History,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -19,8 +21,11 @@ import {
   isTerminalStatus,
   formatBytes,
   enqueueExpenseReportExport,
+  listReportExportJobs,
+  downloadHistoryEntry,
   type ExportJob,
   type ExpenseReportType,
+  type ExportHistoryEntry,
 } from "@/lib/reportExportJobs";
 
 interface ServerReportExportPanelProps {
@@ -59,8 +64,23 @@ export function ServerReportExportPanel({
   const [starting, setStarting] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<ExportHistoryEntry[]>([]);
+  const [historyBusy, setHistoryBusy] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtRef = useRef<number>(0);
+
+  const effectiveType = reportType ?? "daily_project_report";
+
+  // DOC-106 — every generated report leaves a row; this surfaces them so an
+  // earlier file can be re-downloaded instead of regenerated.
+  const loadHistory = useCallback(async () => {
+    if (!organizationId) return;
+    try {
+      setHistory(await listReportExportJobs(organizationId, effectiveType, 20));
+    } catch {
+      /* history is supplementary; a failure here must not block generating */
+    }
+  }, [organizationId, effectiveType]);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -83,12 +103,13 @@ export function ServerReportExportPanel({
           reportType ?? "daily_project_report",
         );
         if (!cancelled && latest && latest.status === "completed") setJob(latest);
+        if (!cancelled) await loadHistory();
       } catch {
         /* a missing previous job is not an error worth surfacing */
       }
     })();
     return () => { cancelled = true; };
-  }, [organizationId, reportType]);
+  }, [organizationId, reportType, loadHistory]);
 
   const poll = useCallback(
     (jobId: string) => {
@@ -106,6 +127,7 @@ export function ServerReportExportPanel({
           setJob(next);
           if (isTerminalStatus(next.status)) {
             stopPolling();
+            void loadHistory();
             if (next.status === "failed") {
               setError(next.error_message_safe || "The report could not be generated.");
             }
@@ -115,7 +137,7 @@ export function ServerReportExportPanel({
         }
       }, POLL_MS);
     },
-    [stopPolling],
+    [stopPolling, loadHistory],
   );
 
   const generate = async () => {
@@ -157,6 +179,23 @@ export function ServerReportExportPanel({
       });
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const downloadOld = async (entry: ExportHistoryEntry) => {
+    setHistoryBusy(entry.id);
+    try {
+      await downloadHistoryEntry(entry);
+    } catch (err) {
+      toast({
+        title: "Download failed",
+        description: err instanceof Error ? err.message : "Could not download that report.",
+        variant: "destructive",
+      });
+      // The file may have just expired; refresh so the row stops offering it.
+      void loadHistory();
+    } finally {
+      setHistoryBusy(null);
     }
   };
 
@@ -218,6 +257,79 @@ export function ServerReportExportPanel({
           <span>{error}</span>
         </div>
       )}
+
+      {/* DOC-106 — generation history for THIS report type. */}
+      <div className="border-t pt-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <History className="h-4 w-4 text-muted-foreground" />
+          <h4 className="text-sm font-semibold">Report history</h4>
+        </div>
+
+        {history.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No reports generated yet. Generated reports appear here and stay
+            downloadable until they expire.
+          </p>
+        ) : (
+          <ul className="divide-y rounded-md border">
+            {history.map((h) => (
+              <li
+                key={h.id}
+                className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">
+                    {h.filename ?? "report.csv"}
+                  </p>
+                  <p className="text-xs text-muted-foreground tabular-nums">
+                    {formatGeneratedAt(h.created_at)}
+                    {" · "}
+                    {h.requested_by_me ? "You" : h.requested_by_name}
+                    {h.row_count ? ` · ${h.row_count.toLocaleString()} rows` : ""}
+                    {h.file_size_bytes ? ` · ${formatBytes(h.file_size_bytes)}` : ""}
+                  </p>
+                </div>
+
+                {h.downloadable ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void downloadOld(h)}
+                    disabled={historyBusy === h.id}
+                  >
+                    {historyBusy === h.id ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="mr-2 h-4 w-4" />
+                    )}
+                    Download
+                  </Button>
+                ) : (
+                  // The row stays visible as a record of who generated what,
+                  // but the file is gone, so no button that would 404.
+                  <span className="text-xs text-muted-foreground">
+                    File expired
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
+}
+
+/** e.g. "22 Aug 2026, 4:35 pm" — local time, matching the app's date style. */
+function formatGeneratedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
 }

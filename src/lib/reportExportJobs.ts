@@ -178,6 +178,50 @@ export async function downloadExportJobFile(job: ExportJob): Promise<void> {
   a.remove();
 }
 
+export interface ExportHistoryEntry {
+  id: string;
+  status: ExportJobStatus;
+  filename: string | null;
+  storage_path: string | null;
+  file_size_bytes: number | null;
+  row_count: number | null;
+  created_at: string;
+  completed_at: string | null;
+  expires_at: string | null;
+  requested_by_name: string;
+  requested_by_me: boolean;
+  /** False once the file has expired or been purged — do not offer a download. */
+  downloadable: boolean;
+}
+
+/**
+ * DOC-106 — who generated this report, when, and can the file still be had.
+ *
+ * Scoped to one report type so each tab shows only its own history.
+ */
+export async function listReportExportJobs(
+  organizationId: string,
+  reportType = "daily_project_report",
+  limit = 20,
+): Promise<ExportHistoryEntry[]> {
+  const { data, error } = await db.rpc("list_report_export_jobs_v1", {
+    p_organization_id: organizationId,
+    p_report_type: reportType,
+    p_limit: limit,
+  });
+  if (error) throw new Error(error.message);
+  const payload = data as { jobs?: ExportHistoryEntry[] } | null;
+  return payload?.jobs ?? [];
+}
+
+/** Download a historical entry — same signed-URL path as a fresh report. */
+export async function downloadHistoryEntry(entry: ExportHistoryEntry): Promise<void> {
+  await downloadExportJobFile({
+    storage_path: entry.storage_path,
+    filename: entry.filename,
+  } as ExportJob);
+}
+
 export function isTerminalStatus(s: ExportJobStatus): boolean {
   return s === "completed" || s === "failed" || s === "cancelled";
 }

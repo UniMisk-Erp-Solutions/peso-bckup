@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { ReportLiveRefreshBar } from "@/components/ReportLiveRefreshBar";
 import { reportKeys } from "@/lib/reportQueryKeys";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
@@ -2052,9 +2051,11 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                 />
               </div>
 
-              <ReportLiveRefreshBar query={verificationQuery} />
               {verificationQuery.isLoading ? null : filteredVerificationExpenses.length === 0 ? (
-                <div className="py-8 text-center text-slate-500 text-sm">No expenses found</div>
+                // DOC-105 — this tab no longer fetches rows (generation is a
+                // server job), so an empty result means "not fetched", not
+                // "none exist". Claiming the latter would be a lie.
+                null
               ) : isMobile ? (
                 <div className="space-y-2" data-testid="verification-card-list">
                   {filteredVerificationExpenses.map(exp => (
@@ -2254,9 +2255,11 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                 />
               </div>
 
-              <ReportLiveRefreshBar query={approvalQuery} />
               {approvalQuery.isLoading ? null : filteredApprovalExpenses.length === 0 ? (
-                <div className="py-8 text-center text-slate-500 text-sm">No expenses found</div>
+                // DOC-105 — this tab no longer fetches rows (generation is a
+                // server job), so an empty result means "not fetched", not
+                // "none exist". Claiming the latter would be a lie.
+                null
               ) : isMobile ? (
                 <div className="space-y-2" data-testid="approval-card-list">
                   {filteredApprovalExpenses.map(exp => (
@@ -2513,7 +2516,6 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                 <p className="text-sm text-slate-600">Year : {selectedYear.slice(-2)}</p>
               </div>
 
-              <ReportLiveRefreshBar query={detailedQuery} />
               <div className="space-y-4">
                 <div>
                   <h3 className="text-lg font-semibold mb-2">Detailed List</h3>
@@ -2856,7 +2858,6 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                   <p className="text-xs text-muted-foreground">{t("daily.clickRowHint")}</p>
                 ) : null}
 
-                <ReportLiveRefreshBar query={dailyQuery} />
                 {isMobile ? (
                   <div className="space-y-2" data-testid="daily-report-card-list">
                     {dailyQuery.isLoading ? null : dailyReportRows.length === 0 ? (
