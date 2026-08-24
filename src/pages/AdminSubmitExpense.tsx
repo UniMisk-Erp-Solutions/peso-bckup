@@ -38,6 +38,8 @@ import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { BulkExpenseImportPanel } from "@/components/BulkExpenseImportPanel";
 
 const emptyForm = {
   title: "",
@@ -194,7 +196,7 @@ export default function AdminSubmitExpense() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">
           {t("submitForEmployee.heading", { ns: "admin" })}
@@ -204,6 +206,21 @@ export default function AdminSubmitExpense() {
         </p>
       </div>
 
+      {/* DOC-108 — bulk CSV/Excel import lives in its own tab and its own
+          component (BulkExpenseImportPanel) so it cannot affect the single-
+          employee form's state or JSX below, which is unchanged. */}
+      <Tabs defaultValue="single">
+        <TabsList>
+          <TabsTrigger value="single">
+            {t("submitForEmployee.tabs.single", { ns: "admin" })}
+          </TabsTrigger>
+          <TabsTrigger value="bulk">
+            {t("submitForEmployee.tabs.bulk", { ns: "admin" })}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="single" className="mt-4">
+    <div className="max-w-2xl space-y-6">
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
@@ -387,6 +404,13 @@ export default function AdminSubmitExpense() {
           {t("cancel", { ns: "common" })}
         </Button>
       </div>
+    </div>
+        </TabsContent>
+
+        <TabsContent value="bulk" className="mt-4">
+          <BulkExpenseImportPanel organizationId={organizationId} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

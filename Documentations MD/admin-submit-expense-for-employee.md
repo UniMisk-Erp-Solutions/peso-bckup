@@ -1,6 +1,6 @@
 # Admin submits an expense on behalf of an employee
 
-**Doc ID:** DOC-107
+**Doc ID:** DOC-107 / DOC-108
 **Status:** deployed (backup instance) — not applied to Production
 **Last updated:** 2026-08-24
 **Owner / area:** Expenses, Admin Panel, Supabase
@@ -19,6 +19,12 @@ self-submitted expense would use, and the employee's own dashboard updates
 live. Every such expense carries a permanent, queryable record of which admin
 created it, on top of two audit-log entries readable in the expense's own
 timeline.
+
+The same page's second tab (**DOC-108**) does the same thing at scale: upload
+a CSV or Excel file — one row per employee expense — and submit hundreds or
+thousands of them in a handful of clicks, each one going through the exact
+same routing, audit trail and live-dashboard notification as a single manual
+entry. See §4a for the full design and the 1,000-row proof.
 
 ---
 
@@ -121,6 +127,10 @@ the normal reviewer-facing notification.
 | `src/App.tsx` | route `/admin/submit-expense`, admin-only |
 | `src/components/AppSidebar.tsx` | "Submit for Employee" nav entry |
 | `src/locales/{en,hi,gu}/nav.json`, `admin.json` | new translation keys |
+| `supabase/migrations/20260824140000_admin_bulk_submit_expenses_for_employees.sql` | DOC-108: `admin_bulk_submit_expenses_v1` — calls the RPC above per row |
+| `src/lib/bulkExpenseImportParse.ts` | DOC-108: CSV/Excel parsing, header mapping, client-side row validation |
+| `src/components/BulkExpenseImportPanel.tsx` | DOC-108: upload → preview → chunked submit → results UI, its own component so it cannot affect the single-employee form |
+| `public/templates/bulk-expense-import-template.csv` | DOC-108: downloadable column-format template |
 
 No existing file's behavior changed — the four browser-paging queries, review
 pipeline, and every other page are untouched.
@@ -141,6 +151,16 @@ manually.**
 
 No changes to `report_export_jobs` or anything from DOC-104/105/106 — this is
 a fully independent feature sharing no migration dependency with that work.
+
+`20260824140000_admin_bulk_submit_expenses_for_employees.sql` — **user runs
+SQL manually, after the migration above.**
+
+- `admin_bulk_submit_expenses_v1(p_organization_id, p_rows jsonb)` —
+  `SECURITY DEFINER`, granted to `authenticated`. One upfront admin check
+  (avoids N identical "not permitted" errors on a non-admin's whole batch),
+  then per-row employee resolution and a per-row call into
+  `admin_submit_expense_for_employee_v1`, isolated by `BEGIN/EXCEPTION`.
+  Rejects a call with more than 250 rows outright.
 
 ---
 
@@ -186,10 +206,110 @@ throwaway test admin created solely for this run.
 test admin (auth user + profile + membership) were deleted after verification.
 Zero trace remains in the backup instance.
 
-Full suite: background run in progress at time of writing; report the result
-before this doc is finalized. Expectation, based on the isolated scope of
-this change (new files + one new nullable column + new RPC, nothing existing
-modified), is no regression.
+Full suite (DOC-107): 3,409 passed. 6 failures — the same 5-file pre-existing
+baseline (proven unrelated by reverting every change earlier in the session
+and re-running to an identical result) plus one already-confirmed-flaky test.
+No regression.
+
+---
+
+## 4a) Bulk import — CSV/Excel (DOC-108)
+
+The same page's second tab, **Bulk Import (CSV/Excel)**, submits many
+admin-on-behalf-of-employee expenses from one spreadsheet — the scenario
+described: an admin with a file of 1,000+ employees, each needing one expense
+entered for them.
+
+### Why it calls the existing RPC instead of repeating its logic
+
+`admin_submit_expense_for_employee_v1` (DOC-107) is untouched — not one line
+changed. The new function, `admin_bulk_submit_expenses_v1`, loops a `jsonb`
+array of rows and calls that existing function once per row, each call
+wrapped in its own `BEGIN/EXCEPTION` block. This is the same per-row isolation
+pattern already used elsewhere in this codebase by
+`save_form_template_parent_option_configurations_batch_atomically`
+(`20260822100000_form_template_bulk_batch_operations.sql`): one bad row's
+`SQLERRM` is captured and returned as that row's error; every other row in the
+batch still commits. Every imported expense gets the identical hierarchy
+routing, audit trail and employee notification a single admin-submitted
+expense gets, because it *is* the same code path, called in a loop.
+
+### Employee identification, and why ambiguity is a hard error
+
+Each row identifies its employee by **Employee ID** (primary) or **Email**
+(fallback) — never by name; `profiles.employee_id` has no `UNIQUE` constraint
+on the live schema, so a duplicate is a real possibility, not a theoretical
+one. Both existing bulk-import precedents in this codebase
+(`expenseImport.ts`, `bulk-users-import`) resolve a duplicate as "last match
+wins" and never tell the admin. That is wrong for a payroll-adjacent feature:
+zero matches and multiple matches are both treated as a hard per-row error —
+"no employee found" / "matches N different people, fix the duplicate" —
+never a silent guess.
+
+### Scale, proven not assumed
+
+The request specifically described 1,000+ rows, so that is what was tested,
+twice:
+
+1. **1,000 rows via direct SQL** (5 chunks of 200, mixed real employees, with
+   11 deliberately invalid rows seeded at predictable positions): **989
+   succeeded, 11 failed** — matching the seeded count exactly. Total wall
+   time **7.4 seconds**. Every side effect checked: 989 expenses (all
+   `status='submitted'`, all `created_by_admin_id` set), exactly 1,978 audit
+   log rows (2 per success), exactly 1,978 notifications (reviewer/admin +
+   employee, 989 each), and **zero** orphaned rows for any of the 11 failed
+   inputs.
+2. **220 rows through the real browser UI** (CSV, 4 rows with a missing
+   amount caught client-side before submission, 3 rows with an unknown
+   employee ID caught server-side): preview correctly showed 216/220 ready;
+   results correctly showed 213/216 succeeded, with the exact 3 failing rows
+   and their exact server error messages rendered in a results table. A
+   6-row **.xlsx** file was also imported through the same UI to prove the
+   Excel code path independently of the CSV path — 6/6 succeeded.
+
+Client-side validation catches structural problems (missing required field,
+non-`YYYY-MM-DD` date, non-positive amount) before any network call; identity
+existence can only be checked server-side, so those rows pass preview and
+fail at import with a specific reason — exactly what the 220-row test proved.
+
+### Chunking
+
+The server rejects a single call carrying more than 250 rows
+(`admin_bulk_submit_expenses_v1`'s own guard). The client
+(`submitBulkExpensesForEmployees` in `src/lib/adminSubmitExpense.ts`) chunks
+at 200 rows per call and awaits each chunk before sending the next — a
+transient failure only ever affects the one chunk in flight, and the UI's
+progress bar advances chunk by chunk.
+
+### Column format
+
+A working template is served at
+`/templates/bulk-expense-import-template.csv` (linked from the page's
+**Download template** button) with two example rows demonstrating both
+identification methods. Headers are matched case-insensitively with common
+aliases (e.g. `Emp ID`, `Expense Date`, `Vendor / Location` all map
+correctly) — see `HEADER_ALIASES` in `src/lib/bulkExpenseImportParse.ts` for
+the full alias list.
+
+| Column | Required | Format | Notes |
+|---|---|---|---|
+| **Employee ID** | One of Employee ID / Email required | text | Matches `profiles.employee_id` exactly |
+| **Employee Email** | — | text | Fallback identifier if Employee ID is blank |
+| **Title** | Yes | text | |
+| **Destination** | Yes | text | Vendor / location |
+| **Date** | Yes | `YYYY-MM-DD` | Deliberately ISO-only — no locale-guessing (`DD/MM` vs `MM/DD`) that could silently pick the wrong day |
+| **Category** | Yes | text | Must match an active category name in the organization |
+| **Amount** | Yes | plain number `> 0` | No currency symbol, no thousands separator (`1250.50`, not `₹1,250.50`) |
+| **Purpose** | No | text | |
+
+### Not touched
+
+`AdminExpenseImportPanel.tsx` / `src/lib/expenseImport.ts` were investigated
+and confirmed to be a **separate, unrelated feature** — a JSON backup/restore
+tool for expenses that already exist with fixed UUIDs, architecturally
+nothing like this one (direct client-side `upsert()`, no hierarchy routing,
+no `created_by_admin_id`). Neither that file nor `AdminPanel.tsx` was
+modified.
 
 ---
 
@@ -207,6 +327,13 @@ modified), is no regression.
 - A local `.env` now exists in the working tree (gitignored, not committed)
   pointing at the backup Supabase instance, created solely to run the dev
   server for the verification pass above.
+- **DOC-108**: no name-based employee matching (Employee ID or Email only) —
+  deliberate, per the ambiguity concern in §4a, not an oversight.
+- **DOC-108**: custom form fields are not collected here either, same scope
+  limit as the single-employee tab.
+- **DOC-108**: no per-row supervisor/team preview before import — routing is
+  computed at submit time by the same engine the single form uses, but the
+  admin cannot see in advance which reviewer a given row will land on.
 
 ---
 
@@ -215,3 +342,4 @@ modified), is no regression.
 | Date | Change | By |
 |---|---|---|
 | 2026-08-24 | DOC-107 — admin submit-on-behalf-of-employee feature: migration, RPC (routing engine ported from approvalHierarchy.ts and proven against real data), page, nav entry; verified end-to-end in a real browser session against the backup instance; all test data cleaned up | Claude |
+| 2026-08-24 | DOC-108 — bulk CSV/Excel import added to the same page as a second tab; new RPC calls the DOC-107 RPC per row (zero changes to it); proven at 1,000 rows via direct SQL (989/11 split, 7.4s, zero orphaned data) and at 220 rows through the real browser UI (both CSV and .xlsx paths); confirmed the existing `AdminExpenseImportPanel`/`expenseImport.ts` is an unrelated JSON restore tool and left untouched; all test data and the throwaway admin cleaned up | Claude |
