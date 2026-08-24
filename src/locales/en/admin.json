@@ -468,5 +468,26 @@
     "replaceConfirmFinal": "This cannot be undone once you save the template.",
     "replaceConfirmAction": "Replace and apply to draft",
     "none": "none"
+  },
+  "submitForEmployee": {
+    "heading": "Submit Expense for Employee",
+    "subheading": "Create and submit an expense claim on behalf of an employee. No receipt photo is required for admin-submitted expenses.",
+    "employeeSectionTitle": "Employee",
+    "employeeSectionHint": "Search by name, email, or employee ID.",
+    "selectEmployee": "Select an employee",
+    "loadingEmployees": "Loading employees...",
+    "searchPlaceholder": "Search name, email, or employee ID...",
+    "noEmployees": "No employees found.",
+    "submit": "Submit Expense",
+    "success": {
+      "title": "Expense submitted",
+      "description": "The expense was submitted on behalf of {{name}}."
+    },
+    "errors": {
+      "title": "Could not submit expense",
+      "amount": "Enter an amount greater than zero.",
+      "futureDate": "Expense date cannot be in the future.",
+      "generic": "Something went wrong. Please try again."
+    }
   }
 }

@@ -46,6 +46,7 @@ import HelpTutorial from "./pages/HelpTutorial";
 
 const AdminPanel = lazyWithRetry(() => import("./pages/AdminPanel"));
 const UserManagement = lazyWithRetry(() => import("./pages/UserManagement"));
+const AdminSubmitExpense = lazyWithRetry(() => import("./pages/AdminSubmitExpense"));
 const Balances = lazyWithRetry(() => import("./pages/Balances"));
 const Reports = lazyWithRetry(() => import("./pages/Reports"));
 const Settings = lazyWithRetry(() => import("./pages/Settings"));
@@ -262,6 +263,19 @@ const App = () => (
                 <Layout>
                   <LazyPage>
                     <UserManagement />
+                  </LazyPage>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          {/* DOC-107 — admin submits an expense on behalf of an employee. */}
+          <Route
+            path="/admin/submit-expense"
+            element={
+              <ProtectedRoute allowedRoles={["admin"]}>
+                <Layout>
+                  <LazyPage>
+                    <AdminSubmitExpense />
                   </LazyPage>
                 </Layout>
               </ProtectedRoute>

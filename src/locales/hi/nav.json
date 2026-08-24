@@ -68,5 +68,6 @@
   "sectionWorkspace": "कार्यक्षेत्र",
   "sectionAdministration": "प्रशासन",
   "sectionAccount": "खाता",
-  "balanceHistory": "बैलेंस इतिहास"
+  "balanceHistory": "बैलेंस इतिहास",
+  "submitForEmployee": "कर्मचारी हेतु व्यय जमा करें"
 }

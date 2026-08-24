@@ -69,5 +69,6 @@
   "sectionWorkspace": "Workspace",
   "sectionAdministration": "Administration",
   "sectionAccount": "Account",
-  "balanceHistory": "Balance History"
+  "balanceHistory": "Balance History",
+  "submitForEmployee": "Submit for Employee"
 }
