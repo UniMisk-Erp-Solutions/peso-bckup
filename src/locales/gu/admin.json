@@ -374,7 +374,8 @@
       "errors": {
         "unsupportedFile": "અસમર્થિત ફાઇલ પ્રકાર. .csv, .txt, .xlsx, અથવા .xls વાપરો.",
         "parseFailed": "આ ફાઇલ વાંચી શકાઈ નથી.",
-        "missingColumns": "જરૂરી કૉલમ ખૂટે છે"
+        "missingColumns": "જરૂરી કૉલમ ખૂટે છે",
+        "rosterFailed": "રોસ્ટર ફાઇલ બનાવી શકાઈ નથી."
       },
       "preview": {
         "title": "પૂર્વાવલોકન",
@@ -397,7 +398,8 @@
         "succeededBadge": "{{count}} સફળ",
         "failedBadge": "{{count}} નિષ્ફળ"
       },
-      "importAnother": "બીજી ફાઇલ આયાત કરો"
+      "importAnother": "બીજી ફાઇલ આયાત કરો",
+      "downloadRoster": "કર્મચારી યાદી ડાઉનલોડ કરો (.xlsx)"
     }
   }
 }

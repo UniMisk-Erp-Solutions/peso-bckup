@@ -502,7 +502,8 @@
       "errors": {
         "unsupportedFile": "Unsupported file type. Use .csv, .txt, .xlsx, or .xls.",
         "parseFailed": "Could not read this file.",
-        "missingColumns": "Missing required columns"
+        "missingColumns": "Missing required columns",
+        "rosterFailed": "Could not generate the roster file."
       },
       "preview": {
         "title": "Preview",
@@ -525,7 +526,8 @@
         "succeededBadge": "{{count}} succeeded",
         "failedBadge": "{{count}} failed"
       },
-      "importAnother": "Import another file"
+      "importAnother": "Import another file",
+      "downloadRoster": "Download employee roster (.xlsx)"
     }
   }
 }

@@ -131,6 +131,7 @@ the normal reviewer-facing notification.
 | `src/lib/bulkExpenseImportParse.ts` | DOC-108: CSV/Excel parsing, header mapping, client-side row validation |
 | `src/components/BulkExpenseImportPanel.tsx` | DOC-108: upload → preview → chunked submit → results UI, its own component so it cannot affect the single-employee form |
 | `public/templates/bulk-expense-import-template.csv` | DOC-108: downloadable column-format template |
+| `src/lib/generateBulkExpenseExcelTemplate.ts` | DOC-108: builds the org-scoped pre-filled roster with a real Excel dropdown, using the new `exceljs` dependency |
 
 No existing file's behavior changed — the four browser-paging queries, review
 pipeline, and every other page are untouched.
@@ -268,7 +269,7 @@ twice:
    Excel code path independently of the CSV path — 6/6 succeeded.
 
 Client-side validation catches structural problems (missing required field,
-non-`YYYY-MM-DD` date, non-positive amount) before any network call; identity
+non-`DD-MM-YYYY` date, non-positive amount) before any network call; identity
 existence can only be checked server-side, so those rows pass preview and
 fail at import with a specific reason — exactly what the 220-row test proved.
 
@@ -283,24 +284,102 @@ progress bar advances chunk by chunk.
 
 ### Column format
 
-A working template is served at
-`/templates/bulk-expense-import-template.csv` (linked from the page's
-**Download template** button) with two example rows demonstrating both
-identification methods. Headers are matched case-insensitively with common
-aliases (e.g. `Emp ID`, `Expense Date`, `Vendor / Location` all map
-correctly) — see `HEADER_ALIASES` in `src/lib/bulkExpenseImportParse.ts` for
-the full alias list.
+Two downloads sit next to the file picker:
+
+1. **Download template** (`/templates/bulk-expense-import-template.csv`) —
+   a static, generic example with two rows demonstrating both identification
+   methods. Useful for building a file from scratch or a quick reference.
+2. **Download employee roster (.xlsx)** — see below; the primary artifact for
+   the 1,000+-employee scenario this feature exists for.
+
+Headers are matched case-insensitively with common aliases (e.g. `Emp ID`,
+`Expense Date`, `Vendor / Location` all map correctly) — see
+`HEADER_ALIASES` in `src/lib/bulkExpenseImportParse.ts` for the full list.
 
 | Column | Required | Format | Notes |
 |---|---|---|---|
+| **Employee Name** | — | text | Display only — never validated or sent to the server; present so the admin can visually confirm they're on the right row |
 | **Employee ID** | One of Employee ID / Email required | text | Matches `profiles.employee_id` exactly |
 | **Employee Email** | — | text | Fallback identifier if Employee ID is blank |
 | **Title** | Yes | text | |
 | **Destination** | Yes | text | Vendor / location |
-| **Date** | Yes | `YYYY-MM-DD` | Deliberately ISO-only — no locale-guessing (`DD/MM` vs `MM/DD`) that could silently pick the wrong day |
-| **Category** | Yes | text | Must match an active category name in the organization |
+| **Date** | Yes | `DD-MM-YYYY` | India-standard, per explicit instruction — e.g. `24-08-2026`. Converted to ISO client-side before the RPC call (see below) |
+| **Category** | Yes | text, or pick from the dropdown in the roster file | Must match an active category name in the organization |
 | **Amount** | Yes | plain number `> 0` | No currency symbol, no thousands separator (`1250.50`, not `₹1,250.50`) |
 | **Purpose** | No | text | |
+
+**Why DD-MM-YYYY is converted to ISO before it ever reaches the RPC, not sent
+as-is:** PostgreSQL's date parsing depends on the server's `DateStyle`
+setting (default `ISO, MDY`) — a string like `05-08-2026` sent unconverted
+would be read as **May 8th**, not August 5th, for any day ≤ 12. The client
+(`parseDDMMYYYYToIso` in `bulkExpenseImportParse.ts`) parses and validates
+the DD-MM-YYYY text, round-trips it through a real `Date` object to catch
+non-existent dates (`31-02-2026` is rejected, not silently rolled over to
+March), and only ever sends the RPC an unambiguous `YYYY-MM-DD` string.
+**Proven, not assumed:** uploaded a file with `05-08-2026` through the real
+browser UI and confirmed the resulting database row's `trip_start` is
+`2026-08-05` — exactly right, not `2026-05-08`.
+
+### The pre-filled employee roster and its real Excel dropdown
+
+**Download employee roster (.xlsx)** (`generateBulkExpenseExcelTemplate` in
+`src/lib/generateBulkExpenseExcelTemplate.ts`) generates, entirely
+client-side, a workbook pre-filled with every employee already loaded for
+this page — one row per employee, Name / Employee ID / Email filled in,
+the six expense-detail columns left blank for the admin to type into.
+
+**Why `exceljs` was added as a new dependency.** The `xlsx` package already
+used elsewhere in this codebase can only *read* Excel data validation, not
+write it — confirmed by inspecting the installed 0.18.5 build directly: the
+only `dataValidation`-handling code is inside the XML *parser*, with no
+corresponding writer path. Writing a genuine dropdown is a paid-tier
+SheetJS feature. Asked the user directly rather than silently deciding: add
+`exceljs` (a well-established, MIT-licensed library built for exactly this)
+versus dropping the dropdown for a plain notes column. Chose `exceljs`.
+
+*Dependency note:* `npm audit` reports one new advisory from this addition
+— `exceljs → uuid`, moderate severity, "missing buffer bounds check when a
+custom buffer is provided to `uuid.v3/v5/v6`." `exceljs`'s own file-writing
+path only calls `uuid.v4()` with no custom buffer, so this specific
+advisory's trigger condition isn't reachable through how this feature uses
+the library. No non-major-downgrade fix exists yet. Every other
+high/critical entry `npm audit` reports (`react-router`, `vitest`, `jspdf`,
+`xlsx`, `vite`, `tar`, …) predates this change and is unrelated to it.
+
+**Why the category dropdown references a hidden sheet instead of an inline
+list:** Excel's inline `formula1` list is capped at roughly 255 characters
+— fine for a handful of categories, but not guaranteed for every
+organization. The generator writes a `veryHidden` `Categories` sheet (not
+just `hidden` — not reachable via Excel's normal "Unhide Sheet" dialog) and
+points the dropdown at that range instead.
+
+**Why this can never mix two organizations' employees.** The generator
+function takes `employees: OrganizationUserRow[]` and `categories: string[]`
+as plain arguments — it has no concept of "organization" and performs no
+query of its own. `AdminSubmitExpense.tsx` passes it the *exact same*
+`employees`/`categories` state already loaded via
+`fetchOrganizationUsers(organizationId)` for the single-employee tab's
+picker on this same page — one org-scoped source of truth, not a second
+query that could drift.
+
+**Proven, not assumed — directly on the live multi-tenant database, not
+inferred from code review:**
+- Downloaded the roster as the MicroLink admin via the real browser, then
+  unzipped the resulting file and read its raw XML directly: a genuine
+  `<dataValidation type="list">` element, `formula1` = `Categories!$A$1:$A$9`
+  (MicroLink's actual category count), covering every data row; the
+  `Categories` sheet's `state="veryHidden"` in `workbook.xml`.
+- Extracted every (Employee Name, Employee ID) pair from the downloaded
+  file and matched it against `profiles` on the live database: **413 of 413
+  pairs matched a MicroLink profile exactly; 0 matched any other
+  organization.** (An earlier, cruder check — employee_id alone, without the
+  name — found 2 coincidental matches in other orgs; `profiles.employee_id`
+  has no `UNIQUE` constraint, so the same short ID string can legitimately
+  belong to different people in different organizations. That was a
+  methodology artifact, not a real leak, and the name+ID pair check that
+  replaced it is the correct proof.)
+- Identifier coverage: 413 rows had both Employee ID and Email, 11 had Email
+  only (employees without an Employee ID) — 0 rows with neither.
 
 ### Not touched
 
@@ -334,6 +413,19 @@ modified.
 - **DOC-108**: no per-row supervisor/team preview before import — routing is
   computed at submit time by the same engine the single form uses, but the
   admin cannot see in advance which reviewer a given row will land on.
+- **DOC-108**: adds `exceljs` as a new dependency, specifically to write a
+  real Excel dropdown (the existing `xlsx` package can only read one — see
+  §4a). Introduces one new moderate-severity transitive advisory
+  (`exceljs → uuid`) whose trigger condition (`uuid.v3/v5/v6` with a custom
+  buffer) isn't reachable through how this feature calls the library — see
+  §4a for the full explanation. The user was asked directly and chose this
+  over dropping the dropdown.
+- **DOC-108**: `fetchOrganizationUsers` (reused, pre-existing, unmodified)
+  is not filtered by `organization_memberships.is_active`, so the roster can
+  include a small number of employees beyond the org's *active* membership
+  count — the same list the employee picker already showed before this
+  feature existed. Not a cross-org concern (proven in §4a); noted here only
+  because the raw counts don't match at a glance.
 
 ---
 
@@ -343,3 +435,4 @@ modified.
 |---|---|---|
 | 2026-08-24 | DOC-107 — admin submit-on-behalf-of-employee feature: migration, RPC (routing engine ported from approvalHierarchy.ts and proven against real data), page, nav entry; verified end-to-end in a real browser session against the backup instance; all test data cleaned up | Claude |
 | 2026-08-24 | DOC-108 — bulk CSV/Excel import added to the same page as a second tab; new RPC calls the DOC-107 RPC per row (zero changes to it); proven at 1,000 rows via direct SQL (989/11 split, 7.4s, zero orphaned data) and at 220 rows through the real browser UI (both CSV and .xlsx paths); confirmed the existing `AdminExpenseImportPanel`/`expenseImport.ts` is an unrelated JSON restore tool and left untouched; all test data and the throwaway admin cleaned up | Claude |
+| 2026-08-24 | DOC-108 follow-up — added a per-organization pre-filled roster download (.xlsx) with a real Excel dropdown on Category (new `exceljs` dependency, added after asking the user directly since the existing `xlsx` package can only read data validation, not write it); switched the Date column to DD-MM-YYYY per explicit instruction, converted client-side to ISO before the RPC call to avoid Postgres DateStyle ambiguity; proved on the live database that the roster contains zero cross-organization employee data (413/413 name+ID pairs matched MicroLink exactly) and that a day-≤12 date (05-08-2026) resolves correctly to 2026-08-05, not 2026-05-08; unzipped the generated file and confirmed the dropdown's `<dataValidation>` XML is genuinely present | Claude |

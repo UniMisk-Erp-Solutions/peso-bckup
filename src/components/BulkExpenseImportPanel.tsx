@@ -30,6 +30,8 @@ import {
   submitBulkExpensesForEmployees,
   type BulkExpenseRowResult,
 } from "@/lib/adminSubmitExpense";
+import { generateBulkExpenseExcelTemplate, downloadBlob } from "@/lib/generateBulkExpenseExcelTemplate";
+import type { OrganizationUserRow } from "@/lib/orgUsers";
 import { useOperationProgress } from "@/hooks/useOperationProgress";
 import { AsyncOperationProgress } from "@/components/AsyncOperationProgress";
 
@@ -37,14 +39,24 @@ const PREVIEW_LIMIT = 25;
 
 interface BulkExpenseImportPanelProps {
   organizationId: string | null;
+  /**
+   * Same employees/categories state AdminSubmitExpense.tsx already loaded
+   * for the single-employee tab's picker — passed down rather than
+   * re-fetched, so there is exactly one org-scoped source of truth on this
+   * page and no risk of this panel independently querying (and possibly
+   * mismatching) a different organization's data.
+   */
+  employees: OrganizationUserRow[];
+  categories: string[];
 }
 
-export function BulkExpenseImportPanel({ organizationId }: BulkExpenseImportPanelProps) {
+export function BulkExpenseImportPanel({ organizationId, employees, categories }: BulkExpenseImportPanelProps) {
   const { t } = useTranslation(["admin", "common"]);
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { progress, startOperation, updateOperation, completeOperation, failOperation, resetOperation } =
     useOperationProgress();
+  const [generatingTemplate, setGeneratingTemplate] = useState(false);
 
   const [fileName, setFileName] = useState<string | null>(null);
   const [rows, setRows] = useState<BulkExpenseRow[]>([]);
@@ -65,6 +77,24 @@ export function BulkExpenseImportPanel({ organizationId }: BulkExpenseImportPane
     setResults(null);
     resetOperation();
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleDownloadRoster = async () => {
+    if (employees.length === 0) return;
+    setGeneratingTemplate(true);
+    try {
+      const blob = await generateBulkExpenseExcelTemplate(employees, categories);
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadBlob(blob, `expense-import-roster_${stamp}.xlsx`);
+    } catch (err) {
+      toast({
+        title: t("submitForEmployee.bulk.errors.rosterFailed", { ns: "admin" }),
+        description: err instanceof Error ? err.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setGeneratingTemplate(false);
+    }
   };
 
   const handleFile = async (file: File) => {
@@ -183,6 +213,20 @@ export function BulkExpenseImportPanel({ organizationId }: BulkExpenseImportPane
               </a>
             </Button>
 
+            {/* DOC-108 — pre-filled with THIS organization's employees only
+                (employees prop, see the component-level comment) and a real
+                Excel dropdown on Category. */}
+            <Button
+              variant="outline"
+              onClick={() => void handleDownloadRoster()}
+              disabled={generatingTemplate || employees.length === 0}
+            >
+              {generatingTemplate
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <FileSpreadsheet className="mr-2 h-4 w-4" />}
+              {t("submitForEmployee.bulk.downloadRoster", { ns: "admin" })}
+            </Button>
+
             <input
               ref={fileInputRef}
               type="file"
@@ -252,7 +296,7 @@ export function BulkExpenseImportPanel({ organizationId }: BulkExpenseImportPane
                     {invalidRows.slice(0, PREVIEW_LIMIT).map((r) => (
                       <TableRow key={r.rowIndex}>
                         <TableCell className="tabular-nums">{r.rowIndex}</TableCell>
-                        <TableCell className="truncate max-w-[180px]">{r.employeeId || r.email || "—"}</TableCell>
+                        <TableCell className="truncate max-w-[180px]">{r.referenceName || r.employeeId || r.email || "—"}</TableCell>
                         <TableCell>
                           <span className="text-destructive text-sm">{r.issues.join("; ")}</span>
                         </TableCell>
@@ -331,7 +375,7 @@ export function BulkExpenseImportPanel({ organizationId }: BulkExpenseImportPane
                       .map((r) => (
                         <TableRow key={r.rowIndex}>
                           <TableCell className="tabular-nums">{r.rowIndex}</TableCell>
-                          <TableCell className="truncate max-w-[180px]">{r.employeeId || r.email || "—"}</TableCell>
+                          <TableCell className="truncate max-w-[180px]">{r.referenceName || r.employeeId || r.email || "—"}</TableCell>
                           <TableCell>
                             <span className="text-destructive text-sm">{resultsById.get(r.rowIndex)?.error}</span>
                           </TableCell>

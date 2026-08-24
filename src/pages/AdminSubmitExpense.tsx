@@ -408,7 +408,11 @@ export default function AdminSubmitExpense() {
         </TabsContent>
 
         <TabsContent value="bulk" className="mt-4">
-          <BulkExpenseImportPanel organizationId={organizationId} />
+          <BulkExpenseImportPanel
+            organizationId={organizationId}
+            employees={employees}
+            categories={categories}
+          />
         </TabsContent>
       </Tabs>
     </div>

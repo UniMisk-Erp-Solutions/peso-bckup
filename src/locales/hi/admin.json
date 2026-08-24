@@ -374,7 +374,8 @@
       "errors": {
         "unsupportedFile": "असमर्थित फ़ाइल प्रकार। .csv, .txt, .xlsx, या .xls उपयोग करें।",
         "parseFailed": "यह फ़ाइल पढ़ी नहीं जा सकी।",
-        "missingColumns": "आवश्यक कॉलम गायब हैं"
+        "missingColumns": "आवश्यक कॉलम गायब हैं",
+        "rosterFailed": "रोस्टर फ़ाइल नहीं बन सकी।"
       },
       "preview": {
         "title": "पूर्वावलोकन",
@@ -397,7 +398,8 @@
         "succeededBadge": "{{count}} सफल",
         "failedBadge": "{{count}} विफल"
       },
-      "importAnother": "एक और फ़ाइल आयात करें"
+      "importAnother": "एक और फ़ाइल आयात करें",
+      "downloadRoster": "कर्मचारी सूची डाउनलोड करें (.xlsx)"
     }
   }
 }
