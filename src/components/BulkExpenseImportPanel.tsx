@@ -30,8 +30,11 @@ import {
 import {
   submitBulkExpensesForEmployees,
   saveExpenseCustomFields,
+  applyAdminSubmitStatusChoice,
   type BulkExpenseRowResult,
+  type AdminSubmitStatusChoice,
 } from "@/lib/adminSubmitExpense";
+import { SubmitStatusChoiceDialog } from "@/components/SubmitStatusChoiceDialog";
 import { generateBulkExpenseExcelTemplate, downloadBlob } from "@/lib/generateBulkExpenseExcelTemplate";
 import type { OrganizationUserRow } from "@/lib/orgUsers";
 import { fetchOrganizationExpenseFieldConfig, type OrganizationExpenseFieldConfig } from "@/lib/orgExpenseFieldConfig";
@@ -76,6 +79,20 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
    *  the two-RPC-call risk documented in adminSubmitExpense.ts. */
   const [customFieldFailures, setCustomFieldFailures] = useState<Map<number, string>>(new Map());
   const [retryingCustomFields, setRetryingCustomFields] = useState(false);
+  /** row_index -> error, only for rows whose custom fields (if any) saved
+   *  fine but the chosen verify/approve transition itself failed — separate
+   *  from customFieldFailures since retrying this one only re-runs the
+   *  status step, never re-saves fields that already succeeded. */
+  const [statusTransitionFailures, setStatusTransitionFailures] = useState<Map<number, string>>(new Map());
+  const [retryingStatusTransitions, setRetryingStatusTransitions] = useState(false);
+
+  const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+  /** The batch-wide status choice, remembered for the duration of this
+   *  import so a retry (of either failure bucket above) knows which
+   *  transition to (re-)apply — one choice for the whole batch, not per row. */
+  const [importStatusChoice, setImportStatusChoice] = useState<{ status: AdminSubmitStatusChoice; comment: string }>({
+    status: "submitted", comment: "",
+  });
 
   const [fieldConfig, setFieldConfig] = useState<OrganizationExpenseFieldConfig | null>(null);
   const [loadingFieldConfig, setLoadingFieldConfig] = useState(true);
@@ -103,6 +120,8 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
     setMissingColumns([]);
     setResults(null);
     setCustomFieldFailures(new Map());
+    setStatusTransitionFailures(new Map());
+    setImportStatusChoice({ status: "submitted", comment: "" });
     resetOperation();
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -165,8 +184,17 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
     }
   };
 
-  const handleImport = async () => {
+  /** Opens the status-choice popup instead of importing directly — the admin
+   *  picks the batch-wide Submitted/Verified/Approved choice there, and
+   *  performImport() runs only after that confirmation. */
+  const handleImportClick = () => {
     if (!organizationId || validRows.length === 0) return;
+    setStatusDialogOpen(true);
+  };
+
+  const performImport = async (status: AdminSubmitStatusChoice, comment: string) => {
+    if (!organizationId || validRows.length === 0 || !user?.id) return;
+    setImportStatusChoice({ status, comment });
     setImporting(true);
     setResults(null);
     const total = validRows.length;
@@ -200,26 +228,30 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
         },
       );
       setResults(rowResults);
+      setStatusDialogOpen(false);
 
-      // Custom-field follow-up: a SEPARATE call per created expense, exactly
-      // mirroring ExpenseService.submitExpenseBatch's own create-then-replace
-      // pattern (see adminSubmitExpense.ts's saveExpenseCustomFields doc
-      // comment for why this is deliberately two calls, not one, and the
-      // known "created but incomplete" risk that follows from it).
-      const rowsNeedingCustomFields = validRows.filter((r) => {
+      // Post-creation pipeline: per successfully-created row, save custom
+      // fields (if any) then, ONLY if that step succeeded (or had nothing to
+      // save), apply the chosen status transition — see
+      // runPostCreationPipeline's own doc comment for why these two steps
+      // must never run out of order or concurrently against each other.
+      const createdRows = validRows.filter((r) => {
         const res = rowResults.find((x) => x.row_index === r.rowIndex);
-        return res?.ok && res.expense_id && r.customFieldPayload.length > 0;
+        return res?.ok && res.expense_id;
       });
-      const failures = await runCustomFieldSaves(rowsNeedingCustomFields, rowResults);
+      const { customFieldFailed, statusFailed } = await runPostCreationPipeline(
+        createdRows, rowResults, status, comment,
+      );
 
       const okCount = rowResults.filter((r) => r.ok).length;
       const failCount = rowResults.length - okCount;
-      if (failCount === 0 && failures.size === 0) {
+      const followUpFailures = customFieldFailed.size + statusFailed.size;
+      if (failCount === 0 && followUpFailures === 0) {
         completeOperation(t("submitForEmployee.bulk.progress.done", { ns: "admin" }));
       } else {
         failOperation(
           t("submitForEmployee.bulk.progress.done", { ns: "admin" }),
-          t("submitForEmployee.bulk.progress.partialFailure", { ns: "admin", ok: okCount, failed: failCount + failures.size }),
+          t("submitForEmployee.bulk.progress.partialFailure", { ns: "admin", ok: okCount, failed: failCount + followUpFailures }),
         );
       }
     } catch (err) {
@@ -232,38 +264,84 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
     }
   };
 
-  /** Runs the follow-up custom-field save for a set of already-created rows,
-   *  with bounded concurrency so a slow/failing row never blocks the rest.
-   *  Returns the row_index -> error map for any that failed (also merged
-   *  into customFieldFailures state). Shared by handleImport and the retry
-   *  button so a retry re-runs ONLY this step, never re-creating expenses. */
-  const runCustomFieldSaves = async (
-    rowsToSave: BulkExpenseRow[],
+  /**
+   * Runs the two-step per-row follow-up for a set of already-created rows,
+   * with bounded concurrency so a slow/failing row never blocks the rest.
+   * Step 1 (custom-field save) and step 2 (status transition) run INSIDE
+   * THE SAME per-row task, step 2 strictly gated on step 1's outcome — not
+   * two passes, not one concurrent wave. A row whose custom-field save
+   * fails never reaches its status transition (approving/verifying data
+   * known to be incomplete would still trigger the atomic balance
+   * deduction on "Approved" — see applyAdminSubmitStatusChoice).
+   *
+   * Shared by performImport and both retry buttons, so a retry re-runs only
+   * what's still outstanding for a row: a customFieldFailures retry re-runs
+   * both steps (nothing was saved yet); a statusTransitionFailures retry
+   * re-runs only step 2 (its custom fields already saved successfully).
+   */
+  const runPostCreationPipeline = async (
+    rowsToRun: BulkExpenseRow[],
     rowResults: BulkExpenseRowResult[],
-  ): Promise<Map<number, string>> => {
-    if (!organizationId || rowsToSave.length === 0) return new Map();
-    const tasks = rowsToSave.map((r) => async () => {
-      const res = rowResults.find((x) => x.row_index === r.rowIndex);
-      if (!res?.expense_id) return { rowIndex: r.rowIndex, ok: true as const };
-      try {
-        await saveExpenseCustomFields(organizationId, res.expense_id, r.customFieldPayload);
-        return { rowIndex: r.rowIndex, ok: true as const };
-      } catch (err) {
-        return { rowIndex: r.rowIndex, ok: false as const, error: err instanceof Error ? err.message : "Failed to save extra fields" };
-      }
-    });
-    const outcomes = await runWithConcurrencyLimit(tasks, MAX_CUSTOM_FIELD_CONCURRENCY);
-    const failed = new Map<number, string>();
-    for (const o of outcomes) {
-      if (o && !o.ok) failed.set(o.rowIndex, o.error);
+    status: AdminSubmitStatusChoice,
+    comment: string,
+    options?: { skipCustomFieldSave?: boolean },
+  ): Promise<{ customFieldFailed: Map<number, string>; statusFailed: Map<number, string> }> => {
+    const customFieldFailed = new Map<number, string>();
+    const statusFailed = new Map<number, string>();
+    if (!organizationId || !user?.id || rowsToRun.length === 0) {
+      return { customFieldFailed, statusFailed };
     }
+
+    const tasks = rowsToRun.map((r) => async () => {
+      const res = rowResults.find((x) => x.row_index === r.rowIndex);
+      if (!res?.expense_id) return { rowIndex: r.rowIndex };
+      const expenseId = res.expense_id;
+
+      if (!options?.skipCustomFieldSave && r.customFieldPayload.length > 0) {
+        try {
+          await saveExpenseCustomFields(organizationId, expenseId, r.customFieldPayload);
+        } catch (err) {
+          return {
+            rowIndex: r.rowIndex,
+            customFieldError: err instanceof Error ? err.message : "Failed to save extra fields",
+          };
+        }
+      }
+
+      if (status !== "submitted") {
+        try {
+          await applyAdminSubmitStatusChoice(status, expenseId, user.id, organizationId, comment);
+        } catch (err) {
+          return {
+            rowIndex: r.rowIndex,
+            statusError: err instanceof Error ? err.message : `Failed to set status to ${status}`,
+          };
+        }
+      }
+      return { rowIndex: r.rowIndex };
+    });
+
+    const outcomes = await runWithConcurrencyLimit(tasks, MAX_CUSTOM_FIELD_CONCURRENCY);
+    for (const o of outcomes) {
+      if (!o) continue;
+      if (o.customFieldError) customFieldFailed.set(o.rowIndex, o.customFieldError);
+      else if (o.statusError) statusFailed.set(o.rowIndex, o.statusError);
+    }
+
     setCustomFieldFailures((prev) => {
       const next = new Map(prev);
-      for (const r of rowsToSave) next.delete(r.rowIndex); // clear stale entries before applying fresh outcome
-      for (const [idx, err] of failed) next.set(idx, err);
+      for (const r of rowsToRun) next.delete(r.rowIndex);
+      for (const [idx, err] of customFieldFailed) next.set(idx, err);
       return next;
     });
-    return failed;
+    setStatusTransitionFailures((prev) => {
+      const next = new Map(prev);
+      for (const r of rowsToRun) if (!customFieldFailed.has(r.rowIndex)) next.delete(r.rowIndex);
+      for (const [idx, err] of statusFailed) next.set(idx, err);
+      return next;
+    });
+
+    return { customFieldFailed, statusFailed };
   };
 
   const handleRetryCustomFieldFailures = async () => {
@@ -271,18 +349,47 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
     setRetryingCustomFields(true);
     try {
       const rowsToRetry = rows.filter((r) => customFieldFailures.has(r.rowIndex));
-      const failed = await runCustomFieldSaves(rowsToRetry, results);
-      if (failed.size === 0) {
+      const { customFieldFailed, statusFailed } = await runPostCreationPipeline(
+        rowsToRetry, results, importStatusChoice.status, importStatusChoice.comment,
+      );
+      const stillFailing = customFieldFailed.size + statusFailed.size;
+      if (stillFailing === 0) {
         toast({ title: t("submitForEmployee.bulk.results.title", { ns: "admin" }), description: "Extra fields saved for all retried rows." });
       } else {
         toast({
           title: t("submitForEmployee.errors.title", { ns: "admin" }),
-          description: `${failed.size} row(s) still failed to save extra fields.`,
+          description: `${stillFailing} row(s) still failed.`,
           variant: "destructive",
         });
       }
     } finally {
       setRetryingCustomFields(false);
+    }
+  };
+
+  const handleRetryStatusTransitionFailures = async () => {
+    if (!results || statusTransitionFailures.size === 0) return;
+    setRetryingStatusTransitions(true);
+    try {
+      const rowsToRetry = rows.filter((r) => statusTransitionFailures.has(r.rowIndex));
+      // These rows' custom fields already saved successfully — re-running
+      // that step would be redundant (and, for a row with none, a no-op);
+      // skip it and re-run only the status transition.
+      const { statusFailed } = await runPostCreationPipeline(
+        rowsToRetry, results, importStatusChoice.status, importStatusChoice.comment,
+        { skipCustomFieldSave: true },
+      );
+      if (statusFailed.size === 0) {
+        toast({ title: t("submitForEmployee.bulk.results.title", { ns: "admin" }), description: "Status applied for all retried rows." });
+      } else {
+        toast({
+          title: t("submitForEmployee.errors.title", { ns: "admin" }),
+          description: `${statusFailed.size} row(s) still failed to change status.`,
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setRetryingStatusTransitions(false);
     }
   };
 
@@ -412,7 +519,7 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
             )}
 
             <div className="flex items-center gap-3">
-              <Button onClick={() => void handleImport()} disabled={validRows.length === 0 || importing}>
+              <Button onClick={handleImportClick} disabled={validRows.length === 0 || importing}>
                 {importing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
                 {t("submitForEmployee.bulk.importButton", { ns: "admin", count: validRows.length })}
               </Button>
@@ -520,16 +627,56 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
               </div>
             )}
 
+            {statusTransitionFailures.size > 0 && (
+              <div className="space-y-2">
+                <div className="rounded-md border border-destructive/50 overflow-x-auto max-h-72 overflow-y-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-16">{t("submitForEmployee.bulk.preview.row", { ns: "admin" })}</TableHead>
+                        <TableHead>{t("submitForEmployee.bulk.preview.employee", { ns: "admin" })}</TableHead>
+                        <TableHead>Status change error</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {rows
+                        .filter((r) => statusTransitionFailures.has(r.rowIndex))
+                        .map((r) => (
+                          <TableRow key={r.rowIndex}>
+                            <TableCell className="tabular-nums">{r.rowIndex}</TableCell>
+                            <TableCell className="truncate max-w-[180px]">{r.referenceName || r.employeeId || r.email || "—"}</TableCell>
+                            <TableCell>
+                              <span className="text-destructive text-sm">
+                                Expense created (extra fields saved fine), but could not be set to {importStatusChoice.status}: {statusTransitionFailures.get(r.rowIndex)}
+                              </span>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <Button variant="outline" onClick={() => void handleRetryStatusTransitionFailures()} disabled={retryingStatusTransitions}>
+                  {retryingStatusTransitions ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                  Retry setting {statusTransitionFailures.size} row(s) to {importStatusChoice.status}
+                </Button>
+              </div>
+            )}
+
             <div className="flex items-center gap-2">
               <Badge variant="secondary">
                 {t("submitForEmployee.bulk.results.succeededBadge", {
                   ns: "admin",
-                  count: results.filter((r) => r.ok).length - customFieldFailures.size,
+                  count: results.filter((r) => r.ok).length - customFieldFailures.size - statusTransitionFailures.size,
                 })}
               </Badge>
               {customFieldFailures.size > 0 && (
                 <Badge variant="destructive">
                   Extra fields failed: {customFieldFailures.size}
+                </Badge>
+              )}
+              {statusTransitionFailures.size > 0 && (
+                <Badge variant="destructive">
+                  Status change failed: {statusTransitionFailures.size}
                 </Badge>
               )}
               {results.some((r) => !r.ok) && (
@@ -542,17 +689,25 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
               )}
             </div>
 
-            <Button variant="outline" onClick={resetAll} disabled={customFieldFailures.size > 0}>
+            <Button variant="outline" onClick={resetAll} disabled={customFieldFailures.size > 0 || statusTransitionFailures.size > 0}>
               {t("submitForEmployee.bulk.importAnother", { ns: "admin" })}
             </Button>
-            {customFieldFailures.size > 0 && (
+            {(customFieldFailures.size > 0 || statusTransitionFailures.size > 0) && (
               <p className="text-xs text-muted-foreground">
-                Resolve the extra-fields failures above before starting another import.
+                Resolve the failures above before starting another import.
               </p>
             )}
           </CardContent>
         </Card>
       )}
+
+      <SubmitStatusChoiceDialog
+        open={statusDialogOpen}
+        onOpenChange={setStatusDialogOpen}
+        subjectLabel={`these ${validRows.length} expense${validRows.length === 1 ? "" : "s"}`}
+        confirming={importing}
+        onConfirm={(status, comment) => void performImport(status, comment)}
+      />
     </div>
   );
 }

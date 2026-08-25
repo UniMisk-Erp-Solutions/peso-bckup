@@ -7,6 +7,7 @@
  */
 import { supabase } from "@/integrations/supabase/client";
 import type { ExpenseCustomFieldValuePayload } from "@/lib/expenseFormFieldPayload";
+import { ExpenseService } from "@/services/ExpenseService";
 
 /**
  * `src/integrations/supabase/types.ts` predates this RPC, so the typed client
@@ -84,6 +85,63 @@ export async function saveExpenseCustomFields(
     p_values: values,
   });
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Status the admin chooses at submit time — "submitted" is today's only
+ * behavior; "verified"/"approved" reuse the exact same RPCs/methods the
+ * reviewer queue already uses for an org-admin to bypass the hierarchy, not
+ * new status-transition logic.
+ */
+export type AdminSubmitStatusChoice = "submitted" | "verified" | "approved";
+
+const SELF_APPROVAL_MARKER = "[Admin self-approved own submission-on-behalf-of]";
+
+/**
+ * The admin choosing this page's status is always the same admin who just
+ * created the expense (created_by_admin_id) — this marker makes that fact
+ * greppable in audit_logs.comment / visible in the History detail drawer,
+ * rather than indistinguishable from an ordinary reviewer approval.
+ */
+function buildStatusTransitionComment(userComment: string | null | undefined): string {
+  const trimmed = (userComment ?? "").trim();
+  return trimmed ? `${SELF_APPROVAL_MARKER} ${trimmed}` : SELF_APPROVAL_MARKER;
+}
+
+/**
+ * Applies the admin's chosen status to an already-created expense.
+ *
+ * MUST be called only after any custom-field save for this expense has
+ * already succeeded (or had nothing to save) — never before, never
+ * concurrently. Calling this on a row whose required custom fields are
+ * still missing would let "Approved" trigger the atomic balance deduction
+ * (review_approve_expense_v2) on data known to be incomplete. Callers own
+ * this sequencing; this function does not check custom-field state itself.
+ *
+ * "verified" -> ExpenseService.adminVerifyExpense: org-admin bypass of the
+ * reviewer hierarchy, status submitted/edited -> verified, no balance
+ * movement. "approved" -> ExpenseService.approveExpense: the SAME method
+ * the reviewer-queue Approve button calls; its admin branch auto-verifies
+ * from submitted/edited server-side inside the same transaction as the
+ * atomic profiles.balance deduction (expense_balance_deductions,
+ * UNIQUE(expense_id) — structurally prevents double-deduction). Both are
+ * existing, already-audited, already-production-proven code paths — this
+ * function is pure composition, zero new business logic.
+ */
+export async function applyAdminSubmitStatusChoice(
+  status: AdminSubmitStatusChoice,
+  expenseId: string,
+  adminUserId: string,
+  organizationId: string,
+  userComment?: string | null,
+): Promise<void> {
+  if (status === "submitted") return;
+  const comment = buildStatusTransitionComment(userComment);
+  if (status === "verified") {
+    await ExpenseService.adminVerifyExpense(expenseId, adminUserId, organizationId, comment);
+  } else {
+    await ExpenseService.approveExpense(expenseId, adminUserId, comment);
+  }
 }
 
 /** One CSV/Excel row, already parsed and validated client-side. */

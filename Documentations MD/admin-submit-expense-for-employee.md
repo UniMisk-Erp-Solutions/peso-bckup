@@ -1,6 +1,6 @@
 # Admin submits an expense on behalf of an employee
 
-**Doc ID:** DOC-107 / DOC-108 / DOC-109
+**Doc ID:** DOC-107 / DOC-108 / DOC-109 / DOC-110
 **Status:** deployed (backup instance) — not applied to Production
 **Last updated:** 2026-08-25
 **Owner / area:** Expenses, Admin Panel, Supabase
@@ -162,6 +162,23 @@ SQL manually, after the migration above.**
   then per-row employee resolution and a per-row call into
   `admin_submit_expense_for_employee_v1`, isolated by `BEGIN/EXCEPTION`.
   Rejects a call with more than 250 rows outright.
+
+`290825_1000_org_scoped_audit_logs_select.sql` (DOC-110) — **applied directly
+to the backup instance, verified before/after.** `DROP`/`CREATE` on
+`audit_logs`' existing SELECT policy; owner/assigned-engineer branches
+reproduced unchanged, admin branch now org-scoped via
+`organization_memberships` instead of a global `has_role()` check. No new
+tables, no new RPCs. Defense in depth — see §4c for why this was confirmed
+non-exploitable live even before the fix.
+
+`290825_1100_admin_receipts_storage_insert.sql` (DOC-110) — **applied
+directly to the backup instance, verified before/after.** `DROP`/`CREATE` on
+`storage.objects`' `receipts_insert_policy`; temp-upload and owner-upload
+branches reproduced unchanged, adds a third org-admin `OR` branch mirroring
+the `attachments` table's existing admin-bypass policy. This one is a real
+fix, not defense-in-depth — the optional attachment feature did not work at
+all before it (reproduced the exact RLS failure live, then confirmed it
+resolved after applying).
 
 ---
 
@@ -591,6 +608,197 @@ Reused as-is, unmodified: `src/lib/expenseFormConfig.ts`,
 
 ---
 
+## 4c) Optional receipt upload, status-choice popup, and submission history (DOC-110)
+
+### What was added
+
+1. **Optional receipt/photo upload**, single-employee tab only. After a successful
+   submission, a skippable "optionally attach a receipt" panel renders the existing
+   `FileUpload` component (`src/components/FileUpload.tsx`, unmodified) targeting the
+   real `expense_id` just created. No temp-upload/finalize plumbing needed — unlike
+   the employee's own form (which renders `FileUpload` with `expenseId="new"` before
+   the expense exists), the admin flow always has a real UUID by the time this panel
+   renders, so `FileUpload` takes its "insert `attachments` immediately" branch.
+   Deliberately does **not** route through `ExpenseService.submitExpense`, which
+   would incorrectly reintroduce the amount-based attachment requirement that only
+   applies to self-submission — this page has never had that gate, by design.
+2. **A status-choice popup on submit** (both tabs): instead of always landing on
+   `submitted`, the admin picks **Submitted** / **Verified** / **Approved** in a
+   dialog (`src/components/SubmitStatusChoiceDialog.tsx`) shown when they click
+   Submit/Import. Reuses existing, already-audited methods —
+   `ExpenseService.adminVerifyExpense` (was `private`, now exported — body
+   unchanged) and `ExpenseService.approveExpense` (already public, the exact method
+   the reviewer-queue Approve button calls) — composed client-side via
+   `applyAdminSubmitStatusChoice` (`src/lib/adminSubmitExpense.ts`). **Zero new
+   status-transition logic and zero new RPCs** for this part; see the sequencing
+   and segregation-of-duties notes below for what *is* new.
+3. **A "History" tab** on the same page (`src/components/AdminExpenseHistoryTab.tsx`):
+   every expense with `created_by_admin_id IS NOT NULL` in this org, paginated,
+   showing employee name, admin name, created date+time as **DD-MM-YYYY · h:mm a**,
+   title, category, amount, status. Row click opens a detail drawer with the full
+   `audit_logs` trail for that expense, reusing the exact same UUID-safety path
+   `ExpenseDetail.tsx` already relies on (`enrichAuditLogsWithDisplay` +
+   `ExpenseTimeline`) rather than a new component.
+
+### Two real RLS gaps found and fixed during this work (not pre-planned)
+
+Both were found because the new features are the first things in this codebase to
+actually exercise the affected code path from an *admin acting on someone else's
+expense* — neither was a known, tracked issue beforehand.
+
+1. **`audit_logs` SELECT — cross-org read gap, confirmed pre-existing but
+   currently non-exploitable live.** The tracked migration
+   (`20251005171552_...sql`) grants admin visibility via a global
+   `has_role(auth.uid(), 'admin')` check with no organization boundary at all.
+   `expenses` got an equivalent org-scoped fix
+   (`20260513150000_org_admin_expense_select_rls.sql`); `audit_logs` never did.
+   **Tested directly against the live database before assuming this was
+   exploitable**: because `audit_logs`' policy's own `EXISTS` subquery joins
+   through `public.expenses`, and the LIVE `expenses` admin SELECT policy
+   (`"Admins can view all expenses"`) has *already* been independently
+   hotfixed to be org-scoped — not reflected in any tracked migration file,
+   consistent with this codebase's established pattern of untracked live
+   hotfixes — cross-org `audit_logs` reads are transitively blocked *today*,
+   confirmed empirically (0 rows visible cross-org, 49,983 visible same-org,
+   both before and after this fix). Applied anyway as **defense in depth**:
+   migration `290825_1000_org_scoped_audit_logs_select.sql` makes
+   `audit_logs`' own policy text explicitly org-scoped rather than relying on
+   an implicit, fragile dependency on a *different* table's policy staying
+   correct forever. Owner/assigned-engineer branches reproduced unchanged.
+   Verified no regression: same-org visibility unchanged (49,983 rows before
+   and after), cross-org still correctly 0.
+2. **`storage.objects` (the `receipts` bucket) INSERT — a real, live blocker
+   for the attachment feature itself, not defense-in-depth.** The
+   `attachments` *table* already has an org-admin INSERT bypass policy
+   ("Admins can insert attachments in their org for restore"), but the
+   *storage bucket's own* `receipts_insert_policy` never got the equivalent
+   branch — its non-temp path requires `e.user_id = auth.uid()`, i.e. the
+   uploader must be the expense's owner. Since `FileUpload.tsx` uploads to
+   storage **before** inserting the `attachments` row, an admin's upload
+   failed at the storage layer with "new row violates row-level security
+   policy" — caught live while testing this exact feature, not found by
+   inspection. Fixed by migration
+   `290825_1100_admin_receipts_storage_insert.sql`, adding a third org-admin
+   `OR` branch mirroring the `attachments` table's existing pattern exactly;
+   temp-upload and owner-upload branches reproduced unchanged. **Proven,
+   not assumed**: reproduced the failure live (screenshot + exact Postgres
+   error text), applied the fix, re-tested the same upload — succeeded, and
+   confirmed `attachments.uploaded_by` correctly recorded the *admin's* uid,
+   not the employee's.
+
+### Sequencing (the review's #1 flagged risk): status transition must never race ahead of the custom-field save
+
+A row's chosen status transition runs **strictly after** its DOC-109 custom-field
+save resolves successfully (or had nothing to save) — never concurrently, never
+before. A row whose custom-field save fails must never be verified/approved,
+because approving incomplete data would still trigger the atomic balance
+deduction (`review_approve_expense_v2`).
+
+- **Single-employee tab**: `pendingCustomFieldRetry` (existing DOC-109 state)
+  now also carries `desiredStatus`/`statusComment`. If the custom-field save
+  fails, the status transition is skipped entirely for that submission; the
+  "Retry saving extra fields" button, on success, *then* applies the
+  remembered status choice as a follow-up. A separate
+  `lastStatusTransitionFailure` state (distinct from the custom-field one)
+  covers the narrower case where custom fields saved fine but the status
+  transition itself failed — its own retry re-runs only that step.
+- **Bulk-import tab**: `runPostCreationPipeline`'s per-row task runs both
+  steps **inside the same task**, step 2 strictly gated on step 1's outcome —
+  not two passes over the rows, not one concurrent wave mixing both. A row
+  failing custom-field save lands in the existing `customFieldFailures`
+  bucket with nothing else attempted; a row whose fields saved but status
+  transition failed lands in a new `statusTransitionFailures` bucket, whose
+  retry explicitly skips re-saving fields that already succeeded
+  (`skipCustomFieldSave: true`).
+- **Verified live**: reproducing a genuine *server-side* custom-field-save
+  failure (as opposed to the client-side required-field check, which
+  correctly blocks the status popup from ever opening — verified live,
+  screenshot + exact toast text) needs a network-level fault or a
+  concurrently-modified template, neither of which is safely reproducible
+  against a shared live instance without real risk. That specific gate was
+  verified by tracing the exact control flow in both `performSubmit` and
+  `runPostCreationPipeline` (status transition is syntactically inside the
+  "custom-field save succeeded" branch in both) rather than by forcing a live
+  failure — stated plainly rather than overclaimed.
+
+### Segregation of duties (Approved specifically)
+
+The same admin who creates the expense on an employee's behalf can, in the same
+popup, also approve it — no independent human review happens at any point. Two
+cheap, zero-schema-change mitigations, adopted directly from the design review:
+
+- A non-empty comment is **required** specifically when "Approved" is chosen
+  (optional for Verified/Submitted) — comment is already a first-class
+  parameter on both reused methods.
+- The comment sent to `adminVerifyExpense`/`approveExpense` is always
+  prefixed with `"[Admin self-approved own submission-on-behalf-of]"` — the
+  admin choosing the status here is always the same admin recorded in
+  `created_by_admin_id`. Zero schema change; makes the exact scenario
+  greppable in `audit_logs.comment` / visible in the new History detail
+  drawer, rather than indistinguishable from an ordinary reviewer approval.
+  **Confirmed live** in `expenses.admin_comment` for every Verified/Approved
+  test row.
+
+Whether to further *restrict* which admins may choose "Approved" (vs. only
+"Verified") is a genuine policy decision, not a code-safety one — left open
+per the user's explicit, repeated request for this exact capability; noted
+here for whoever owns that policy call later.
+
+### Verified — real browser against the live backup DB (MicroLink), all test data and the throwaway admin cleaned up afterward
+
+- **Approved — the money-movement invariant, the single most important test
+  in this whole feature**: submitted an expense for ₹555 with "Approved"
+  chosen. Confirmed `expenses.status = 'approved'`, `approved_at` set,
+  `admin_comment` carries the self-approval marker + the typed reason;
+  `expense_balance_deductions` has exactly one row
+  (`balance_before = -6128.00`, `expense_amount = 555.00`,
+  `balance_after = -6683.00`); `profiles.balance` for the employee matches
+  `balance_after` exactly. Cleaned up and balance restored afterward.
+- **Verified**: confirmed `status = 'verified'`, self-approval marker present,
+  no balance movement (no `expense_balance_deductions` row).
+- **Client-side required-field gate**: left "Project Unique ID" (required on
+  every MicroLink category) blank, clicked Submit — the status popup never
+  opened; the exact "Project Unique ID is required" validation error showed
+  instead. Confirms the popup is unreachable with invalid form data, the
+  first line of defense for the sequencing invariant above.
+- **Bulk, "Verified" chosen for the whole batch**: two rows, both with
+  distinct custom-field values (different Project ID/Project Name pairs for
+  the same "Project Unique ID"). Confirmed both landed on
+  `status = 'verified'` with the self-approval marker, *and* both rows'
+  custom-field values were saved correctly and independently — the two-step
+  per-row pipeline runs correctly for a real multi-row batch, not just a
+  single row.
+- **Attachment**: uploaded a receipt via the optional panel; confirmed
+  `attachments.uploaded_by` is the *admin's* uid (not the employee's),
+  `storage_path` rooted at the expense's UUID folder (the direct-insert
+  path, not the temp path).
+- **History tab**: confirmed new admin-submitted rows appear with real
+  employee/admin names (not raw UUIDs) in DD-MM-YYYY · h:mm a format; opened
+  the detail drawer, confirmed the audit timeline renders via the reused
+  `ExpenseTimeline` component.
+
+### Key files (new/changed for DOC-110)
+
+| File | Purpose |
+|---|---|
+| `src/components/SubmitStatusChoiceDialog.tsx` | Shared status-choice popup, used by both tabs |
+| `src/components/AdminExpenseHistoryTab.tsx` | History tab: paginated list + audit-trail detail drawer |
+| `src/lib/adminSubmitExpense.ts` | `applyAdminSubmitStatusChoice` — composes the two reused `ExpenseService` methods, builds the self-approval-marker comment |
+| `src/services/ExpenseService.ts` | `adminVerifyExpense` exported (was `private`) — body unchanged |
+| `src/pages/AdminSubmitExpense.tsx` | Status dialog wiring, sequencing fix on `pendingCustomFieldRetry`, optional attachment panel, History tab entry |
+| `src/components/BulkExpenseImportPanel.tsx` | `runPostCreationPipeline` (two-step per-row gate), `statusTransitionFailures` bucket + retry |
+| `supabase/migrations/290825_1000_org_scoped_audit_logs_select.sql` | `audit_logs` SELECT admin-branch org-scoping (defense in depth) |
+| `supabase/migrations/290825_1100_admin_receipts_storage_insert.sql` | `receipts` bucket admin-upload branch (real fix — the feature did not work without it) |
+
+Reused as-is, unmodified: `src/components/FileUpload.tsx`,
+`src/components/ExpenseTimeline.tsx`, `src/lib/auditLogDisplay.ts`,
+`src/lib/supabaseInQuery.ts` (`fetchProfileNamesByUserIds`),
+`src/lib/expenseCustomFieldFilters.ts` (`runWithConcurrencyLimit`,
+`MAX_CUSTOM_FIELD_CONCURRENCY`), `src/lib/approvalHierarchy.ts`
+(`isAdminApprovableStatus`).
+
+---
+
 ## 7) Known gaps
 
 - **Not applied to Production.** Backup instance only, per explicit
@@ -651,6 +859,29 @@ Reused as-is, unmodified: `src/lib/expenseFormConfig.ts`,
   batch-wizard's "ask once" UX convenience doesn't carry over. Confirmed 11
   live assignments use this flag (mostly MicroLink's "Project Unique ID")
   and verified this doesn't change validation or storage semantics.
+- **DOC-110**: creation and the status transition are two separate RPC
+  calls, not one transaction — the creation RPC fires reviewer notifications
+  in the same transaction as creation, before the follow-up
+  verify/approve call ever runs. If that call fails, a chosen "Verified"/
+  "Approved" status can remain un-applied on an already-notified expense
+  (it stays at `submitted`, not silently wrong-but-terminal) — explicitly
+  designed around with the `lastStatusTransitionFailure`/
+  `statusTransitionFailures` retry states described in §4c, not hidden.
+- **DOC-110**: whether to restrict which admins may choose "Approved" (vs.
+  only "Verified", forcing a second person to approve) is an open policy
+  question, not a code-safety one — see §4c's segregation-of-duties note.
+  Currently any org admin who can reach this page can create-and-approve in
+  one action, per the user's explicit request for this exact capability.
+- **DOC-110**: a genuine server-side custom-field-save failure (as distinct
+  from the client-side required-field check, which is verified live) was
+  not reproduced live against the shared backup instance — verified by
+  tracing the control flow instead. See §4c's sequencing section for the
+  exact reasoning; flagged here so this isn't mistaken for a live-proven
+  case elsewhere in this document.
+- **DOC-110**: no audit_logs entry is written for an attachment upload
+  (true for both this admin flow and the employee's own upload — pre-
+  existing, not a regression introduced here). The History tab's detail
+  drawer will not show a "receipt attached" line in its timeline.
 
 ---
 
@@ -662,3 +893,4 @@ Reused as-is, unmodified: `src/lib/expenseFormConfig.ts`,
 | 2026-08-24 | DOC-108 — bulk CSV/Excel import added to the same page as a second tab; new RPC calls the DOC-107 RPC per row (zero changes to it); proven at 1,000 rows via direct SQL (989/11 split, 7.4s, zero orphaned data) and at 220 rows through the real browser UI (both CSV and .xlsx paths); confirmed the existing `AdminExpenseImportPanel`/`expenseImport.ts` is an unrelated JSON restore tool and left untouched; all test data and the throwaway admin cleaned up | Claude |
 | 2026-08-24 | DOC-108 follow-up — added a per-organization pre-filled roster download (.xlsx) with a real Excel dropdown on Category (new `exceljs` dependency, added after asking the user directly since the existing `xlsx` package can only read data validation, not write it); switched the Date column to DD-MM-YYYY per explicit instruction, converted client-side to ISO before the RPC call to avoid Postgres DateStyle ambiguity; proved on the live database that the roster contains zero cross-organization employee data (413/413 name+ID pairs matched MicroLink exactly) and that a day-≤12 date (05-08-2026) resolves correctly to 2026-08-05, not 2026-05-08; unzipped the generated file and confirmed the dropdown's `<dataValidation>` XML is genuinely present | Claude |
 | 2026-08-25 | DOC-109 — org-accurate custom expense fields on both tabs: base-field label/visibility/required/dropdown overrides, category-assigned custom fields (all 6 types), and conditional branch fields, reusing the employee self-submit form's own components/RPCs rather than reimplementing them (see §4b); zero new SQL migrations. Found and fixed three real bugs during live verification: an i18n namespace mismatch leaking raw translation keys, missing annotation-stripping on base-field header matching, and a naive paren-stripping regex that broke on category names (e.g. MicroLink's "Travelling (Public and Private Transport)") that are themselves parenthesized. Proved end-to-end against MicroLink's live data: exact single-form + DB parity for a dependent-dropdown chain (Project Unique ID → Project ID/Project Name), a bulk-import row correctly rejected for a branch value from the wrong parent option, a stale wrong-category value correctly and silently dropped, safe pagination proven to recover exactly 1,008/1,008 branch rows (avoiding the DOC-097 1,000-row silent-truncation bug), and a zero-config org (Bikes auto Hero) confirmed completely unaffected. All test data and both throwaway admin accounts cleaned up | Claude |
+| 2026-08-25 | DOC-110 — optional receipt upload (single tab, reuses `FileUpload` unmodified, no new RLS needed for the `attachments` table), a status-choice popup on submit (Submitted/Verified/Approved, both tabs) composing two existing `ExpenseService` methods with zero new status-transition logic, and a History tab (paginated admin-submitted-expense list + full audit-trail detail drawer, reusing `ExpenseTimeline`/`enrichAuditLogsWithDisplay`). Found and fixed two real RLS gaps: `audit_logs` SELECT's admin branch was globally unscoped (defense-in-depth fix, confirmed non-exploitable live today because `expenses`' own admin policy was already independently hotfixed to be org-scoped) and the `receipts` storage bucket's INSERT policy had no admin-bypass branch at all — a genuine live blocker for the attachment feature, reproduced with the exact Postgres RLS error before fixing it. Proved the money-movement invariant end-to-end: an "Approved" choice produced the exact atomic balance deduction (`expense_balance_deductions` row + `profiles.balance` matching to the rupee) DOC-089 exists to guarantee; proved the sequencing gate that blocks a required-field-incomplete row from reaching approval (client-side path verified live, server-side path verified by tracing the code, documented honestly as such); proved bulk status choice applies correctly across a real multi-row batch alongside DOC-109's custom-field pipeline. All test data, balance changes, and the throwaway admin cleaned up | Claude |

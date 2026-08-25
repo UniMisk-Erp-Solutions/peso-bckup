@@ -25,7 +25,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchOrganizationUsers, type OrganizationUserRow } from "@/lib/orgUsers";
 import { userMatchesManagementSearch } from "@/lib/approvalHierarchy";
-import { submitExpenseForEmployee, saveExpenseCustomFields } from "@/lib/adminSubmitExpense";
+import {
+  submitExpenseForEmployee, saveExpenseCustomFields, applyAdminSubmitStatusChoice,
+  type AdminSubmitStatusChoice,
+} from "@/lib/adminSubmitExpense";
+import { SubmitStatusChoiceDialog } from "@/components/SubmitStatusChoiceDialog";
+import { FileUpload } from "@/components/FileUpload";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -40,6 +45,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { BulkExpenseImportPanel } from "@/components/BulkExpenseImportPanel";
+import { AdminExpenseHistoryTab } from "@/components/AdminExpenseHistoryTab";
 import { CategoryFormFieldsSection } from "@/components/CategoryFormFieldsSection";
 import { BaseExpenseFieldInput } from "@/components/BaseExpenseFieldInput";
 import {
@@ -96,13 +102,37 @@ export default function AdminSubmitExpense() {
   const [branchValues, setBranchValues] = useState<Record<string, string>>({});
   /** Set only when an expense was created but its custom-field save failed —
    *  retry must re-run ONLY the custom-field save, never re-submit the base
-   *  expense (that would create a duplicate). */
+   *  expense (that would create a duplicate). desiredStatus/statusComment are
+   *  remembered here so a successful retry can THEN apply the originally
+   *  chosen status transition — verify/approve must never run ahead of a
+   *  successful custom-field save (see applyAdminSubmitStatusChoice's doc
+   *  comment: approving incomplete data would still trigger the atomic
+   *  balance deduction). */
   const [pendingCustomFieldRetry, setPendingCustomFieldRetry] = useState<{
     expenseId: string;
     values: ExpenseCustomFieldValuePayload[];
     employeeName: string;
+    desiredStatus: AdminSubmitStatusChoice;
+    statusComment: string;
   } | null>(null);
   const [retryingCustomFields, setRetryingCustomFields] = useState(false);
+
+  const [statusDialogOpen, setStatusDialogOpen] = useState(false);
+  const [confirmingStatusChoice, setConfirmingStatusChoice] = useState(false);
+  /** Set only when the expense (and its custom fields, if any) were saved
+   *  fine, but the chosen verify/approve transition itself failed —
+   *  distinct from pendingCustomFieldRetry since the expense is otherwise
+   *  complete here; retry re-runs only the status transition. */
+  const [lastStatusTransitionFailure, setLastStatusTransitionFailure] = useState<{
+    expenseId: string;
+    employeeName: string;
+    desiredStatus: AdminSubmitStatusChoice;
+    statusComment: string;
+  } | null>(null);
+  const [retryingStatusTransition, setRetryingStatusTransition] = useState(false);
+  /** Set after a fully successful submit — drives the optional, skippable
+   *  "attach a receipt" panel. Cleared on the next submit or dismiss. */
+  const [lastCreatedExpense, setLastCreatedExpense] = useState<{ expenseId: string; employeeName: string } | null>(null);
 
   const baseFieldCustomizationEnabled =
     organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.allow_base_field_input_customization] === true;
@@ -290,13 +320,19 @@ export default function AdminSubmitExpense() {
     Boolean(organizationId) &&
     Boolean(selectedEmployee) &&
     !pendingCustomFieldRetry &&
+    !lastStatusTransitionFailure &&
     (!titleField.is_visible || !titleField.is_required || form.title.trim() !== "") &&
     (!destinationField.is_visible || !destinationField.is_required || form.destination.trim() !== "") &&
     (!catField.is_visible || !catField.is_required || form.category.trim() !== "") &&
     (!amountField.is_visible || !amountField.is_required || Number(form.amount) > 0) &&
     !submitting;
 
-  const handleSubmit = async () => {
+  /**
+   * Validates the form, and if valid, opens the status-choice popup instead
+   * of submitting directly — the admin picks Submitted/Verified/Approved
+   * there, and performSubmit() runs only after that confirmation.
+   */
+  const handleSubmitClick = () => {
     if (!organizationId || !selectedEmployee) return;
     const amount = Number(form.amount) || 0;
     if (amountField.is_visible && amountField.is_required && !(amount > 0)) {
@@ -367,6 +403,20 @@ export default function AdminSubmitExpense() {
       }
     }
 
+    setStatusDialogOpen(true);
+  };
+
+  /**
+   * Runs only after the status-choice popup is confirmed. Sequencing is the
+   * critical part: create -> save custom fields -> ONLY IF that step
+   * succeeded (or had nothing to save) -> apply the chosen status
+   * transition. A row whose custom-field save fails must never be
+   * verified/approved — see applyAdminSubmitStatusChoice's doc comment.
+   */
+  const performSubmit = async (status: AdminSubmitStatusChoice, comment: string) => {
+    if (!organizationId || !selectedEmployee || !user?.id) return;
+    const amount = Number(form.amount) || 0;
+    setConfirmingStatusChoice(true);
     setSubmitting(true);
     try {
       const dateStr = format(date, "yyyy-MM-dd");
@@ -397,18 +447,42 @@ export default function AdminSubmitExpense() {
           await saveExpenseCustomFields(organizationId, result.expense_id, customFieldValues);
         } catch (fieldErr) {
           // Expense already exists (submitted, reviewer notified) — do NOT
-          // resubmit on retry, only re-run the custom-field save.
-          setPendingCustomFieldRetry({ expenseId: result.expense_id, values: customFieldValues, employeeName });
+          // resubmit on retry, only re-run the custom-field save. The status
+          // choice is remembered and applied ONLY after a successful retry.
+          setPendingCustomFieldRetry({
+            expenseId: result.expense_id, values: customFieldValues, employeeName,
+            desiredStatus: status, statusComment: comment,
+          });
           toast({
             title: t("submitForEmployee.errors.title", { ns: "admin" }),
             description: `Expense created for ${employeeName}, but its extra fields failed to save: ${fieldErr instanceof Error ? fieldErr.message : "unknown error"}. Use Retry below before submitting another.`,
             variant: "destructive",
           });
           resetForm();
+          setStatusDialogOpen(false);
           return;
         }
       }
 
+      if (status !== "submitted") {
+        try {
+          await applyAdminSubmitStatusChoice(status, result.expense_id, user.id, organizationId, comment);
+        } catch (statusErr) {
+          setLastStatusTransitionFailure({
+            expenseId: result.expense_id, employeeName, desiredStatus: status, statusComment: comment,
+          });
+          toast({
+            title: t("submitForEmployee.errors.title", { ns: "admin" }),
+            description: `Expense created for ${employeeName}, but could not be set to ${status}: ${statusErr instanceof Error ? statusErr.message : "unknown error"}. Use Retry below before submitting another.`,
+            variant: "destructive",
+          });
+          resetForm();
+          setStatusDialogOpen(false);
+          return;
+        }
+      }
+
+      setLastCreatedExpense({ expenseId: result.expense_id, employeeName });
       toast({
         title: t("submitForEmployee.success.title", { ns: "admin" }),
         description: t("submitForEmployee.success.description", {
@@ -418,6 +492,7 @@ export default function AdminSubmitExpense() {
       });
 
       resetForm();
+      setStatusDialogOpen(false);
     } catch (err) {
       toast({
         title: t("submitForEmployee.errors.title", { ns: "admin" }),
@@ -426,14 +501,37 @@ export default function AdminSubmitExpense() {
       });
     } finally {
       setSubmitting(false);
+      setConfirmingStatusChoice(false);
     }
   };
 
   const handleRetryCustomFields = async () => {
-    if (!organizationId || !pendingCustomFieldRetry) return;
+    if (!organizationId || !pendingCustomFieldRetry || !user?.id) return;
     setRetryingCustomFields(true);
     try {
       await saveExpenseCustomFields(organizationId, pendingCustomFieldRetry.expenseId, pendingCustomFieldRetry.values);
+      if (pendingCustomFieldRetry.desiredStatus !== "submitted") {
+        try {
+          await applyAdminSubmitStatusChoice(
+            pendingCustomFieldRetry.desiredStatus, pendingCustomFieldRetry.expenseId, user.id,
+            organizationId, pendingCustomFieldRetry.statusComment,
+          );
+        } catch (statusErr) {
+          setLastStatusTransitionFailure({
+            expenseId: pendingCustomFieldRetry.expenseId,
+            employeeName: pendingCustomFieldRetry.employeeName,
+            desiredStatus: pendingCustomFieldRetry.desiredStatus,
+            statusComment: pendingCustomFieldRetry.statusComment,
+          });
+          toast({
+            title: t("submitForEmployee.errors.title", { ns: "admin" }),
+            description: `Extra fields saved, but could not be set to ${pendingCustomFieldRetry.desiredStatus}: ${statusErr instanceof Error ? statusErr.message : "unknown error"}. Use Retry below.`,
+            variant: "destructive",
+          });
+          setPendingCustomFieldRetry(null);
+          return;
+        }
+      }
       toast({
         title: t("submitForEmployee.success.title", { ns: "admin" }),
         description: `Extra fields saved for ${pendingCustomFieldRetry.employeeName}'s expense.`,
@@ -447,6 +545,30 @@ export default function AdminSubmitExpense() {
       });
     } finally {
       setRetryingCustomFields(false);
+    }
+  };
+
+  const handleRetryStatusTransition = async () => {
+    if (!organizationId || !lastStatusTransitionFailure || !user?.id) return;
+    setRetryingStatusTransition(true);
+    try {
+      await applyAdminSubmitStatusChoice(
+        lastStatusTransitionFailure.desiredStatus, lastStatusTransitionFailure.expenseId, user.id,
+        organizationId, lastStatusTransitionFailure.statusComment,
+      );
+      toast({
+        title: t("submitForEmployee.success.title", { ns: "admin" }),
+        description: `${lastStatusTransitionFailure.employeeName}'s expense is now ${lastStatusTransitionFailure.desiredStatus}.`,
+      });
+      setLastStatusTransitionFailure(null);
+    } catch (err) {
+      toast({
+        title: t("submitForEmployee.errors.title", { ns: "admin" }),
+        description: err instanceof Error ? err.message : "Retry failed — the status change still has not been applied.",
+        variant: "destructive",
+      });
+    } finally {
+      setRetryingStatusTransition(false);
     }
   };
 
@@ -472,6 +594,9 @@ export default function AdminSubmitExpense() {
           <TabsTrigger value="bulk">
             {t("submitForEmployee.tabs.bulk", { ns: "admin" })}
           </TabsTrigger>
+          <TabsTrigger value="history">
+            History
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="single" className="mt-4">
@@ -486,6 +611,21 @@ export default function AdminSubmitExpense() {
             <Button variant="outline" onClick={() => void handleRetryCustomFields()} disabled={retryingCustomFields}>
               {retryingCustomFields ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
               Retry saving extra fields
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+      {lastStatusTransitionFailure && (
+        <Card className="border-destructive">
+          <CardContent className="pt-6 space-y-3">
+            <p className="text-sm text-destructive">
+              Expense created for <strong>{lastStatusTransitionFailure.employeeName}</strong>, but could not
+              be set to <strong>{lastStatusTransitionFailure.desiredStatus}</strong>. It's still saved as
+              submitted. Retry before submitting another expense.
+            </p>
+            <Button variant="outline" onClick={() => void handleRetryStatusTransition()} disabled={retryingStatusTransition}>
+              {retryingStatusTransition ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+              Retry setting to {lastStatusTransitionFailure.desiredStatus}
             </Button>
           </CardContent>
         </Card>
@@ -741,7 +881,7 @@ export default function AdminSubmitExpense() {
       </Card>
 
       <div className="flex items-center gap-3">
-        <Button onClick={() => void handleSubmit()} disabled={!canSubmit}>
+        <Button onClick={handleSubmitClick} disabled={!canSubmit}>
           {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
           {t("submitForEmployee.submit", { ns: "admin" })}
         </Button>
@@ -749,6 +889,28 @@ export default function AdminSubmitExpense() {
           {t("cancel", { ns: "common" })}
         </Button>
       </div>
+
+      {lastCreatedExpense && (
+        <Card>
+          <CardContent className="pt-6 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                Expense created for <strong>{lastCreatedExpense.employeeName}</strong> — optionally attach a receipt.
+              </p>
+              <Button variant="ghost" size="sm" onClick={() => setLastCreatedExpense(null)}>Dismiss</Button>
+            </div>
+            <FileUpload expenseId={lastCreatedExpense.expenseId} required={false} />
+          </CardContent>
+        </Card>
+      )}
+
+      <SubmitStatusChoiceDialog
+        open={statusDialogOpen}
+        onOpenChange={setStatusDialogOpen}
+        subjectLabel="this expense"
+        confirming={confirmingStatusChoice}
+        onConfirm={(status, comment) => void performSubmit(status, comment)}
+      />
     </div>
         </TabsContent>
 
@@ -758,6 +920,10 @@ export default function AdminSubmitExpense() {
             employees={employees}
             categories={categories}
           />
+        </TabsContent>
+
+        <TabsContent value="history" className="mt-4">
+          <AdminExpenseHistoryTab organizationId={organizationId} />
         </TabsContent>
       </Tabs>
     </div>

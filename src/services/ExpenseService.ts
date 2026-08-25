@@ -1649,7 +1649,13 @@ export class ExpenseService {
     };
   }
 
-  private static async adminVerifyExpense(
+  /**
+   * Org-admin verify, bypassing the reviewer hierarchy — same authorization
+   * the reviewer-queue admin path already uses. Public (was previously
+   * private/internal-only) so the admin submit-for-employee page can call it
+   * directly as one of the status-choice options at creation time.
+   */
+  static async adminVerifyExpense(
     expenseId: string,
     adminId: string,
     organizationId: string,
