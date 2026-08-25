@@ -8,6 +8,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { ExpenseCustomFieldValuePayload } from "@/lib/expenseFormFieldPayload";
 import { ExpenseService } from "@/services/ExpenseService";
+import { invokeFinalizeExpenseReceipts, runWithConcurrency, type FinalizeReceiptsInput } from "@/lib/receiptFinalization";
 
 /**
  * `src/integrations/supabase/types.ts` predates this RPC, so the typed client
@@ -142,6 +143,87 @@ export async function applyAdminSubmitStatusChoice(
   } else {
     await ExpenseService.approveExpense(expenseId, adminUserId, comment);
   }
+}
+
+/**
+ * One file the admin picked via FileUpload's temp upload path (expenseId="new").
+ * storageFilename is the bare, auto-generated temp-bucket object name (what
+ * invokeFinalizeExpenseReceipts needs to locate the file) — NOT the same as
+ * displayFilename, the original human-chosen name (e.g. "receipt.jpg" vs
+ * "1749123456789-abc.jpg"), which belongs on the attachments row instead so
+ * the UI shows something meaningful, not an opaque generated name.
+ */
+export interface PendingReceiptUpload {
+  storageFilename: string;
+  displayFilename: string;
+  contentType: string;
+  fileSize: number;
+}
+
+/**
+ * Finalizes receipts the admin uploaded to the "new" temp scratch space
+ * (via FileUpload with expenseId="new") into the just-created expense's
+ * permanent folder, then inserts the attachments rows.
+ *
+ * Mirrors ExpenseForm.tsx's own moveTempFilesToExpense, trimmed to what this
+ * page actually needs: no draft-persistence bookkeeping (this page has no
+ * draft-save feature), no "require at least one" gate (the attachment is
+ * always optional here, by design — this page never had the amount-based
+ * requirement self-submission has). Same underlying primitive
+ * (invokeFinalizeExpenseReceipts — server-side download/upload/verify, the
+ * browser never touches storage.move/copy directly) and the same bounded
+ * insert concurrency (runWithConcurrency, limit 2) as the reference
+ * implementation.
+ *
+ * Best-effort: a failure here never blocks or rolls back the expense itself
+ * (already created, already has its status/custom fields settled by the
+ * time this runs) — callers should surface it as a soft, non-blocking
+ * notice, not a hard error.
+ */
+export async function finalizePendingReceipts(
+  expenseId: string,
+  userId: string,
+  organizationId: string,
+  pending: PendingReceiptUpload[],
+): Promise<{ attached: number; failed: number }> {
+  if (pending.length === 0) return { attached: 0, failed: 0 };
+
+  const receipts: FinalizeReceiptsInput[] = pending.map((p) => ({
+    filename: p.storageFilename,
+    contentType: p.contentType,
+    fileSize: p.fileSize,
+  }));
+  const results = await invokeFinalizeExpenseReceipts(supabase, {
+    expenseId, userId, receipts,
+  });
+
+  // ReceiptFinalizationResult only carries the storage filename back — look
+  // up the original display name / content type / size from the input,
+  // matched by storage filename (same pattern ExpenseForm.tsx's
+  // moveTempFilesToExpense uses its own upload-meta map for).
+  const metaByStorageFilename = new Map(pending.map((p) => [p.storageFilename, p]));
+
+  const insertTasks = results
+    .filter((r) => r.status !== "failed")
+    .map((r) => async () => {
+      const meta = metaByStorageFilename.get(r.filename);
+      const { error } = await supabase.from("attachments").insert({
+        expense_id: expenseId,
+        organization_id: organizationId,
+        file_url: r.fileUrl || "",
+        filename: meta?.displayFilename || r.filename,
+        content_type: meta?.contentType || "image/jpeg",
+        uploaded_by: userId,
+        file_size: meta?.fileSize && meta.fileSize > 0 ? meta.fileSize : null,
+        storage_path: r.resolvedPath,
+      });
+      return !error;
+    });
+
+  const insertOutcomes = await runWithConcurrency(insertTasks, 2);
+  const attached = insertOutcomes.filter(Boolean).length;
+  const failed = receipts.length - attached;
+  return { attached, failed };
 }
 
 /** One CSV/Excel row, already parsed and validated client-side. */

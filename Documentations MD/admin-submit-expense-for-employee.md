@@ -789,6 +789,7 @@ here for whoever owns that policy call later.
 | `src/components/BulkExpenseImportPanel.tsx` | `runPostCreationPipeline` (two-step per-row gate), `statusTransitionFailures` bucket + retry |
 | `supabase/migrations/290825_1000_org_scoped_audit_logs_select.sql` | `audit_logs` SELECT admin-branch org-scoping (defense in depth) |
 | `supabase/migrations/290825_1100_admin_receipts_storage_insert.sql` | `receipts` bucket admin-upload branch (real fix — the feature did not work without it) |
+| `supabase/functions/finalize-expense-receipts/index.ts` | Admin-bypass branch added to the ownership check (real fix — receipts silently never attached without it); deployed by container restart |
 
 Reused as-is, unmodified: `src/components/FileUpload.tsx`,
 `src/components/ExpenseTimeline.tsx`, `src/lib/auditLogDisplay.ts`,
@@ -796,6 +797,73 @@ Reused as-is, unmodified: `src/components/FileUpload.tsx`,
 `src/lib/expenseCustomFieldFilters.ts` (`runWithConcurrencyLimit`,
 `MAX_CUSTOM_FIELD_CONCURRENCY`), `src/lib/approvalHierarchy.ts`
 (`isAdminApprovableStatus`).
+
+### 4c follow-up — inline receipt upload (moved to match "My Expenses" exactly), a real Edge Function bug found and fixed, and an "Add category" button
+
+The user's own follow-up feedback on §4c's first pass: the optional receipt
+upload only appeared in a small panel *after* a successful submission,
+not inline in the main form the way `ExpenseForm.tsx` shows it *before*
+submission — and the "Add category" button `ExpenseForm.tsx` has next to
+its Category field was missing here entirely. Both fixed:
+
+- **Receipt upload moved inline**, matching `ExpenseForm.tsx`'s own
+  placement and mechanism exactly: `FileUpload` renders with
+  `expenseId="new"` as part of the main form (the expense doesn't exist yet
+  at this point, same as the employee's own form), uploads go to a temp
+  scratch space, and are finalized into the real expense folder only after
+  a fully successful submission. The old post-submit-only panel and its
+  `lastCreatedExpense` state were removed entirely — this is genuinely one
+  coherent flow now, not two.
+  - New `finalizePendingReceipts` (`src/lib/adminSubmitExpense.ts`) — a
+    trimmed version of `ExpenseForm.tsx`'s own `moveTempFilesToExpense`:
+    same underlying primitive (`invokeFinalizeExpenseReceipts` —
+    server-side download/upload/verify, the browser never touches
+    `storage.move`/`copy` directly) and the same bounded insert
+    concurrency, with the reference implementation's draft-persistence
+    bookkeeping deliberately left out (this page has no draft-save feature
+    to persist across).
+  - Best-effort, not retry-gated: a receipt-finalization failure surfaces
+    as a plain toast and never blocks, retries, or rolls back the expense
+    itself (already fully settled — custom fields and status choice — by
+    the time this runs). Deliberately does **not** survive into the
+    custom-field-save or status-transition retry flows — a receipt
+    selected for a submission that later needs retrying is dropped rather
+    than carried forward, to avoid a real cross-contamination risk (a
+    second, unrelated submission's receipts getting attached to the wrong
+    expense if both were tracked in the same pending state at once). The
+    underlying temp file in storage isn't deleted either way — recoverable,
+    not silently destroyed.
+- **A real, live bug found and fixed while verifying this**: the
+  `finalize-expense-receipts` Edge Function (`supabase/functions/
+  finalize-expense-receipts/index.ts`) had its own hardcoded ownership
+  check (`expenses.user_id = auth.uid()`) with no admin-bypass branch at
+  all — the exact same class of gap already found and fixed once this
+  session for the `receipts` storage bucket's INSERT policy, just one
+  layer up the stack. Reproduced live: the finalize call returned
+  `403 EXPENSE_ACCESS_DENIED`, and — because `invokeFinalizeExpenseReceipts`
+  has a designed-in graceful fallback for exactly this case (no crash, just
+  a `"failed"` result per file when the Edge Function denies access) — the
+  upload silently produced **zero** `attachments` rows with no visible
+  error anywhere in the UI. Fixed by adding an org-admin branch (checking
+  `organization_memberships` for an active admin of the expense's org)
+  alongside the existing owner check; deployed by copying the updated
+  `index.ts` into the running edge-functions container and restarting it
+  (this instance's existing deployment mechanism, not a new one). Re-tested
+  the identical upload after the fix — `200 OK`, `status: "finalized"`, and
+  the resulting `attachments` row confirmed correct: `filename` is the
+  *original* human-chosen name (not the opaque generated storage filename —
+  tracked separately as `displayFilename` specifically so this wouldn't
+  regress), `uploaded_by` is the admin's uid, `storage_path` rooted at the
+  expense's real UUID folder.
+- **"Add category" button**, next to the Category field on the single-tab
+  form — reuses `ExpenseForm.tsx`'s own `handleAddCategory` logic exactly
+  (same `expense_categories` insert shape, same `active`/`is_active` column
+  fallback). No `isAdmin` gate needed, unlike the employee form (where this
+  button is admin-only) — this entire page is already admin-only. Verified
+  live: created a category through the button, confirmed it appears
+  correctly in `expense_categories` (active, correct `organization_id`) and
+  is immediately selectable in the Category dropdown for the same
+  submission, with no page reload.
 
 ---
 
@@ -894,3 +962,4 @@ Reused as-is, unmodified: `src/components/FileUpload.tsx`,
 | 2026-08-24 | DOC-108 follow-up — added a per-organization pre-filled roster download (.xlsx) with a real Excel dropdown on Category (new `exceljs` dependency, added after asking the user directly since the existing `xlsx` package can only read data validation, not write it); switched the Date column to DD-MM-YYYY per explicit instruction, converted client-side to ISO before the RPC call to avoid Postgres DateStyle ambiguity; proved on the live database that the roster contains zero cross-organization employee data (413/413 name+ID pairs matched MicroLink exactly) and that a day-≤12 date (05-08-2026) resolves correctly to 2026-08-05, not 2026-05-08; unzipped the generated file and confirmed the dropdown's `<dataValidation>` XML is genuinely present | Claude |
 | 2026-08-25 | DOC-109 — org-accurate custom expense fields on both tabs: base-field label/visibility/required/dropdown overrides, category-assigned custom fields (all 6 types), and conditional branch fields, reusing the employee self-submit form's own components/RPCs rather than reimplementing them (see §4b); zero new SQL migrations. Found and fixed three real bugs during live verification: an i18n namespace mismatch leaking raw translation keys, missing annotation-stripping on base-field header matching, and a naive paren-stripping regex that broke on category names (e.g. MicroLink's "Travelling (Public and Private Transport)") that are themselves parenthesized. Proved end-to-end against MicroLink's live data: exact single-form + DB parity for a dependent-dropdown chain (Project Unique ID → Project ID/Project Name), a bulk-import row correctly rejected for a branch value from the wrong parent option, a stale wrong-category value correctly and silently dropped, safe pagination proven to recover exactly 1,008/1,008 branch rows (avoiding the DOC-097 1,000-row silent-truncation bug), and a zero-config org (Bikes auto Hero) confirmed completely unaffected. All test data and both throwaway admin accounts cleaned up | Claude |
 | 2026-08-25 | DOC-110 — optional receipt upload (single tab, reuses `FileUpload` unmodified, no new RLS needed for the `attachments` table), a status-choice popup on submit (Submitted/Verified/Approved, both tabs) composing two existing `ExpenseService` methods with zero new status-transition logic, and a History tab (paginated admin-submitted-expense list + full audit-trail detail drawer, reusing `ExpenseTimeline`/`enrichAuditLogsWithDisplay`). Found and fixed two real RLS gaps: `audit_logs` SELECT's admin branch was globally unscoped (defense-in-depth fix, confirmed non-exploitable live today because `expenses`' own admin policy was already independently hotfixed to be org-scoped) and the `receipts` storage bucket's INSERT policy had no admin-bypass branch at all — a genuine live blocker for the attachment feature, reproduced with the exact Postgres RLS error before fixing it. Proved the money-movement invariant end-to-end: an "Approved" choice produced the exact atomic balance deduction (`expense_balance_deductions` row + `profiles.balance` matching to the rupee) DOC-089 exists to guarantee; proved the sequencing gate that blocks a required-field-incomplete row from reaching approval (client-side path verified live, server-side path verified by tracing the code, documented honestly as such); proved bulk status choice applies correctly across a real multi-row batch alongside DOC-109's custom-field pipeline. All test data, balance changes, and the throwaway admin cleaned up | Claude |
+| 2026-08-25 | DOC-110 follow-up — moved the optional receipt upload inline into the main form (matching `ExpenseForm.tsx`'s own placement exactly, before submission rather than after) and added the "Add category" button next to Category, both per direct user follow-up feedback. Found and fixed a third real bug while verifying: the `finalize-expense-receipts` Edge Function's own ownership check had no admin-bypass branch either, silently producing zero `attachments` rows with no visible error (the graceful-fallback design masked it). Fixed and deployed by restarting the edge-functions container; re-verified the identical upload — correct `filename`/`uploaded_by`/`storage_path`. All test data and the throwaway admin cleaned up | Claude |

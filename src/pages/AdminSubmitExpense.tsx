@@ -2,24 +2,26 @@
  * DOC-107 — admin submits an expense on behalf of an employee.
  *
  * Admin picks an employee (search by name / email / employee ID), fills the
- * same core fields the employee's own form collects, and submits. No
- * attachment step exists here by design: only an admin can reach this page,
- * so the bill-photo-above-amount rule (enforced for self-submission in
- * ExpenseForm.tsx / ExpenseService.submitExpense) never applies to this path
- * — admin_submit_expense_for_employee_v1 does not check for one.
+ * same core fields the employee's own form collects, and submits. A receipt
+ * photo (DOC-110) is always OPTIONAL here regardless of amount — this page
+ * never routes through ExpenseService.submitExpense (the bill-photo-above-
+ * amount rule lives entirely inside that method), so there is no gate to
+ * accidentally reintroduce; admin_submit_expense_for_employee_v1 itself
+ * never checks for one either.
  *
- * The expense lands as status "submitted", owned by the employee (user_id),
- * with created_by_admin_id recording who created it. It enters the same
- * review pipeline as a self-submitted expense — the RPC ports the same
- * hierarchy-routing logic ExpenseService.submitExpense uses, so reviewers see
- * it exactly where they would see any other submission. The employee's
- * dashboard updates live because the RPC also writes them a notification
- * (Dashboard.tsx's realtime subscription listens for that).
+ * The expense lands as status "submitted" by default (or Verified/Approved
+ * if the admin chose one in the status popup, DOC-110), owned by the
+ * employee (user_id), with created_by_admin_id recording who created it. It
+ * enters the same review pipeline as a self-submitted expense — the RPC
+ * ports the same hierarchy-routing logic ExpenseService.submitExpense uses,
+ * so reviewers see it exactly where they would see any other submission.
+ * The employee's dashboard updates live because the RPC also writes them a
+ * notification (Dashboard.tsx's realtime subscription listens for that).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
-import { Check, ChevronsUpDown, CalendarIcon, Loader2, Send, UserRoundSearch, RotateCcw } from "lucide-react";
+import { Check, ChevronsUpDown, CalendarIcon, Loader2, Send, UserRoundSearch, RotateCcw, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -27,7 +29,7 @@ import { fetchOrganizationUsers, type OrganizationUserRow } from "@/lib/orgUsers
 import { userMatchesManagementSearch } from "@/lib/approvalHierarchy";
 import {
   submitExpenseForEmployee, saveExpenseCustomFields, applyAdminSubmitStatusChoice,
-  type AdminSubmitStatusChoice,
+  finalizePendingReceipts, type AdminSubmitStatusChoice, type PendingReceiptUpload,
 } from "@/lib/adminSubmitExpense";
 import { SubmitStatusChoiceDialog } from "@/components/SubmitStatusChoiceDialog";
 import { FileUpload } from "@/components/FileUpload";
@@ -42,6 +44,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { BulkExpenseImportPanel } from "@/components/BulkExpenseImportPanel";
@@ -86,6 +91,8 @@ export default function AdminSubmitExpense() {
   const [categories, setCategories] = useState<string[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+  const [addCatOpen, setAddCatOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
 
   const [form, setForm] = useState(emptyForm);
   const [date, setDate] = useState<Date>(new Date());
@@ -130,9 +137,19 @@ export default function AdminSubmitExpense() {
     statusComment: string;
   } | null>(null);
   const [retryingStatusTransition, setRetryingStatusTransition] = useState(false);
-  /** Set after a fully successful submit — drives the optional, skippable
-   *  "attach a receipt" panel. Cleared on the next submit or dismiss. */
-  const [lastCreatedExpense, setLastCreatedExpense] = useState<{ expenseId: string; employeeName: string } | null>(null);
+
+  /** Receipts the admin picked via the inline FileUpload (expenseId="new",
+   *  temp scratch space) before this expense existed — finalized into the
+   *  real expense folder once creation (+ custom fields + status) succeeds.
+   *  Keyed by storage filename so a duplicate onUploadComplete firing twice
+   *  for the same file can't double-queue it. */
+  const pendingReceiptsRef = useRef<Map<string, PendingReceiptUpload>>(new Map());
+  /** Bumped after every submit attempt (success or failure) to remount
+   *  FileUpload with a clean internal upload list for the next expense —
+   *  same technique ExpenseForm.tsx uses (fileUploadResetKey) since
+   *  FileUpload owns its own "attachments" display state internally and
+   *  has no prop to clear it otherwise. */
+  const [fileUploadResetKey, setFileUploadResetKey] = useState(0);
 
   const baseFieldCustomizationEnabled =
     organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.allow_base_field_input_customization] === true;
@@ -307,6 +324,70 @@ export default function AdminSubmitExpense() {
     setFormFieldValues({});
     setBranchValues({});
     resetOptionBranches();
+    pendingReceiptsRef.current = new Map();
+    setFileUploadResetKey((k) => k + 1);
+  };
+
+  /** Mirrors ExpenseForm.tsx's own handleAddCategory exactly — same insert
+   *  shape, same active/is_active column fallback. No isAdmin gate needed
+   *  (unlike the employee form, where this button is admin-only): this
+   *  entire page is already admin-only. */
+  const handleAddCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name || !organizationId) return;
+    try {
+      // expense_categories predates the generated types.ts (same root cause
+      // documented in src/lib/adminSubmitExpense.ts) — narrow cast, not a new pattern.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = supabase as any;
+      let { error } = await db
+        .from("expense_categories")
+        .insert({ name, active: true, organization_id: organizationId, created_by: user?.id || null });
+      if (error && error.code === "42703") {
+        const retry = await db
+          .from("expense_categories")
+          .insert({ name, is_active: true, organization_id: organizationId, created_by: user?.id || null });
+        error = retry.error;
+      }
+      if (error) throw error;
+
+      setCategories((prev) => Array.from(new Set([...prev, name])));
+      setNewCategoryName("");
+      setAddCatOpen(false);
+      toast({ title: "Category added", description: `"${name}" is now available to select.` });
+    } catch (err) {
+      toast({
+        title: t("submitForEmployee.errors.title", { ns: "admin" }),
+        description: err instanceof Error ? err.message : "Failed to add category",
+        variant: "destructive",
+      });
+    }
+  };
+
+  /** Best-effort — a receipt-attachment failure never blocks or retries the
+   *  expense itself (already settled by the time this runs); it's a soft
+   *  toast only, matching the "optional" framing of this whole feature. */
+  const finalizeReceiptsBestEffort = async (expenseId: string) => {
+    const pending = [...pendingReceiptsRef.current.values()];
+    pendingReceiptsRef.current = new Map();
+    setFileUploadResetKey((k) => k + 1);
+    if (pending.length === 0 || !organizationId || !user?.id) return;
+    try {
+      const { attached, failed } = await finalizePendingReceipts(expenseId, user.id, organizationId, pending);
+      if (failed > 0) {
+        toast({
+          title: "Receipt attachment",
+          description: `${attached} of ${pending.length} receipt(s) attached; ${failed} failed. The expense itself is unaffected.`,
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      toast({
+        title: "Receipt attachment failed",
+        description: err instanceof Error ? err.message : "Could not attach the receipt(s). The expense itself is unaffected.",
+        variant: "destructive",
+      });
+    }
   };
 
   const catField = getBaseField("category");
@@ -482,7 +563,8 @@ export default function AdminSubmitExpense() {
         }
       }
 
-      setLastCreatedExpense({ expenseId: result.expense_id, employeeName });
+      await finalizeReceiptsBestEffort(result.expense_id);
+
       toast({
         title: t("submitForEmployee.success.title", { ns: "admin" }),
         description: t("submitForEmployee.success.description", {
@@ -709,45 +791,53 @@ export default function AdminSubmitExpense() {
               so an admin sees identically what the employee's own form would show. */}
           <div className={cn("space-y-2", !catField.is_visible && "hidden")}>
             <Label>{catField.label}{catField.is_required ? " *" : ""}</Label>
-            <BaseExpenseFieldInput
-              config={catField}
-              value={form.category}
-              onChange={(v) => { setForm((p) => ({ ...p, category: v })); void fetchCategoryFormFieldsRef.current(v); }}
-              featureEnabled={baseFieldCustomizationEnabled}
-              organizationId={organizationId}
-              userId={user?.id}
-              placeholder={t("form.selectCategory", { ns: "expenses" })}
-              defaultControl={
-                <Popover open={categoryPickerOpen} onOpenChange={setCategoryPickerOpen}>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" role="combobox" className="w-full justify-between">
-                      {form.category || (loadingCategories ? t("form.loadingCategories", { ns: "expenses" }) : t("form.selectCategory", { ns: "expenses" }))}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                    <Command>
-                      <CommandInput placeholder={t("form.searchCategories", { ns: "expenses" })} />
-                      <CommandList>
-                        <CommandEmpty>{t("form.noCategories", { ns: "expenses" })}</CommandEmpty>
-                        <CommandGroup>
-                          {categories.map((c) => (
-                            <CommandItem
-                              key={c}
-                              value={c}
-                              onSelect={() => { setForm((p) => ({ ...p, category: c })); setCategoryPickerOpen(false); void fetchCategoryFormFieldsRef.current(c); }}
-                            >
-                              <Check className={cn("mr-2 h-4 w-4", form.category === c ? "opacity-100" : "opacity-0")} />
-                              {c}
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-              }
-            />
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <BaseExpenseFieldInput
+                  config={catField}
+                  value={form.category}
+                  onChange={(v) => { setForm((p) => ({ ...p, category: v })); void fetchCategoryFormFieldsRef.current(v); }}
+                  featureEnabled={baseFieldCustomizationEnabled}
+                  organizationId={organizationId}
+                  userId={user?.id}
+                  placeholder={t("form.selectCategory", { ns: "expenses" })}
+                  defaultControl={
+                    <Popover open={categoryPickerOpen} onOpenChange={setCategoryPickerOpen}>
+                      <PopoverTrigger asChild>
+                        <Button variant="outline" role="combobox" className="w-full justify-between">
+                          {form.category || (loadingCategories ? t("form.loadingCategories", { ns: "expenses" }) : t("form.selectCategory", { ns: "expenses" }))}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder={t("form.searchCategories", { ns: "expenses" })} />
+                          <CommandList>
+                            <CommandEmpty>{t("form.noCategories", { ns: "expenses" })}</CommandEmpty>
+                            <CommandGroup>
+                              {categories.map((c) => (
+                                <CommandItem
+                                  key={c}
+                                  value={c}
+                                  onSelect={() => { setForm((p) => ({ ...p, category: c })); setCategoryPickerOpen(false); void fetchCategoryFormFieldsRef.current(c); }}
+                                >
+                                  <Check className={cn("mr-2 h-4 w-4", form.category === c ? "opacity-100" : "opacity-0")} />
+                                  {c}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  }
+                />
+              </div>
+              <Button type="button" variant="outline" onClick={() => setAddCatOpen(true)}>
+                <Plus className="mr-1 h-4 w-4" />
+                {t("form.addCategory", { ns: "expenses" })}
+              </Button>
+            </div>
           </div>
 
           <CategoryFormFieldsSection
@@ -880,6 +970,39 @@ export default function AdminSubmitExpense() {
         </CardContent>
       </Card>
 
+      {/* Optional receipt upload — same inline placement and component
+          (FileUpload) as the employee's own ExpenseForm.tsx, just never
+          required here regardless of amount (this page has never had that
+          gate). expenseId="new" uploads to a temp scratch space; the actual
+          expense doesn't exist yet at this point in the form, exactly like
+          the employee's own form — finalizeReceiptsBestEffort moves them
+          into the real expense folder once submission succeeds. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{t("form.bills.title", { ns: "expenses" })}</CardTitle>
+          <CardDescription>Optionally upload a photo of the receipt — not required for admin-submitted expenses.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <FileUpload
+            key={fileUploadResetKey}
+            expenseId="new"
+            required={false}
+            onUploadComplete={(attachment) => {
+              if (!attachment?.storage_path) return;
+              pendingReceiptsRef.current.set(attachment.storage_path, {
+                storageFilename: attachment.storage_path,
+                displayFilename: attachment.filename,
+                contentType: attachment.content_type,
+                fileSize: attachment.file_size ?? 0,
+              });
+            }}
+            onUploadError={(errorMessage) => {
+              toast({ title: "Receipt upload failed", description: errorMessage, variant: "destructive" });
+            }}
+          />
+        </CardContent>
+      </Card>
+
       <div className="flex items-center gap-3">
         <Button onClick={handleSubmitClick} disabled={!canSubmit}>
           {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
@@ -890,20 +1013,6 @@ export default function AdminSubmitExpense() {
         </Button>
       </div>
 
-      {lastCreatedExpense && (
-        <Card>
-          <CardContent className="pt-6 space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">
-                Expense created for <strong>{lastCreatedExpense.employeeName}</strong> — optionally attach a receipt.
-              </p>
-              <Button variant="ghost" size="sm" onClick={() => setLastCreatedExpense(null)}>Dismiss</Button>
-            </div>
-            <FileUpload expenseId={lastCreatedExpense.expenseId} required={false} />
-          </CardContent>
-        </Card>
-      )}
-
       <SubmitStatusChoiceDialog
         open={statusDialogOpen}
         onOpenChange={setStatusDialogOpen}
@@ -911,6 +1020,27 @@ export default function AdminSubmitExpense() {
         confirming={confirmingStatusChoice}
         onConfirm={(status, comment) => void performSubmit(status, comment)}
       />
+
+      <Dialog open={addCatOpen} onOpenChange={setAddCatOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("form.addCategoryTitle", { ns: "expenses" })}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Label htmlFor="admin-new-cat">{t("form.fields.category", { ns: "expenses" })}</Label>
+            <Input
+              id="admin-new-cat"
+              value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              placeholder={t("form.placeholders.newCategory", { ns: "expenses" })}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddCatOpen(false)}>{t("cancel", { ns: "common" })}</Button>
+            <Button onClick={() => void handleAddCategory()} disabled={!newCategoryName.trim()}>{t("save", { ns: "common" })}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
         </TabsContent>
 

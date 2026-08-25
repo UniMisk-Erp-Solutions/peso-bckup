@@ -228,15 +228,32 @@ Deno.serve(async (req) => {
     }
 
     // Validate expense ownership — prevents users from finalizing receipts into
-    // someone else's expense folder.
+    // someone else's expense folder. An org admin may also finalize receipts
+    // for an expense they didn't submit themselves, mirroring the same
+    // admin-bypass pattern already used for the attachments table INSERT
+    // policy and the receipts storage bucket's own INSERT policy — the
+    // admin submit-for-employee page's optional receipt upload (DOC-110)
+    // needs this, since the caller there is never expense.user_id.
     const { data: expense, error: expenseError } = await serviceClient
       .from("expenses")
-      .select("id, user_id")
+      .select("id, user_id, organization_id")
       .eq("id", expenseId)
-      .eq("user_id", user.id)
       .single();
 
-    if (expenseError || !expense) {
+    let authorized = !expenseError && !!expense && expense.user_id === user.id;
+    if (!authorized && expense?.organization_id) {
+      const { data: adminMembership } = await serviceClient
+        .from("organization_memberships")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("organization_id", expense.organization_id)
+        .eq("role", "admin")
+        .eq("is_active", true)
+        .maybeSingle();
+      authorized = !!adminMembership;
+    }
+
+    if (!authorized) {
       return errResponse(
         requestId,
         origin,
