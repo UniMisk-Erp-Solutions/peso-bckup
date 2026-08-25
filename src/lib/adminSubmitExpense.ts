@@ -6,6 +6,7 @@
  * this file does no business logic of its own.
  */
 import { supabase } from "@/integrations/supabase/client";
+import type { ExpenseCustomFieldValuePayload } from "@/lib/expenseFormFieldPayload";
 
 /**
  * `src/integrations/supabase/types.ts` predates this RPC, so the typed client
@@ -51,6 +52,38 @@ export async function submitExpenseForEmployee(
   });
   if (error) throw new Error(error.message);
   return data as AdminSubmitExpenseResult;
+}
+
+/**
+ * Org-accurate custom fields follow-up.
+ *
+ * Deliberately a SEPARATE call from submitExpenseForEmployee, not a param
+ * added to that RPC — mirrors the exact pattern ExpenseService.submitExpenseBatch
+ * already uses (create expense, then separately replace_expense_form_field_values).
+ * That RPC's own authorization already permits an org admin to write custom-field
+ * values for ANY expense in their org (verified by reading its source: the
+ * v_is_admin check is independent of e.user_id) — no new RPC needed.
+ *
+ * Known gap this call sits behind, by design, not by oversight: the expense is
+ * already created (status=submitted, reviewer already notified) by the time this
+ * runs, and replace_expense_form_field_values does not itself enforce
+ * required-ness — only the client does, before calling it. A required custom
+ * field can end up permanently missing if this call fails and is never retried.
+ * Callers MUST treat a failure here as a distinct "created but incomplete" state,
+ * never fold it into plain success — see Documentations MD/admin-submit-expense-for-employee.md.
+ */
+export async function saveExpenseCustomFields(
+  organizationId: string,
+  expenseId: string,
+  values: ExpenseCustomFieldValuePayload[],
+): Promise<void> {
+  if (values.length === 0) return;
+  const { error } = await db.rpc("replace_expense_form_field_values", {
+    p_expense_id: expenseId,
+    p_organization_id: organizationId,
+    p_values: values,
+  });
+  if (error) throw new Error(error.message);
 }
 
 /** One CSV/Excel row, already parsed and validated client-side. */

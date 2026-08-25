@@ -12,14 +12,15 @@
  * in its own exception block, so a batch of 1,000 with a handful of bad rows
  * still submits the other 990+ and reports exactly which ones failed and why.
  */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Download, FileSpreadsheet, Loader2, Upload, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Download, FileSpreadsheet, Loader2, Upload, AlertCircle, CheckCircle2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   parseBulkExpenseFile,
   isSupportedBulkImportExtension,
@@ -28,10 +29,14 @@ import {
 } from "@/lib/bulkExpenseImportParse";
 import {
   submitBulkExpensesForEmployees,
+  saveExpenseCustomFields,
   type BulkExpenseRowResult,
 } from "@/lib/adminSubmitExpense";
 import { generateBulkExpenseExcelTemplate, downloadBlob } from "@/lib/generateBulkExpenseExcelTemplate";
 import type { OrganizationUserRow } from "@/lib/orgUsers";
+import { fetchOrganizationExpenseFieldConfig, type OrganizationExpenseFieldConfig } from "@/lib/orgExpenseFieldConfig";
+import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
+import { runWithConcurrencyLimit, MAX_CUSTOM_FIELD_CONCURRENCY } from "@/lib/expenseCustomFieldFilters";
 import { useOperationProgress } from "@/hooks/useOperationProgress";
 import { AsyncOperationProgress } from "@/components/AsyncOperationProgress";
 
@@ -53,6 +58,7 @@ interface BulkExpenseImportPanelProps {
 export function BulkExpenseImportPanel({ organizationId, employees, categories }: BulkExpenseImportPanelProps) {
   const { t } = useTranslation(["admin", "common"]);
   const { toast } = useToast();
+  const { organizationFeatureFlags, user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { progress, startOperation, updateOperation, completeOperation, failOperation, resetOperation } =
     useOperationProgress();
@@ -65,6 +71,27 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
   const [parsing, setParsing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [results, setResults] = useState<BulkExpenseRowResult[] | null>(null);
+  /** row_index -> error, only for rows whose expense WAS created but the
+   *  follow-up custom-field save failed — a distinct state from ok/fail, per
+   *  the two-RPC-call risk documented in adminSubmitExpense.ts. */
+  const [customFieldFailures, setCustomFieldFailures] = useState<Map<number, string>>(new Map());
+  const [retryingCustomFields, setRetryingCustomFields] = useState(false);
+
+  const [fieldConfig, setFieldConfig] = useState<OrganizationExpenseFieldConfig | null>(null);
+  const [loadingFieldConfig, setLoadingFieldConfig] = useState(true);
+  useEffect(() => {
+    if (!organizationId) return;
+    let cancelled = false;
+    setLoadingFieldConfig(true);
+    fetchOrganizationExpenseFieldConfig(organizationId)
+      .then((cfg) => { if (!cancelled) setFieldConfig(cfg); })
+      .catch(() => { if (!cancelled) setFieldConfig(null); })
+      .finally(() => { if (!cancelled) setLoadingFieldConfig(false); });
+    return () => { cancelled = true; };
+  }, [organizationId]);
+
+  const baseFieldCustomizationEnabled =
+    organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.allow_base_field_input_customization] === true;
 
   const validRows = useMemo(() => rows.filter((r) => r.issues.length === 0), [rows]);
   const invalidRows = useMemo(() => rows.filter((r) => r.issues.length > 0), [rows]);
@@ -75,15 +102,21 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
     setUnmappedHeaders([]);
     setMissingColumns([]);
     setResults(null);
+    setCustomFieldFailures(new Map());
     resetOperation();
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleDownloadRoster = async () => {
-    if (employees.length === 0) return;
+    if (employees.length === 0 || !fieldConfig) return;
     setGeneratingTemplate(true);
     try {
-      const blob = await generateBulkExpenseExcelTemplate(employees, categories);
+      const blob = await generateBulkExpenseExcelTemplate(employees, categories, {
+        baseFieldConfig: fieldConfig.baseFieldConfig,
+        baseFieldCustomizationEnabled,
+        categoryAssignments: fieldConfig.categoryAssignments,
+        branchGroups: fieldConfig.branchGroups,
+      });
       const stamp = new Date().toISOString().slice(0, 10);
       downloadBlob(blob, `expense-import-roster_${stamp}.xlsx`);
     } catch (err) {
@@ -106,9 +139,10 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
       return;
     }
     setResults(null);
+    setCustomFieldFailures(new Map());
     setParsing(true);
     try {
-      const parsed = await parseBulkExpenseFile(file);
+      const parsed = await parseBulkExpenseFile(file, fieldConfig);
       setFileName(file.name);
       setRows(parsed.rows);
       setUnmappedHeaders(parsed.unmappedHeaders);
@@ -167,14 +201,25 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
       );
       setResults(rowResults);
 
+      // Custom-field follow-up: a SEPARATE call per created expense, exactly
+      // mirroring ExpenseService.submitExpenseBatch's own create-then-replace
+      // pattern (see adminSubmitExpense.ts's saveExpenseCustomFields doc
+      // comment for why this is deliberately two calls, not one, and the
+      // known "created but incomplete" risk that follows from it).
+      const rowsNeedingCustomFields = validRows.filter((r) => {
+        const res = rowResults.find((x) => x.row_index === r.rowIndex);
+        return res?.ok && res.expense_id && r.customFieldPayload.length > 0;
+      });
+      const failures = await runCustomFieldSaves(rowsNeedingCustomFields, rowResults);
+
       const okCount = rowResults.filter((r) => r.ok).length;
       const failCount = rowResults.length - okCount;
-      if (failCount === 0) {
+      if (failCount === 0 && failures.size === 0) {
         completeOperation(t("submitForEmployee.bulk.progress.done", { ns: "admin" }));
       } else {
         failOperation(
           t("submitForEmployee.bulk.progress.done", { ns: "admin" }),
-          t("submitForEmployee.bulk.progress.partialFailure", { ns: "admin", ok: okCount, failed: failCount }),
+          t("submitForEmployee.bulk.progress.partialFailure", { ns: "admin", ok: okCount, failed: failCount + failures.size }),
         );
       }
     } catch (err) {
@@ -184,6 +229,60 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
       );
     } finally {
       setImporting(false);
+    }
+  };
+
+  /** Runs the follow-up custom-field save for a set of already-created rows,
+   *  with bounded concurrency so a slow/failing row never blocks the rest.
+   *  Returns the row_index -> error map for any that failed (also merged
+   *  into customFieldFailures state). Shared by handleImport and the retry
+   *  button so a retry re-runs ONLY this step, never re-creating expenses. */
+  const runCustomFieldSaves = async (
+    rowsToSave: BulkExpenseRow[],
+    rowResults: BulkExpenseRowResult[],
+  ): Promise<Map<number, string>> => {
+    if (!organizationId || rowsToSave.length === 0) return new Map();
+    const tasks = rowsToSave.map((r) => async () => {
+      const res = rowResults.find((x) => x.row_index === r.rowIndex);
+      if (!res?.expense_id) return { rowIndex: r.rowIndex, ok: true as const };
+      try {
+        await saveExpenseCustomFields(organizationId, res.expense_id, r.customFieldPayload);
+        return { rowIndex: r.rowIndex, ok: true as const };
+      } catch (err) {
+        return { rowIndex: r.rowIndex, ok: false as const, error: err instanceof Error ? err.message : "Failed to save extra fields" };
+      }
+    });
+    const outcomes = await runWithConcurrencyLimit(tasks, MAX_CUSTOM_FIELD_CONCURRENCY);
+    const failed = new Map<number, string>();
+    for (const o of outcomes) {
+      if (o && !o.ok) failed.set(o.rowIndex, o.error);
+    }
+    setCustomFieldFailures((prev) => {
+      const next = new Map(prev);
+      for (const r of rowsToSave) next.delete(r.rowIndex); // clear stale entries before applying fresh outcome
+      for (const [idx, err] of failed) next.set(idx, err);
+      return next;
+    });
+    return failed;
+  };
+
+  const handleRetryCustomFieldFailures = async () => {
+    if (!results || customFieldFailures.size === 0) return;
+    setRetryingCustomFields(true);
+    try {
+      const rowsToRetry = rows.filter((r) => customFieldFailures.has(r.rowIndex));
+      const failed = await runCustomFieldSaves(rowsToRetry, results);
+      if (failed.size === 0) {
+        toast({ title: t("submitForEmployee.bulk.results.title", { ns: "admin" }), description: "Extra fields saved for all retried rows." });
+      } else {
+        toast({
+          title: t("submitForEmployee.errors.title", { ns: "admin" }),
+          description: `${failed.size} row(s) still failed to save extra fields.`,
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setRetryingCustomFields(false);
     }
   };
 
@@ -219,9 +318,9 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
             <Button
               variant="outline"
               onClick={() => void handleDownloadRoster()}
-              disabled={generatingTemplate || employees.length === 0}
+              disabled={generatingTemplate || loadingFieldConfig || employees.length === 0 || !fieldConfig}
             >
-              {generatingTemplate
+              {generatingTemplate || loadingFieldConfig
                 ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 : <FileSpreadsheet className="mr-2 h-4 w-4" />}
               {t("submitForEmployee.bulk.downloadRoster", { ns: "admin" })}
@@ -386,13 +485,53 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
               </div>
             )}
 
+            {customFieldFailures.size > 0 && (
+              <div className="space-y-2">
+                <div className="rounded-md border border-destructive/50 overflow-x-auto max-h-72 overflow-y-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-16">{t("submitForEmployee.bulk.preview.row", { ns: "admin" })}</TableHead>
+                        <TableHead>{t("submitForEmployee.bulk.preview.employee", { ns: "admin" })}</TableHead>
+                        <TableHead>Extra-fields error</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {rows
+                        .filter((r) => customFieldFailures.has(r.rowIndex))
+                        .map((r) => (
+                          <TableRow key={r.rowIndex}>
+                            <TableCell className="tabular-nums">{r.rowIndex}</TableCell>
+                            <TableCell className="truncate max-w-[180px]">{r.referenceName || r.employeeId || r.email || "—"}</TableCell>
+                            <TableCell>
+                              <span className="text-destructive text-sm">
+                                Expense created, but extra fields failed to save: {customFieldFailures.get(r.rowIndex)}
+                              </span>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <Button variant="outline" onClick={() => void handleRetryCustomFieldFailures()} disabled={retryingCustomFields}>
+                  {retryingCustomFields ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                  Retry extra fields for {customFieldFailures.size} row(s)
+                </Button>
+              </div>
+            )}
+
             <div className="flex items-center gap-2">
               <Badge variant="secondary">
                 {t("submitForEmployee.bulk.results.succeededBadge", {
                   ns: "admin",
-                  count: results.filter((r) => r.ok).length,
+                  count: results.filter((r) => r.ok).length - customFieldFailures.size,
                 })}
               </Badge>
+              {customFieldFailures.size > 0 && (
+                <Badge variant="destructive">
+                  Extra fields failed: {customFieldFailures.size}
+                </Badge>
+              )}
               {results.some((r) => !r.ok) && (
                 <Badge variant="destructive">
                   {t("submitForEmployee.bulk.results.failedBadge", {
@@ -403,9 +542,14 @@ export function BulkExpenseImportPanel({ organizationId, employees, categories }
               )}
             </div>
 
-            <Button variant="outline" onClick={resetAll}>
+            <Button variant="outline" onClick={resetAll} disabled={customFieldFailures.size > 0}>
               {t("submitForEmployee.bulk.importAnother", { ns: "admin" })}
             </Button>
+            {customFieldFailures.size > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Resolve the extra-fields failures above before starting another import.
+              </p>
+            )}
           </CardContent>
         </Card>
       )}

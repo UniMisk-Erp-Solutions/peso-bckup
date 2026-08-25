@@ -1,8 +1,8 @@
 # Admin submits an expense on behalf of an employee
 
-**Doc ID:** DOC-107 / DOC-108
+**Doc ID:** DOC-107 / DOC-108 / DOC-109
 **Status:** deployed (backup instance) — not applied to Production
-**Last updated:** 2026-08-24
+**Last updated:** 2026-08-25
 **Owner / area:** Expenses, Admin Panel, Supabase
 
 ---
@@ -392,6 +392,205 @@ modified.
 
 ---
 
+## 4b) Org-accurate custom expense fields (DOC-109)
+
+### Problem
+
+Both tabs on this page originally only collected 6 generic fields. But the
+employee's own self-submit form (`ExpenseForm.tsx`) supports a full
+per-organization custom-field system that admins configure elsewhere: the 6
+base fields can be relabeled, hidden, made required, reordered, or turned
+into a dropdown with static options (`organization_expense_form_fields`);
+extra fields can be assigned to specific categories
+(`expense_form_field_templates` + `expense_category_form_fields`, six field
+types — text/number/date/textarea/select/checkbox); and a `select` field can
+have conditional sub-fields that only appear for a specific chosen option
+(`expense_form_field_option_branches`). None of this was visible on this
+page — an admin submitting for a MicroLink employee could not record the
+required project, which the employee's own form would have demanded.
+
+Real, live severity: **MicroLink** relabels "Destination" to "Customer /
+Site Location" as a 2,930-option dropdown, and requires a "Project Unique
+ID" select (502 options) on *every* category, which reveals two dependent
+branch fields ("Project ID", "Project Name") whose valid values differ for
+every one of those 502 projects. **Mistry And Shah** has a similar (messier)
+setup. Other orgs use plain defaults.
+
+### Solution
+
+No new SQL migrations. Every table, RPC and validation rule already existed
+and was already proven correct by the employee-facing form — the work here
+is a second **consumer** of that existing system, not a re-implementation:
+
+- **Single-employee tab**: fetches `organization_expense_form_fields` (base
+  overrides) and the selected category's assigned templates/branches,
+  exactly mirroring `ExpenseForm.tsx`'s own fetch functions. Renders the 6
+  base fields through the existing `BaseExpenseFieldInput` component (which
+  already knows how to render a dropdown/number/text override or fall back
+  to a default control) and the category's extra fields through the
+  existing `CategoryFormFieldsSection` component — the *exact same*
+  components the employee's own form renders with, not new UI. Required-ness
+  validation before submit reuses the existing `validateVisibleBranchFields`.
+- **Bulk CSV/Excel import**: `generateBulkExpenseExcelTemplate.ts` grows
+  dynamic columns — the base fields' labels/visibility/required-ness/dropdown
+  now come from `organization_expense_form_fields`; one `Field: <name>`
+  column per category-assigned template (with a real Excel dropdown for
+  `select` types, exactly like the existing Category dropdown); one
+  `Branch: <name>` column per **distinct `(parent_template_id, name)`**
+  group of conditional branches. `bulkExpenseImportParse.ts` became
+  org-config-driven: it recognizes the org's *current* custom base-field
+  labels as aliases (not just the English defaults) and dynamically maps
+  `Field:`/`Branch:` columns to the org's actual template/branch list.
+- **Saving custom-field values, for both tabs**: a *separate* follow-up call
+  to the existing `replace_expense_form_field_values` RPC after the base
+  expense is created — not a new parameter on `admin_submit_expense_for_employee_v1`
+  / `admin_bulk_submit_expenses_v1`. This mirrors the exact pattern
+  `ExpenseService.submitExpenseBatch` already uses (create, then separately
+  replace custom fields), confirmed correct by reading that RPC's own
+  source: its authorization already permits an org admin to write
+  custom-field values for *any* expense in their org, not just their own.
+
+### Why collapsing 1,008 raw branch rows to 2 spreadsheet columns is safe
+
+MicroLink's 1,008 `expense_form_field_option_branches` rows are not 1,008
+distinct fields — they're 2 field **names** ("Project ID", "Project Name"),
+each replicated once per parent project value (~502-506 of them), because
+picking a project reveals a project-specific project-ID/name pair. The
+roster collapses these to one column per **name** — but keyed on
+`(parent_template_id, name)`, not bare name: nothing in the schema
+guarantees two branches under *different* parent templates never share a
+display name, so a bare-name collapse could silently merge two unrelated
+fields. `orgExpenseFieldConfig.ts`'s `groupOptionBranches` detects any such
+collision and disambiguates the column header
+(`Branch: <parent template> → <name>`) rather than merging silently.
+
+### Why branch columns are plain validated text, not a live cascading dropdown
+
+A true Excel dependent dropdown needs one defined name per parent value —
+~500+ for MicroLink — and Excel defined names have real constraints (no
+leading digit, no spaces) that raw option values like `"197001M3"` won't
+satisfy without lossy sanitizing. Instead, a second **visible** "Reference"
+worksheet lists every parent-value → valid-value mapping as a plain,
+Ctrl+F-able lookup table (same "extra hidden sheet" mechanism the Category
+dropdown already used, just made visible instead of hidden). At import
+time, the entered value is still validated against the *exact* branch row
+matching that specific row's own parent-field value — an admin who copies
+the wrong project's "Project ID" into a row gets rejected with the specific
+valid options for the project they actually chose, not silently accepted.
+
+### The historical 1,000-row silent-truncation bug, and how this avoids repeating it
+
+DOC-097 already hit and fixed a bug where an unbounded fetch of
+`expense_form_field_option_branches` silently truncated past PostgREST's
+default row cap. MicroLink sits at exactly 1,008 raw branch rows — right at
+that boundary. `orgExpenseFieldConfig.ts`'s `fetchAllOptionBranches` never
+does a single unbounded `select()`; it pages explicitly via `.range()` until
+a page returns fewer rows than requested. **Proven, not assumed:**
+downloaded the roster, read the "Reference" sheet directly, and counted
+**1,009 rows (1,008 data rows + header) — exactly the live count**, with
+zero silent loss.
+
+### Known risk, explicitly designed around: two RPC calls, not one transaction
+
+`admin_submit_expense_for_employee_v1` creates the expense as
+`status='submitted'` and fires reviewer notifications in the **same
+transaction** as creation — before the follow-up custom-field save ever
+runs. If that follow-up fails (closed tab, network drop mid-batch), a
+required custom field can be **permanently** missing on an already-notified
+expense, because `replace_expense_form_field_values` itself never enforces
+required-ness server-side. This is the established pattern's known gap
+(`ExpenseService.submitExpenseBatch` has the identical gap today), not new.
+Mitigation: both tabs surface a **distinct third state** — "expense created,
+extra fields failed to save" — with an explicit retry that re-runs *only*
+the custom-field save (never re-creates the expense, which would duplicate
+it). The single form blocks submitting a new expense until any pending
+retry is resolved.
+
+### Verified — real bugs found and fixed during verification
+
+Three real bugs surfaced by end-to-end testing against the live MicroLink
+data, all fixed before landing:
+
+1. **i18n namespace mismatch**: `translateBaseFieldConfig`'s internal `t()`
+   calls expect `"expenses"` to be the *default* namespace (that's how
+   `ExpenseForm.tsx` itself calls it). This page's own `t` defaulted to
+   `"admin"`, so every base-field label rendered as a raw
+   `"form.fields.category"`-style key instead of "Category". Fixed with a
+   namespace-scoped `tExpenses` used only for that call.
+2. **Annotation-stripping not applied to base-field headers**: the roster
+   generator appends `" (required)"` to every column header, including base
+   fields — but the parser's header-matching only stripped that annotation
+   for `Field:`/`Branch:` columns, not for base-field aliases. Every
+   roster-generated base column (e.g. `"Purpose / Title (required)"`) failed
+   to map back on upload. Fixed by applying the same stripping to base-field
+   alias matching.
+3. **Non-nesting-aware paren stripping**: MicroLink's own category names
+   contain parens — e.g. `"Travelling (Public and Private Transport)"` — so
+   the generator's `"(for: <category list>)"` annotation is itself nested
+   inside parens. A `[^()]*`-style regex can't match across that nesting and
+   silently failed to strip anything, so every `Field:` column with a
+   category-list annotation failed to map back. Fixed by rewriting
+   `stripAnnotations` to track paren depth from the end of the string
+   instead of using a flat regex.
+
+End-to-end proof, real browser against the live backup DB, all test data
+cleaned up afterward:
+- **MicroLink single-employee tab**: selected category "Food", confirmed
+  "Project Unique ID" renders (required, all 9 categories); selected project
+  `197001M3`; confirmed the "Project ID"/"Project Name" branch dropdowns
+  appeared with *exactly* that project's options (`326, 506` /
+  `Training, Support`); submitted; read `expense_form_field_values` directly
+  and confirmed all three rows (one template, two branches) matched exactly,
+  with the branch rows correctly resolved to the specific `branch_field_id`
+  for parent value `197001M3`.
+- **MicroLink base-field dropdown**: confirmed "Customer / Site Location"
+  renders as a real searchable combobox (`role="combobox"`, confirmed via
+  DOM inspection, not just a screenshot) sourced from the 2,930 configured
+  options, with the custom label — not free text, not "Destination".
+- **MicroLink roster generation**: downloaded, unzipped, read the raw XML —
+  confirmed genuine `<dataValidation type="list">` on the destination column
+  (2,930 options), the category column (9), and the `Field: Project Unique
+  ID` column (502) — every count matching the live database exactly. The
+  visible "Reference" sheet had 1,009 rows, matching the live 1,008 branch
+  rows exactly (see above).
+- **Bulk import — correct rejection**: a row with `Project Unique ID =
+  197001M3` but `Project ID = 4182` (a value valid for a *different*
+  project) was rejected in preview with `"Project ID must be one of: 326,
+  506 (for Project Unique ID = 197001M3)"` — not silently accepted.
+- **Bulk import — stale value silently dropped**: a row on category "Food"
+  (which "To location" is not assigned to) with a value entered in the
+  `Field: To location` column imported successfully, and
+  `expense_form_field_values` for that expense contained **zero** rows for
+  "To location" — confirmed dropped, not validated against the wrong
+  category, not silently saved either.
+- **Zero-config sanity check (Bikes auto Hero)**: single form renders the
+  plain, unmodified 6-field form (default labels, no "Additional
+  Information" section); roster has only the base 9 columns and no
+  `Field:`/`Branch:` columns, no "Reference" sheet — confirms this is
+  additive, not a regression for orgs with nothing configured.
+- All test expenses, their `expense_form_field_values` rows, notifications,
+  and audit_logs were deleted afterward; both throwaway test admin accounts
+  (MicroLink, Bikes auto Hero) were deleted.
+
+### Key files (new/changed for DOC-109)
+
+| File | Purpose |
+|---|---|
+| `src/lib/orgExpenseFieldConfig.ts` | Fetches an org's full custom-field config (base overrides, category templates, branches), paginated; groups branches into spreadsheet columns |
+| `src/pages/AdminSubmitExpense.tsx` | Single-form tab: dynamic base fields via `BaseExpenseFieldInput`, category fields via `CategoryFormFieldsSection`, follow-up custom-field save with retry |
+| `src/lib/generateBulkExpenseExcelTemplate.ts` | Roster generator: dynamic `Field:`/`Branch:` columns, dropdowns for select-type fields, visible "Reference" sheet |
+| `src/lib/bulkExpenseImportParse.ts` | Org-config-driven header matching and validation, mirroring the live form's own rules |
+| `src/components/BulkExpenseImportPanel.tsx` | Fetches field config, wires the follow-up custom-field save (bounded concurrency, reused `runWithConcurrencyLimit`), third results state + retry |
+| `src/lib/adminSubmitExpense.ts` | `saveExpenseCustomFields` — the follow-up RPC wrapper |
+| `src/lib/expenseCustomFieldFilters.ts` | `runWithConcurrencyLimit` exported (was module-private) for reuse, not duplicated |
+
+Reused as-is, unmodified: `src/lib/expenseFormConfig.ts`,
+`src/lib/translateBaseFieldConfig.ts`, `src/components/BaseExpenseFieldInput.tsx`,
+`src/components/CategoryFormFieldsSection.tsx`, `src/lib/conditionalFormFields.ts`,
+`src/lib/expenseFormFieldPayload.ts`, `src/lib/organizationFeatureKeys.ts`.
+
+---
+
 ## 7) Known gaps
 
 - **Not applied to Production.** Backup instance only, per explicit
@@ -426,6 +625,32 @@ modified.
   count — the same list the employee picker already showed before this
   feature existed. Not a cross-org concern (proven in §4a); noted here only
   because the raw counts don't match at a glance.
+- **DOC-109**: custom-field save is a *separate* RPC call from expense
+  creation, not one transaction — a required custom field can be
+  permanently missing on an already-created, already-notified expense if
+  the follow-up call fails and is never retried. Explicitly designed
+  around, not hidden — see §4b's "Known risk" subsection for the mitigation
+  (distinct third result state, explicit retry that never re-creates the
+  expense).
+- **DOC-109**: conditional branch nesting beyond depth 1
+  (`parent_branch_id` pointing to another branch, not a template) is
+  supported by the schema (`MAX_CONDITIONAL_BRANCH_DEPTH = 3`) but not by
+  this feature's spreadsheet column generation or bulk-import validation —
+  `fetchAllOptionBranches` only fetches root branches
+  (`parent_branch_id IS NULL`). No live organization uses nesting today
+  (confirmed directly against the database before implementing), so this is
+  a deliberate scope boundary, not an untested edge case silently ignored —
+  but if an org configures nested branches in the future, this page's
+  bulk-import path will not represent them until extended. The
+  single-employee tab is unaffected: it renders `CategoryFormFieldsSection`
+  directly, which already supports nesting for the live form.
+- **DOC-109**: `ask_once_per_batch` (a category-template flag meaning "ask
+  once per interactive batch, apply to every line") has no effect on the
+  flat bulk-import spreadsheet — each row already carries its own explicit
+  value in its own column, so the data is correct either way; only the
+  batch-wizard's "ask once" UX convenience doesn't carry over. Confirmed 11
+  live assignments use this flag (mostly MicroLink's "Project Unique ID")
+  and verified this doesn't change validation or storage semantics.
 
 ---
 
@@ -436,3 +661,4 @@ modified.
 | 2026-08-24 | DOC-107 — admin submit-on-behalf-of-employee feature: migration, RPC (routing engine ported from approvalHierarchy.ts and proven against real data), page, nav entry; verified end-to-end in a real browser session against the backup instance; all test data cleaned up | Claude |
 | 2026-08-24 | DOC-108 — bulk CSV/Excel import added to the same page as a second tab; new RPC calls the DOC-107 RPC per row (zero changes to it); proven at 1,000 rows via direct SQL (989/11 split, 7.4s, zero orphaned data) and at 220 rows through the real browser UI (both CSV and .xlsx paths); confirmed the existing `AdminExpenseImportPanel`/`expenseImport.ts` is an unrelated JSON restore tool and left untouched; all test data and the throwaway admin cleaned up | Claude |
 | 2026-08-24 | DOC-108 follow-up — added a per-organization pre-filled roster download (.xlsx) with a real Excel dropdown on Category (new `exceljs` dependency, added after asking the user directly since the existing `xlsx` package can only read data validation, not write it); switched the Date column to DD-MM-YYYY per explicit instruction, converted client-side to ISO before the RPC call to avoid Postgres DateStyle ambiguity; proved on the live database that the roster contains zero cross-organization employee data (413/413 name+ID pairs matched MicroLink exactly) and that a day-≤12 date (05-08-2026) resolves correctly to 2026-08-05, not 2026-05-08; unzipped the generated file and confirmed the dropdown's `<dataValidation>` XML is genuinely present | Claude |
+| 2026-08-25 | DOC-109 — org-accurate custom expense fields on both tabs: base-field label/visibility/required/dropdown overrides, category-assigned custom fields (all 6 types), and conditional branch fields, reusing the employee self-submit form's own components/RPCs rather than reimplementing them (see §4b); zero new SQL migrations. Found and fixed three real bugs during live verification: an i18n namespace mismatch leaking raw translation keys, missing annotation-stripping on base-field header matching, and a naive paren-stripping regex that broke on category names (e.g. MicroLink's "Travelling (Public and Private Transport)") that are themselves parenthesized. Proved end-to-end against MicroLink's live data: exact single-form + DB parity for a dependent-dropdown chain (Project Unique ID → Project ID/Project Name), a bulk-import row correctly rejected for a branch value from the wrong parent option, a stale wrong-category value correctly and silently dropped, safe pagination proven to recover exactly 1,008/1,008 branch rows (avoiding the DOC-097 1,000-row silent-truncation bug), and a zero-config org (Bikes auto Hero) confirmed completely unaffected. All test data and both throwaway admin accounts cleaned up | Claude |

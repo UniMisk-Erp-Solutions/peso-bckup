@@ -10,7 +10,7 @@ export const MAX_CUSTOM_FIELD_CONCURRENCY = 3;
  * Run an array of async tasks with bounded concurrency.
  * Tasks that throw are caught — their slot is freed and results array gets `undefined`.
  */
-async function runWithConcurrencyLimit<T>(
+export async function runWithConcurrencyLimit<T>(
   tasks: (() => Promise<T>)[],
   maxConcurrency: number,
   signal?: AbortSignal,
