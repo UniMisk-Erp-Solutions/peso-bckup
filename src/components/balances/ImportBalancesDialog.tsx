@@ -38,6 +38,7 @@ import {
   type ImportRowDetail,
 } from "@/services/BalanceImportService";
 import {
+  amountHeaderForMode,
   buildStagedRowsFromSheet,
   canonicalStarterHeaders,
   resolveStarterSheetSchema,
