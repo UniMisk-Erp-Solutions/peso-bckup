@@ -220,6 +220,16 @@ ALTER TABLE public.balance_ledger
     'import_batch',
     'expense_approval',
     'reversal',
+    -- Restored on import into peso-bckup: the upstream branch's own rewrite
+    -- of this CHECK dropped 'money_return', which its own earlier migration
+    -- (20260820130000_money_return_approve_v2.sql, five files earlier in the
+    -- same branch) had added. This backup database already has real
+    -- balance_ledger rows with source_type='money_return' from applying
+    -- that migration -- the upstream list would both fail to apply here
+    -- (existing rows violate the narrower CHECK) and silently break every
+    -- future money-return approval once applied. Carried forward instead
+    -- of dropped.
+    'money_return',
     -- New: every historical-anchor ledger row's source_id points at the
     -- balance_historical_anchors.id it materializes/recalculates/reverses.
     'historical_anchor'
