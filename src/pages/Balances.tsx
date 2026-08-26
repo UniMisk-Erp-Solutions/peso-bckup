@@ -33,6 +33,10 @@ import { useOperationProgress } from "@/hooks/useOperationProgress";
 import { AsyncOperationProgress } from "@/components/AsyncOperationProgress";
 import { ListPagination } from "@/components/ListPagination";
 import { paginateItems, clampPage } from "@/lib/listPagination";
+import { addFunds, adjustBalance, validateImportBatchV2, applyImportBatchV2 } from "@/services/BalanceLedgerService";
+import { createImportBatch, insertImportRows, type StagedImportRow } from "@/services/BalanceImportService";
+import { ImportBalancesDialog } from "@/components/balances/ImportBalancesDialog";
+import { ImportHistoryDialog } from "@/components/balances/ImportHistoryDialog";
 
 interface ProfileRow {
   user_id: string;
@@ -131,6 +135,10 @@ export default function Balances() {
   const [editBalanceNewValue, setEditBalanceNewValue] = useState<string>("");
   const [editBalanceNote, setEditBalanceNote] = useState<string>("");
   const [editBalanceSaving, setEditBalanceSaving] = useState(false);
+
+  // Bulk balance import wizard + history (DOC-103) - admin only
+  const [importBalancesDialogOpen, setImportBalancesDialogOpen] = useState(false);
+  const [importHistoryDialogOpen, setImportHistoryDialogOpen] = useState(false);
 
   const {
     progress: loadProgress,
@@ -270,6 +278,20 @@ export default function Balances() {
 
     console.log('Setting up balance real-time subscription for cashier:', user.id);
 
+    // A bulk import can UPDATE hundreds of profile rows inside one server
+    // transaction; Postgres still emits one postgres_changes event per row.
+    // Without coalescing, each event below would trigger its own
+    // fetchProfiles() -- a 500-row import producing 500 refetches. Debounce
+    // to one refetch after the burst settles.
+    let refetchTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefetch = () => {
+      if (refetchTimer) clearTimeout(refetchTimer);
+      refetchTimer = setTimeout(() => {
+        refetchTimer = null;
+        fetchProfiles();
+      }, 400);
+    };
+
     const channel = supabase
       .channel(`balances-cashier-${user.id}`)
       .on('postgres_changes',
@@ -283,7 +305,7 @@ export default function Balances() {
           console.log('✅ Balances: Cashier balance updated via realtime:', payload);
           const newBalance = (payload.new as any)?.balance ?? 0;
           setCashierBalance(newBalance);
-          fetchProfiles(); // Refresh all profiles to show updated balances
+          scheduleRefetch();
         }
       )
       // Also listen for balance updates on employees under this cashier's engineer
@@ -296,7 +318,7 @@ export default function Balances() {
         (payload) => {
           // Refresh profiles when any balance changes (for employees under this cashier)
           console.log('✅ Balances: Profile balance updated, refreshing...');
-          fetchProfiles();
+          scheduleRefetch();
         }
       )
       .subscribe((status) => {
@@ -308,6 +330,7 @@ export default function Balances() {
 
     return () => {
       console.log('Cleaning up balances cashier subscription');
+      if (refetchTimer) clearTimeout(refetchTimer);
       supabase.removeChannel(channel);
     };
   };
@@ -674,17 +697,14 @@ export default function Balances() {
         return;
       }
 
-      let deductionPerformed = false;
-      const startingCashierBalance = cashierBalance;
-
-      // If cashier is adding funds, validate they can manage this employee
+      // Cashier zone/department scoping is a UX guard here; the server RPC
+      // re-validates authorization independently and is the actual source of
+      // truth -- this just gives a faster error before the round trip.
       if (userRole === 'cashier' && amountToAdd > 0 && user?.id) {
-        // Check if cashier can manage this employee (must be under their assigned engineer)
         const cashierProfile = rows.find(r => r.user_id === user.id);
         const cashierAssignedEngineerId = (cashierProfile as any)?.cashier_assigned_engineer_id;
 
         if (cashierAssignedEngineerId) {
-          // Cashier has assigned engineer - check if employee is under that engineer
           const employeeEngineerId = (currentRow as any)?.reporting_engineer_id;
 
           if (currentRow.role === 'employee' && employeeEngineerId !== cashierAssignedEngineerId) {
@@ -707,209 +727,41 @@ export default function Balances() {
             return;
           }
         }
+      }
 
-        if (paymentMode === "cash") {
-          // Cash mode: deduct from cashier wallet
-          console.log('Cashier balance check - Current balance:', cashierBalance, 'Amount to add:', amountToAdd);
-          if (cashierBalance < amountToAdd) {
-            console.log('Insufficient balance - need:', amountToAdd, 'have:', cashierBalance);
-            toast({
-              variant: "destructive",
-              title: "Insufficient Balance",
-              description: `You need ${formatINR(amountToAdd)} but only have ${formatINR(cashierBalance)}`
-            });
-            return;
-          }
+      if (!organizationId) {
+        throw new Error("Organization not found.");
+      }
 
-          console.log('Deducting from cashier balance:', cashierBalance, 'by:', amountToAdd);
+      // Canonical, server-authoritative mutation: the RPC locks the caller's
+      // (cash mode only) and target's profile rows, computes both balances in
+      // SQL, writes the ledger entry/entries, dual-writes the legacy
+      // money_assignments/cash_transfer_history compatibility rows, and
+      // returns the resulting balances -- all inside one transaction. The
+      // browser never computes or sends a before/after balance as authority.
+      const result = await addFunds({
+        targetUserId: userId,
+        amount: amountToAdd,
+        paymentMode,
+        sourceBankAccountId: paymentMode === "bank_transfer" ? sourceBankAccountId : null,
+        note,
+        idempotencyKey: crypto.randomUUID(),
+      });
 
-          const { error: cashierError } = await supabase
-            .from("profiles")
-            .update({ balance: cashierBalance - amountToAdd })
-            .eq("user_id", user.id);
+      const newBalance = result.target_balance_after ?? currentRow.balance ?? 0;
 
-          if (cashierError) {
-            console.error('Cashier balance update error:', cashierError);
-            throw cashierError;
-          }
-
-          setCashierBalance(cashierBalance - amountToAdd);
-          deductionPerformed = true;
-          console.log('Cashier balance updated in state');
-        } else {
-          // Bank transfer mode: only recipient gets credited; cashier wallet is unchanged.
-          console.log('Bank transfer mode selected for cashier, skipping sender wallet deduction');
+      // Create notification for the user who received the money.
+      if ((userRole === 'cashier' || userRole === 'admin') && user?.id) {
+        const { data: adderProfile } = await supabase
+          .from("profiles")
+          .select("name")
+          .eq("user_id", user.id)
+          .single();
+        if (adderProfile) {
+          await notifyBalanceAdded(userId, amountToAdd, adderProfile.name);
         }
       }
 
-      // Add to target user's balance
-      const newBalance = (currentRow.balance || 0) + amountToAdd;
-      console.log('New balance for user:', newBalance);
-
-      // Try to update the user's balance
-      const { data, error } = await supabase
-        .from("profiles")
-        .update({ balance: newBalance })
-        .eq("user_id", userId)
-        .select("user_id, balance");
-
-      if (error) {
-        console.error('User balance update error:', error);
-        // If user balance update fails, rollback cashier balance only if we actually deducted
-        if (userRole === 'cashier' && user?.id && deductionPerformed) {
-          console.log('Rolling back cashier balance...');
-          await supabase
-            .from("profiles")
-            .update({ balance: startingCashierBalance })
-            .eq("user_id", user.id);
-          setCashierBalance(startingCashierBalance);
-        }
-        throw error;
-      }
-      if (!data || data.length === 0) {
-        // RLS can block UPDATE without returning an error, so guard explicitly.
-        if (userRole === 'cashier' && user?.id && deductionPerformed) {
-          await supabase
-            .from("profiles")
-            .update({ balance: startingCashierBalance })
-            .eq("user_id", user.id);
-          setCashierBalance(startingCashierBalance);
-        }
-        throw new Error("Balance update was not permitted for this account.");
-      }
-
-      console.log('User balance updated successfully:', data);
-
-      // Record money assignment if cashier is adding money to an employee/engineer
-      // This tracks the path: cashier -> employee, so money can be returned to the same cashier
-      // Always record assignments when cashier adds money - this ensures complete transaction history
-      if (userRole === 'cashier' && user?.id && amountToAdd > 0) {
-        // Check if recipient is an employee or engineer (not admin or cashier)
-        const recipientRole = currentRow.role;
-        if (recipientRole === 'employee' || recipientRole === 'engineer') {
-          // Always record the assignment for transaction history
-          console.log('Recording money assignment:', {
-            cashier_id: user.id,
-            recipient_id: userId,
-            amount: amountToAdd,
-            recipientRole
-          });
-
-          const { data: insertedData, error: assignmentError } = await supabase
-            .from("money_assignments")
-            .insert({
-              cashier_id: user.id,
-              recipient_id: userId,
-              amount: amountToAdd,
-            })
-            .select();
-
-          if (assignmentError) {
-            console.error('Error recording money assignment:', assignmentError);
-            // Don't throw error - assignment recording is not critical for the transaction
-            // But log it for debugging
-          } else {
-            console.log('Money assignment recorded successfully:', insertedData);
-            console.log('Money assignment recorded: cashier', user.id, '-> employee', userId, 'amount:', amountToAdd);
-          }
-        }
-      }
-
-      // Log to cash transfer history (for both admin and cashier transfers)
-      if ((userRole === 'admin' || userRole === 'cashier') && user?.id && amountToAdd > 0) {
-        const recipientRole = currentRow.role;
-        let transferType: string | null = null;
-
-        if (userRole === 'admin') {
-          if (recipientRole === 'cashier') {
-            transferType = 'admin_to_cashier';
-          } else if (recipientRole === 'employee') {
-            transferType = 'admin_to_employee';
-          } else if (recipientRole === 'engineer') {
-            transferType = 'admin_to_engineer';
-          } else if (recipientRole === 'admin') {
-            transferType = 'admin_to_admin';
-          }
-        } else {
-          // cashier
-          if (recipientRole === 'employee') {
-            transferType = 'cashier_to_employee';
-          } else if (recipientRole === 'engineer') {
-            transferType = 'cashier_to_engineer';
-          }
-          // cashier can't transfer to admin or other cashiers - skip logging
-        }
-
-        // Only log if we have a valid transfer type
-        if (transferType) {
-          console.log('Logging cash transfer history:', {
-            organization_id: organizationId,
-            transferrer_id: user.id,
-            transferrer_role: userRole,
-            recipient_id: userId,
-            recipient_role: recipientRole,
-            amount: amountToAdd,
-            transfer_type: transferType,
-          });
-
-          if (!organizationId) {
-            console.error('Cannot log transfer history: organizationId is missing');
-            return;
-          }
-
-          const { data: historyData, error: historyError } = await supabase
-            .from("cash_transfer_history")
-            .insert({
-              organization_id: organizationId,
-              transferrer_id: user.id,
-              transferrer_role: userRole,
-              recipient_id: userId,
-              recipient_role: recipientRole,
-              amount: amountToAdd,
-              transfer_type: transferType,
-              payment_mode: paymentMode,
-              source_bank_account_id: paymentMode === "bank_transfer" ? sourceBankAccountId : null,
-              source_bank_name_snapshot: paymentMode === "bank_transfer" ? selectedBank?.bank_name || null : null,
-              source_account_holder_snapshot: paymentMode === "bank_transfer" ? selectedBank?.account_holder_name || null : null,
-              source_account_number_masked_snapshot: paymentMode === "bank_transfer" ? maskAccountNumber(selectedBank?.account_number) : null,
-              notes: note,
-            })
-            .select();
-
-          if (historyError) {
-            console.error('Error recording cash transfer history:', historyError);
-            console.error('Error details:', {
-              code: historyError.code,
-              message: historyError.message,
-              details: historyError.details,
-              hint: historyError.hint,
-            });
-            // Don't throw error - history logging is not critical for the transaction
-          } else {
-            console.log('Cash transfer history recorded successfully:', historyData);
-          }
-        } else {
-          console.log('Skipping transfer history log - invalid transfer type for cashier');
-        }
-      }
-
-      // Get cashier/admin name for notification
-      const { data: adderProfile } = await supabase
-        .from("profiles")
-        .select("name")
-        .eq("user_id", user?.id)
-        .single();
-
-      // Create notification for the user who received the money (both cashier and admin can add)
-      if ((userRole === 'cashier' || userRole === 'admin') && adderProfile) {
-        await notifyBalanceAdded(
-          userId,
-          amountToAdd,
-          adderProfile.name
-        );
-      }
-
-      // Check if balance was negative and is now compensated
       const wasNegative = (currentRow.balance || 0) < 0;
       const isNowPositive = newBalance >= 0;
       const compensationMessage = wasNegative && isNowPositive
@@ -923,24 +775,23 @@ export default function Balances() {
         description: `${currentRow.name}'s account:${compensationMessage}${paymentMode === "bank_transfer" ? ` via ${selectedBank?.bank_name || "bank transfer"}.` : ""}`
       });
 
-      // Update both recipient's balance and cashier's balance in the rows state
+      // Update both recipient's and (cash mode) actor's balance from the
+      // server-returned result -- never from a client-computed value.
       setRows(prev => prev.map(r => {
         if (r.user_id === userId) {
-          // Update recipient's balance
           return { ...r, balance: newBalance };
-        } else if (userRole === 'cashier' && user?.id && deductionPerformed && r.user_id === user.id) {
-          // Update cashier's balance in the table
-          const newCashierBalance = startingCashierBalance - amountToAdd;
-          return { ...r, balance: newCashierBalance };
+        } else if (paymentMode === "cash" && user?.id && r.user_id === user.id && result.actor_balance_after != null) {
+          return { ...r, balance: result.actor_balance_after };
         }
         return r;
       }));
+      if (paymentMode === "cash" && result.actor_balance_after != null) {
+        setCashierBalance(result.actor_balance_after);
+      }
 
-      // Clear the add amount input
       setAddAmounts(prev => ({ ...prev, [userId]: 0 }));
       setAddNotes(prev => ({ ...prev, [userId]: "" }));
 
-      // Refresh transfer history if history tab is active
       if (activeTab === "history") {
         fetchTransferHistory();
       }
@@ -973,113 +824,18 @@ export default function Balances() {
       const currentBalance = currentRow.balance || 0;
       const balanceDifference = newBalance - currentBalance;
 
-      // If cashier is adding funds, check if they have sufficient balance
-      if (userRole === 'cashier' && balanceDifference > 0 && user?.id) {
-        if (cashierBalance < balanceDifference) {
-          toast({
-            variant: "destructive",
-            title: "Insufficient Balance",
-            description: `You need ${formatINR(balanceDifference)} but only have ${formatINR(cashierBalance)}`
-          });
-          return;
-        }
+      // Canonical admin adjustment RPC: locks the target row, computes the
+      // delta in SQL, writes the immutable ledger entry (entry_type
+      // manual_adjustment), dual-writes cash_transfer_history for upward
+      // corrections only (matching prior behavior), and returns the actual
+      // resulting balance. Requires a reason server-side.
+      const result = await adjustBalance({
+        targetUserId: userId,
+        newBalance,
+        reason: note?.trim() || "Balance adjustment",
+      });
 
-        // Deduct from cashier's balance
-        const { error: cashierError } = await supabase
-          .from("profiles")
-          .update({ balance: cashierBalance - balanceDifference })
-          .eq("user_id", user.id);
-
-        if (cashierError) throw cashierError;
-
-        // Update cashier balance in state
-        setCashierBalance(cashierBalance - balanceDifference);
-      }
-
-      // Update target user's balance
-      const { data, error } = await supabase
-        .from("profiles")
-        .update({ balance: newBalance })
-        .eq("user_id", userId)
-        .select("user_id");
-
-      if (error) throw error;
-      if (!data || data.length === 0) {
-        throw new Error("Balance update was not permitted for this account.");
-      }
-
-      // Log to cash transfer history if balance increased (transfer occurred)
-      if ((userRole === 'admin' || userRole === 'cashier') && user?.id && balanceDifference > 0) {
-        const recipientRole = currentRow.role;
-        let transferType: string | null = null;
-
-        if (userRole === 'admin') {
-          if (recipientRole === 'cashier') {
-            transferType = 'admin_to_cashier';
-          } else if (recipientRole === 'employee') {
-            transferType = 'admin_to_employee';
-          } else if (recipientRole === 'engineer') {
-            transferType = 'admin_to_engineer';
-          } else if (recipientRole === 'admin') {
-            transferType = 'admin_to_admin';
-          }
-        } else {
-          // cashier
-          if (recipientRole === 'employee') {
-            transferType = 'cashier_to_employee';
-          } else if (recipientRole === 'engineer') {
-            transferType = 'cashier_to_engineer';
-          }
-          // cashier can't transfer to admin or other cashiers, skip logging
-        }
-
-        if (transferType) {
-          console.log('Logging cash transfer history (updateBalance):', {
-            organization_id: organizationId,
-            transferrer_id: user.id,
-            transferrer_role: userRole,
-            recipient_id: userId,
-            recipient_role: recipientRole,
-            amount: balanceDifference,
-            transfer_type: transferType,
-          });
-
-          if (!organizationId) {
-            console.error('Cannot log transfer history: organizationId is missing');
-            return;
-          }
-
-          const { data: historyData, error: historyError } = await supabase
-            .from("cash_transfer_history")
-            .insert({
-              organization_id: organizationId,
-              transferrer_id: user.id,
-              transferrer_role: userRole,
-              recipient_id: userId,
-              recipient_role: recipientRole,
-              amount: balanceDifference,
-              transfer_type: transferType,
-              payment_mode: "cash",
-              notes: note || undefined,
-            })
-            .select();
-
-          if (historyError) {
-            console.error('Error recording cash transfer history:', historyError);
-            console.error('Error details:', {
-              code: historyError.code,
-              message: historyError.message,
-              details: historyError.details,
-              hint: historyError.hint,
-            });
-            // Don't throw error - history logging is not critical for the transaction
-          } else {
-            console.log('Cash transfer history recorded successfully:', historyData);
-          }
-        } else {
-          console.log('Skipping transfer history log - invalid transfer type for cashier');
-        }
-      }
+      const finalBalance = result.balance_after ?? result.balance ?? newBalance;
 
       toast({
         title: "Balance updated",
@@ -1088,20 +844,8 @@ export default function Balances() {
           : "Employee balance has been saved"
       });
 
-      // Update both recipient's balance and cashier's balance in the rows state
-      setRows(prev => prev.map(r => {
-        if (r.user_id === userId) {
-          // Update recipient's balance
-          return { ...r, balance: newBalance };
-        } else if (userRole === 'cashier' && balanceDifference > 0 && user?.id && r.user_id === user.id) {
-          // Update cashier's balance in the table
-          const newCashierBalance = cashierBalance - balanceDifference;
-          return { ...r, balance: newCashierBalance };
-        }
-        return r;
-      }));
+      setRows(prev => prev.map(r => (r.user_id === userId ? { ...r, balance: finalBalance } : r)));
 
-      // Refresh transfer history if history tab is active
       if (activeTab === "history" && balanceDifference > 0) {
         fetchTransferHistory();
       }
@@ -1496,6 +1240,22 @@ export default function Balances() {
                     >
                       <Users className="h-4 w-4" />
                       Add to Multiple Users
+                    </Button>
+                  )}
+                  {userRole === 'admin' && (
+                    <Button
+                      variant="outline"
+                      onClick={() => setImportBalancesDialogOpen(true)}
+                    >
+                      Import Balances
+                    </Button>
+                  )}
+                  {userRole === 'admin' && (
+                    <Button
+                      variant="outline"
+                      onClick={() => setImportHistoryDialogOpen(true)}
+                    >
+                      Import History
                     </Button>
                   )}
                 </div>
@@ -2018,131 +1778,69 @@ export default function Balances() {
                         return;
                       }
 
-                      // Add amount to each selected user
-                      for (const userId of userIds) {
-                        try {
-                          const userRow = rows.find(r => r.user_id === userId);
-                          if (!userRow) continue;
-
-                          const currentBalance = userRow.balance || 0;
-                          const newBalance = currentBalance + bulkAmount;
-
-                          // Update balance in database
-                          const { data: updateData, error: updateError } = await supabase
-                            .from("profiles")
-                            .update({ balance: newBalance })
-                            .eq("user_id", userId)
-                            .select("user_id");
-
-                          if (updateError) throw updateError;
-                          if (!updateData || updateData.length === 0) {
-                            throw new Error("Balance update was not permitted for this account.");
-                          }
-
-                          // Log to cash transfer history (admin bulk transfers)
-                          if (userRole === 'admin' && user?.id) {
-                            const recipientRole = userRow.role;
-                            let transferType: string;
-
-                            if (recipientRole === 'cashier') {
-                              transferType = 'admin_to_cashier';
-                            } else if (recipientRole === 'employee') {
-                              transferType = 'admin_to_employee';
-                            } else if (recipientRole === 'engineer') {
-                              transferType = 'admin_to_engineer';
-                            } else if (recipientRole === 'admin') {
-                              transferType = 'admin_to_admin';
-                            }
-
-                            console.log('Logging cash transfer history (bulk):', {
-                              organization_id: organizationId,
-                              transferrer_id: user.id,
-                              transferrer_role: 'admin',
-                              recipient_id: userId,
-                              recipient_role: recipientRole,
-                              amount: bulkAmount,
-                              transfer_type: transferType,
-                            });
-
-                            if (!organizationId) {
-                              console.error('Cannot log transfer history: organizationId is missing');
-                              return;
-                            }
-
-                            const { data: historyData, error: historyError } = await supabase
-                              .from("cash_transfer_history")
-                              .insert({
-                                organization_id: organizationId,
-                                transferrer_id: user.id,
-                                transferrer_role: 'admin',
-                                recipient_id: userId,
-                                recipient_role: recipientRole,
-                                amount: bulkAmount,
-                                transfer_type: transferType,
-                                payment_mode: paymentMode,
-                                source_bank_account_id: paymentMode === "bank_transfer" ? selectedBank?.id || null : null,
-                                source_bank_name_snapshot: paymentMode === "bank_transfer" ? selectedBank?.bank_name || null : null,
-                                source_account_holder_snapshot: paymentMode === "bank_transfer" ? selectedBank?.account_holder_name || null : null,
-                                source_account_number_masked_snapshot: paymentMode === "bank_transfer" ? maskAccountNumber(selectedBank?.account_number) : null,
-                                notes: trimmedBulkNote,
-                              })
-                              .select();
-
-                            if (historyError) {
-                              console.error('Error recording cash transfer history:', historyError);
-                              console.error('Error details:', {
-                                code: historyError.code,
-                                message: historyError.message,
-                                details: historyError.details,
-                                hint: historyError.hint,
-                              });
-                              // Don't throw error - history logging is not critical
-                            } else {
-                              console.log('Cash transfer history recorded successfully:', historyData);
-                            }
-                          }
-
-                          // Send notification
-                          if (adminProfile) {
-                            await notifyBalanceAdded(
-                              userId,
-                              bulkAmount,
-                              adminProfile.name
-                            );
-                          }
-
-                          successCount++;
-                          updateBulkProgress(t("balances:progress.bulkAdding", { current: successCount + errorCount, total: userIds.length }), { completed: successCount + errorCount, total: userIds.length });
-                        } catch (error) {
-                          console.error(`Error adding amount to user ${userId}:`, error);
-                          errorCount++;
-                          updateBulkProgress(t("balances:progress.bulkAdding", { current: successCount + errorCount, total: userIds.length }), { completed: successCount + errorCount, total: userIds.length });
-                        }
+                      // Atomic server batch mutation: stage one allocation-mode
+                      // import row per selected user and Apply it through the
+                      // same canonical, all-or-nothing import RPC used by the
+                      // Import Balances wizard -- not one PATCH per person.
+                      // (Bulk Add is admin-only in this UI, and imports are a
+                      // pure administrative credit with no actor debit, so
+                      // this is behaviorally equivalent to the prior admin
+                      // bulk-add path, which never debited the admin either.)
+                      if (!organizationId) {
+                        throw new Error("Organization not found.");
                       }
+                      updateBulkProgress(t("balances:progress.bulkAdding", { current: 0, total: userIds.length }), { completed: 0, total: userIds.length });
 
-                      // Update local state
+                      const bulkBatch = await createImportBatch({
+                        organizationId,
+                        mode: "allocation",
+                        originalFilename: `bulk-add-${new Date().toISOString()}.json`,
+                        note: trimmedBulkNote,
+                      });
+                      const bulkRows: StagedImportRow[] = userIds
+                        .map((userId, idx) => {
+                          const userRow = rows.find((r) => r.user_id === userId);
+                          if (!userRow) return null;
+                          return {
+                            rowNumber: idx + 1,
+                            rawEmployeeId: userRow.employee_id || null,
+                            rawEmail: userRow.employee_id ? null : userRow.email || null,
+                            inputAmount: bulkAmount,
+                            effectiveDate: null,
+                            note: trimmedBulkNote,
+                          };
+                        })
+                        .filter((r): r is StagedImportRow => r !== null);
+                      await insertImportRows(bulkBatch.id, bulkRows);
+                      await validateImportBatchV2(bulkBatch.id);
+                      const applyResult = await applyImportBatchV2(bulkBatch.id);
+
+                      const afterByUser = new Map<string, number>();
+                      for (const r of applyResult.rows || []) {
+                        const matchedRow = rows.find(
+                          (row) => row.employee_id === r.employee_id || row.name === r.employee_name,
+                        );
+                        if (matchedRow) afterByUser.set(matchedRow.user_id, r.after);
+                      }
+                      successCount = applyResult.changed_count;
+                      errorCount = 0;
+
                       setRows(prev => prev.map(r => {
-                        if (selectedUserIds.has(r.user_id)) {
-                          return { ...r, balance: (r.balance || 0) + bulkAmount };
-                        }
-                        return r;
+                        const after = afterByUser.get(r.user_id);
+                        return after != null ? { ...r, balance: after } : r;
                       }));
 
-                      // Show success/error message
-                      if (errorCount === 0) {
-                        completeBulkProgress(t("balances:progress.bulkComplete"));
-                        toast({
-                          title: "Success",
-                          description: `${paymentMode === "bank_transfer" ? "Transferred" : "Added"} ${formatINR(bulkAmount)} to ${successCount} user(s)`,
-                        });
-                      } else {
-                        warnBulkProgress(t("balances:progress.bulkComplete"), { description: t("balances:progress.bulkPartial", { succeeded: successCount, total: userIds.length }) });
-                        toast({
-                          variant: "destructive",
-                          title: "Partial Success",
-                          description: `Added amount to ${successCount} user(s), ${errorCount} failed`,
-                        });
+                      if (adminProfile) {
+                        for (const userId of userIds) {
+                          await notifyBalanceAdded(userId, bulkAmount, adminProfile.name);
+                        }
                       }
+
+                      completeBulkProgress(t("balances:progress.bulkComplete"));
+                      toast({
+                        title: "Success",
+                        description: `Added ${formatINR(bulkAmount)} to ${successCount} user(s)`,
+                      });
 
                       // Close dialog and reset
                       setBulkAddDialogOpen(false);
@@ -2376,6 +2074,21 @@ export default function Balances() {
             </DialogContent>
           </Dialog>
 
+          {userRole === 'admin' && organizationId && (
+            <ImportBalancesDialog
+              open={importBalancesDialogOpen}
+              onOpenChange={setImportBalancesDialogOpen}
+              organizationId={organizationId}
+              onImportApplied={fetchProfiles}
+            />
+          )}
+          {userRole === 'admin' && organizationId && (
+            <ImportHistoryDialog
+              open={importHistoryDialogOpen}
+              onOpenChange={setImportHistoryDialogOpen}
+              organizationId={organizationId}
+            />
+          )}
 
           <div className="text-sm text-muted-foreground">
             {userRole === 'cashier'

@@ -60,7 +60,7 @@ export class BalanceTransferOfferService {
     transferrerName: string;
     recipientName: string;
   }): Promise<string> {
-    const { data, error } = await supabase.rpc("propose_balance_transfer_offer", {
+    const { data, error } = await (supabase.rpc as any)("propose_balance_transfer_offer_v2", {
       p_organization_id: input.organizationId,
       p_recipient_id: input.recipientId,
       p_amount: input.amount,
@@ -88,7 +88,7 @@ export class BalanceTransferOfferService {
     offerId: string,
     input: { transferrerId: string; recipientName: string; amount: number },
   ): Promise<void> {
-    const { error } = await supabase.rpc("accept_balance_transfer_offer", {
+    const { error } = await (supabase.rpc as any)("accept_balance_transfer_offer_v2", {
       p_offer_id: offerId,
     });
     if (error) throw error;

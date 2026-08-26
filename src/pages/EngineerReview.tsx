@@ -2717,7 +2717,18 @@ export default function ManagerReview() {
     if (!selectedExpense || !user) return;
     const exp = selectedExpense;
 
-    const isReady = isPendingForCurrentReviewer(exp);
+    // Server-authoritative Ready/Waiting preview (DOC-103/DOC-080). Fail
+    // closed on any preview failure: no approval, no dialog, retry only.
+    const serverClassification = await classifySelectionServerAuthoritative([exp]);
+    if (!serverClassification) {
+      toast({
+        variant: "destructive",
+        title: t("admin:review.toast.approvalResolutionFailed"),
+        description: t("admin:review.toast.approvalResolutionFailedDescription"),
+      });
+      return;
+    }
+    const isReady = serverClassification.readyNow.includes(exp.id);
     const isTerminal = isTerminalReviewStatus(exp.status);
     const overLimit = Number(exp.total_amount) > Number(engineerApprovalLimit);
 
@@ -2726,7 +2737,7 @@ export default function ManagerReview() {
     // waiting-but-eligible row, or stays disabled for over-limit / no-capability.
     if (!isReady || isTerminal || overLimit) {
       setApprovalWarning({
-        classification: classifySelection([exp]),
+        classification: serverClassification,
         selectedTotal: Number(exp.total_amount || 0),
         mode: "single",
         targets: [exp],
@@ -3343,6 +3354,51 @@ export default function ManagerReview() {
       Number(engineerApprovalLimit),
     );
 
+  /**
+   * DOC-103/DOC-080 server-authoritative approval preview. classifySelection
+   * above (isPendingForCurrentReviewer) is a frontend reimplementation of the
+   * same actionability rules the server already computes canonically — it can
+   * disagree. This calls the new read-only review_preview_approval_targets_v1
+   * RPC (reuses the exact same helpers the live review queue itself uses;
+   * approval authorization logic is not reimplemented here) and classifies
+   * using the SERVER's is_actionable per expense instead of the client
+   * heuristic. classifyForApproval's own (correct, unchanged) approval-limit
+   * logic still runs on top. Returns null on any failure — the caller must
+   * treat that as fail-closed: no dialog, no approval, retry only.
+   */
+  const classifySelectionServerAuthoritative = async (
+    targets: Expense[],
+  ): Promise<ReturnType<typeof classifyForApproval> | null> => {
+    if (!organizationId || targets.length === 0) return null;
+    try {
+      const { data, error } = await (supabase.rpc as any)("review_preview_approval_targets_v1", {
+        p_organization_id: organizationId,
+        p_expense_ids: targets.map((e) => e.id),
+      });
+      if (error) return null;
+      const rows = (data ?? []) as Array<{ expense_id: string; is_actionable: boolean; is_terminal: boolean }>;
+      if (rows.length !== targets.length) return null; // server didn't resolve every target — fail closed
+      const byId = new Map(rows.map((r) => [r.expense_id, r]));
+      const inputs = targets.map((e) => {
+        const preview = byId.get(e.id);
+        if (!preview) return null;
+        return {
+          id: e.id,
+          isReadyNow: preview.is_actionable,
+          isTerminal: preview.is_terminal,
+          amount: Number(e.total_amount),
+        };
+      });
+      if (inputs.some((i) => i === null)) return null;
+      return classifyForApproval(
+        inputs as { id: string; isReadyNow: boolean; isTerminal: boolean; amount: number }[],
+        Number(engineerApprovalLimit),
+      );
+    } catch {
+      return null;
+    }
+  };
+
   const handleBulkApprove = async () => {
     if (!user) return;
     const resolution = await resolveApprovalTargets();
@@ -3358,7 +3414,21 @@ export default function ManagerReview() {
     }
     const targets = resolution.targets;
     if (!targets.length) return;
-    const classification = classifySelection(targets);
+
+    // Server-authoritative Ready/Waiting preview (DOC-103/DOC-080). Fail
+    // closed on any preview failure: no dialog, no approval, retry only —
+    // never fall back to the frontend isPendingForCurrentReviewer heuristic
+    // for this decision.
+    const classification = await classifySelectionServerAuthoritative(targets);
+    if (!classification) {
+      toast({
+        variant: "destructive",
+        title: t("admin:review.toast.approvalResolutionFailed"),
+        description: t("admin:review.toast.approvalResolutionFailedDescription"),
+      });
+      return;
+    }
+
     // Anything not immediately approvable (waiting / over-limit / terminal) must be
     // confirmed first. This mutates NOTHING — the dialog decides.
     if (needsApprovalWarning(classification)) {

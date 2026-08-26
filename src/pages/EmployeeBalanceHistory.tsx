@@ -24,6 +24,7 @@ import {
   useEmployeeBalanceHistory,
   type BalanceCreditRow,
 } from "@/hooks/useEmployeeBalanceHistory";
+import { useEmployeeBalanceLedger } from "@/hooks/useEmployeeBalanceLedger";
 
 const DEFAULT_PAGE_SIZE = 25;
 
@@ -46,6 +47,8 @@ export default function EmployeeBalanceHistory() {
 
   const { featureEnabled, data, isLoading, isError, isFetching, refetch } =
     useEmployeeBalanceHistory(page, pageSize);
+  const [ledgerPage, setLedgerPage] = useState(1);
+  const ledger = useEmployeeBalanceLedger(ledgerPage, DEFAULT_PAGE_SIZE);
 
   // Records can change between renders (a new credit lands, an admin backdates a
   // row). Clamp so the view never sits on a page that no longer exists.
@@ -75,6 +78,21 @@ export default function EmployeeBalanceHistory() {
     name?.trim() ? name : t("transfers:balanceHistory.systemCredit");
 
   const formatDate = (iso: string) => format(new Date(iso), "d MMM yyyy");
+
+  const ledgerEntryTypeLabel = (entryType: string) => {
+    const labels: Record<string, string> = {
+      historical_opening: "Opening Balance",
+      allocation: "Allocation",
+      manual_adjustment: "Adjustment",
+      cash_transfer_in: "Cash Transfer",
+      cash_transfer_out: "Cash Transfer",
+      bank_transfer: "Bank Transfer",
+      expense_deduction: "Expense Deduction",
+      reversal: "Reversal",
+      correction: "Correction",
+    };
+    return labels[entryType] ?? entryType;
+  };
 
   // Feature off → no data request was made (the hook stays disabled) and the
   // employee simply goes back to the dashboard. No premium teaser, no shell.
@@ -278,6 +296,75 @@ export default function EmployeeBalanceHistory() {
               setPageSize(size);
               setPage(1);
             }}
+          />
+        )}
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base sm:text-lg">Balance Ledger</CardTitle>
+          <CardDescription>
+            Every recorded change to your balance, in order: opening balances, allocations,
+            cash transfers, adjustments and reversals. Expense deductions are not yet included
+            here -- see your expense history for those.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="px-3 sm:px-6">
+          {ledger.isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : ledger.isError ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              Could not load your balance ledger.
+            </p>
+          ) : ledger.data.rows.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">No ledger entries yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="whitespace-nowrap">Date</TableHead>
+                    <TableHead className="whitespace-nowrap">Type</TableHead>
+                    <TableHead className="whitespace-nowrap">Amount</TableHead>
+                    <TableHead className="whitespace-nowrap">Balance After</TableHead>
+                    <TableHead>Note</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {ledger.data.rows.map((entry) => (
+                    <TableRow key={entry.id}>
+                      <TableCell className="whitespace-nowrap">{formatDate(entry.effective_at)}</TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">{ledgerEntryTypeLabel(entry.entry_type)}</Badge>
+                      </TableCell>
+                      <TableCell
+                        className={`font-semibold whitespace-nowrap ${entry.amount_delta >= 0 ? "text-green-700" : "text-red-600"}`}
+                      >
+                        {entry.amount_delta >= 0 ? "+" : ""}
+                        {formatINR(entry.amount_delta, moneyLocale)}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {formatINR(entry.balance_after, moneyLocale)}
+                      </TableCell>
+                      <TableCell className="max-w-[240px] truncate text-muted-foreground">
+                        {entry.note || "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+        {!ledger.isLoading && !ledger.isError && ledger.data.totalCount > 0 && (
+          <ListPagination
+            page={ledgerPage}
+            pageSize={DEFAULT_PAGE_SIZE}
+            totalItems={ledger.data.totalCount}
+            onPageChange={setLedgerPage}
+            onPageSizeChange={() => undefined}
           />
         )}
       </Card>

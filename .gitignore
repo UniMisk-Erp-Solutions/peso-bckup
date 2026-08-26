@@ -113,6 +113,10 @@ pesowise backup/
 .local-sensitive-data/
 scripts/data/private/
 scripts/data/local/
+
+# Python bytecode from the scripts/_ssh_*.py operational tooling
+__pycache__/
+*.pyc
 *.private.tsv
 *.private.csv
 *.private.json

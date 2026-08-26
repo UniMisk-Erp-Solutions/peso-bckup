@@ -456,7 +456,6 @@ export default function Expenses() {
       // Determine target role and find target user
       let targetRole: "cashier" | "admin" | null = null;
       let targetUserId: string | null = null;
-      let transferOrganizationId: string | null = null;
 
       if (userRole === "engineer" || userRole === "employee") {
         targetRole = "cashier";
@@ -585,7 +584,6 @@ export default function Expenses() {
         }
 
         if (cashierMembership?.organization_id) {
-          transferOrganizationId = cashierMembership.organization_id;
           const { data: adminMemberships, error: adminMembershipsError } = await supabase
             .from("organization_memberships")
             .select("user_id")
@@ -655,66 +653,22 @@ export default function Expenses() {
         return;
       }
 
-      // For cashiers returning to admin, process immediately (no approval needed)
-      // Get target user's current balance
-      const { data: targetProfile, error: targetError } = await supabase
-        .from("profiles")
-        .select("balance, name")
-        .eq("user_id", targetUserId)
-        .single();
+      // For cashiers returning to admin, process immediately (no approval
+      // needed) via the atomic server RPC -- locks both profile rows,
+      // resolves the caller from auth.uid() server-side, and writes
+      // balance_ledger + cash_transfer_history in the same transaction as
+      // the balance mutation. No browser balance arithmetic, no partial
+      // failure.
+      const { data: returnResult, error: returnError } = await (supabase.rpc as any)(
+        "cashier_return_money_to_admin_v2",
+        {
+          p_admin_user_id: targetUserId,
+          p_amount: amount,
+          p_note: returnNote.trim() || null,
+        },
+      );
 
-      if (targetError) throw targetError;
-
-      // Deduct from current user's balance
-      const newUserBalance = userBalance - amount;
-      const { error: userBalanceError } = await supabase
-        .from("profiles")
-        .update({ balance: newUserBalance })
-        .eq("user_id", user.id);
-
-      if (userBalanceError) throw userBalanceError;
-
-      // Add to target user's balance
-      const newTargetBalance = (targetProfile.balance || 0) + amount;
-      const { error: targetBalanceError } = await supabase
-        .from("profiles")
-        .update({ balance: newTargetBalance })
-        .eq("user_id", targetUserId);
-
-      if (targetBalanceError) throw targetBalanceError;
-
-      // Log cashier -> admin return in transfer history for audit and reporting.
-      if (userRole === "cashier" && targetRole === "admin") {
-        if (!transferOrganizationId) {
-          const { data: profileOrg } = await supabase
-            .from("profiles")
-            .select("organization_id")
-            .eq("user_id", user.id)
-            .single();
-          transferOrganizationId = (profileOrg as any)?.organization_id || null;
-        }
-
-        if (transferOrganizationId) {
-          const { error: historyError } = await supabase
-            .from("cash_transfer_history")
-            .insert({
-              organization_id: transferOrganizationId,
-              transferrer_id: user.id,
-              transferrer_role: "cashier",
-              recipient_id: targetUserId,
-              recipient_role: "admin",
-              amount,
-              transfer_type: "cashier_to_admin",
-              payment_mode: "cash",
-              notes: returnNote.trim()
-                ? `Cashier returned money to admin: ${returnNote.trim()}`
-                : "Cashier returned money to admin",
-            });
-          if (historyError) {
-            console.error("Failed to log cashier return in transfer history:", historyError);
-          }
-        }
-      }
+      if (returnError) throw returnError;
 
       // Update local state
       void refreshBalance();
@@ -724,7 +678,7 @@ export default function Expenses() {
 
       toast({
         title: "Money Returned Successfully",
-        description: `Returned ${formatINR(amount)} to ${targetProfile.name || targetRole}. Your new balance: ${formatINR(newUserBalance)}`,
+        description: `Returned ${formatINR(amount)} to ${returnResult?.admin_name || targetRole}. Your new balance: ${formatINR(returnResult?.cashier_balance_after ?? userBalance - amount)}`,
       });
     } catch (error: any) {
       console.error("Error returning money:", error);

@@ -20,14 +20,6 @@ export interface MoneyReturnRequest {
 }
 
 export class MoneyReturnService {
-  private static buildTransferHistoryNote(requestId: string, requestNote?: string | null): string {
-    const cleanedNote = requestNote?.trim();
-    if (!cleanedNote) {
-      return `Money return request approved (${requestId})`;
-    }
-    return `Money return request approved (${requestId}): ${cleanedNote}`;
-  }
-
   private static async getOrganizationIdForUser(userId: string): Promise<string | null> {
     const { data, error } = await supabase
       .from("organization_memberships")
@@ -38,79 +30,6 @@ export class MoneyReturnService {
       .maybeSingle();
     if (error) return null;
     return data?.organization_id ?? null;
-  }
-
-  private static async getPrimaryRoleForUser(userId: string, organizationId: string): Promise<"employee" | "engineer" | "cashier" | "admin" | null> {
-    const { data, error } = await supabase
-      .from("organization_memberships")
-      .select("role")
-      .eq("user_id", userId)
-      .eq("organization_id", organizationId)
-      .eq("is_active", true);
-
-    if (error || !data || data.length === 0) return null;
-
-    const roles = data.map((r) => r.role);
-    if (roles.includes("admin")) return "admin";
-    if (roles.includes("cashier")) return "cashier";
-    if (roles.includes("engineer")) return "engineer";
-    if (roles.includes("employee")) return "employee";
-    return null;
-  }
-
-  private static async logApprovedReturnToTransferHistory(request: any, cashierId: string): Promise<void> {
-    const amount = Number(request.amount);
-    const approvedAt = request.approved_at || new Date().toISOString();
-    const organizationId =
-      request.organization_id ||
-      (await this.getOrganizationIdForUser(cashierId));
-
-    if (!organizationId || !amount || amount <= 0) return;
-
-    const requesterRole = await this.getPrimaryRoleForUser(request.requester_id, organizationId);
-    if (requesterRole !== "employee" && requesterRole !== "engineer") return;
-
-    const transferType = requesterRole === "engineer" ? "engineer_to_cashier" : "employee_to_cashier";
-
-    // Avoid duplicate insert when DB trigger already wrote the history row.
-    const desiredNote = this.buildTransferHistoryNote(request.id, request.note);
-    const { data: existing } = await supabase
-      .from("cash_transfer_history")
-      .select("id, notes")
-      .eq("organization_id", organizationId)
-      .eq("transferrer_id", request.requester_id)
-      .eq("recipient_id", cashierId)
-      .eq("transfer_type", transferType)
-      .eq("amount", amount)
-      .eq("transferred_at", approvedAt)
-      .limit(1)
-      .maybeSingle();
-
-    if (existing?.id) {
-      if ((existing.notes || "") !== desiredNote) {
-        await supabase.from("cash_transfer_history").update({ notes: desiredNote }).eq("id", existing.id);
-      }
-      return;
-    }
-
-    const { error: historyError } = await supabase
-      .from("cash_transfer_history")
-      .insert({
-        organization_id: organizationId,
-        transferrer_id: request.requester_id,
-        transferrer_role: requesterRole,
-        recipient_id: cashierId,
-        recipient_role: "cashier",
-        amount,
-        transfer_type: transferType,
-        transferred_at: approvedAt,
-        payment_mode: "cash",
-        notes: desiredNote,
-      });
-
-    if (historyError) {
-      console.error("Failed to log money return transfer history:", historyError);
-    }
   }
 
   /**
@@ -191,149 +110,49 @@ export class MoneyReturnService {
   }
 
   /**
-   * Approve a money return request (cashier action)
+   * Approve a money return request (cashier action). Server-authoritative:
+   * approve_money_return_request_v2 locks the request and both profile
+   * rows, resolves the amount from the request (never the browser), and
+   * writes the balance mutation, ledger, history, and money_assignments
+   * consumption in one transaction. Insufficient balance at approval time
+   * rejects the request server-side with zero balance mutation -- surfaced
+   * here as a thrown Error so existing callers' catch/toast handling is
+   * unchanged.
    */
   static async approveReturnRequest(
     requestId: string,
     cashierId: string
   ): Promise<void> {
-    // Get the request
-    const { data: request, error: fetchError } = await supabase
-      .from("money_return_requests")
-      .select("*")
-      .eq("id", requestId)
-      .eq("cashier_id", cashierId)
-      .eq("status", "pending")
-      .single();
+    const { data, error } = await (supabase.rpc as any)("approve_money_return_request_v2", {
+      p_request_id: requestId,
+    });
 
-    if (fetchError) throw fetchError;
-    if (!request) throw new Error("Return request not found or already processed");
+    if (error) throw error;
 
-    // Verify requester still has sufficient balance
-    const { data: requesterProfile, error: requesterError } = await supabase
-      .from("profiles")
-      .select("balance, name")
-      .eq("user_id", request.requester_id)
-      .single();
-
-    if (requesterError) throw requesterError;
-
-    const requesterBalance = Number(requesterProfile?.balance ?? 0);
-    const amount = Number(request.amount);
-
-    if (amount > requesterBalance) {
-      // Reject the request if insufficient balance
-      await supabase
-        .from("money_return_requests")
-        .update({
-          status: "rejected",
-          rejected_at: new Date().toISOString(),
-          rejected_by: cashierId,
-          rejection_reason: "Insufficient balance at time of approval",
-        })
-        .eq("id", requestId);
-
+    if (data?.rejected) {
       throw new Error("Requester has insufficient balance. Request has been rejected.");
     }
 
-    // Get cashier's current balance
-    const { data: cashierProfile, error: cashierError } = await supabase
-      .from("profiles")
-      .select("balance, name")
-      .eq("user_id", cashierId)
-      .single();
+    const amount = Number(data?.amount ?? 0);
 
-    if (cashierError) throw cashierError;
+    // Notification is best-effort, after the mutation already committed --
+    // the requester_id isn't part of the RPC's result payload, so re-read
+    // the (now-approved) request row, which RLS still allows the cashier to
+    // see since they are money_return_requests.cashier_id on it.
+    const [{ data: request }, { data: cashierProfile }] = await Promise.all([
+      supabase.from("money_return_requests").select("requester_id").eq("id", requestId).maybeSingle(),
+      supabase.from("profiles").select("name").eq("user_id", cashierId).single(),
+    ]);
 
-    // Start transaction: Deduct from requester and add to cashier
-    const newRequesterBalance = requesterBalance - amount;
-    const newCashierBalance = (Number(cashierProfile?.balance ?? 0)) + amount;
-
-    // Update requester balance
-    const { error: requesterUpdateError } = await supabase
-      .from("profiles")
-      .update({ balance: newRequesterBalance })
-      .eq("user_id", request.requester_id);
-
-    if (requesterUpdateError) throw requesterUpdateError;
-
-    // Update cashier balance
-    const { error: cashierUpdateError } = await supabase
-      .from("profiles")
-      .update({ balance: newCashierBalance })
-      .eq("user_id", cashierId);
-
-    if (cashierUpdateError) {
-      // Rollback requester balance if cashier update fails
-      await supabase
-        .from("profiles")
-        .update({ balance: requesterBalance })
-        .eq("user_id", request.requester_id);
-      throw cashierUpdateError;
+    if (request?.requester_id) {
+      const cashierName = cashierProfile?.name || "Cashier";
+      await createNotification({
+        userId: request.requester_id,
+        type: "balance_added",
+        title: "Money Return Approved",
+        message: `Your return request of ${formatINR(amount)} has been approved by ${cashierName}. Amount deducted from your balance.`,
+      });
     }
-
-    // Mark request as approved
-    const { error: updateError } = await supabase
-      .from("money_return_requests")
-      .update({
-        status: "approved",
-        approved_at: new Date().toISOString(),
-        approved_by: cashierId,
-      })
-      .eq("id", requestId);
-
-    if (updateError) {
-      // Rollback both balances if update fails
-      await supabase
-        .from("profiles")
-        .update({ balance: requesterBalance })
-        .eq("user_id", request.requester_id);
-      await supabase
-        .from("profiles")
-        .update({ balance: Number(cashierProfile?.balance ?? 0) })
-        .eq("user_id", cashierId);
-      throw updateError;
-    }
-
-    await this.logApprovedReturnToTransferHistory(request, cashierId);
-
-    // Mark money assignments as returned (FIFO)
-    let remainingAmount = amount;
-    const { data: assignments, error: assignmentsError } = await supabase
-      .from("money_assignments")
-      .select("id, amount")
-      .eq("recipient_id", request.requester_id)
-      .eq("cashier_id", cashierId)
-      .eq("is_returned", false)
-      .order("assigned_at", { ascending: true });
-
-    if (!assignmentsError && assignments && assignments.length > 0) {
-      for (const assignment of assignments) {
-        if (remainingAmount <= 0) break;
-
-        const assignmentAmount = Number(assignment.amount);
-        if (assignmentAmount <= remainingAmount) {
-          await supabase
-            .from("money_assignments")
-            .update({
-              is_returned: true,
-              returned_at: new Date().toISOString(),
-              return_transaction_id: requestId,
-            })
-            .eq("id", assignment.id);
-          remainingAmount -= assignmentAmount;
-        }
-      }
-    }
-
-    // Notify requester that request was approved
-    const cashierName = cashierProfile?.name || "Cashier";
-    await createNotification({
-      userId: request.requester_id,
-      type: "balance_added",
-      title: "Money Return Approved",
-      message: `Your return request of ${formatINR(amount)} has been approved by ${cashierName}. Amount deducted from your balance.`,
-    });
   }
 
   /**
