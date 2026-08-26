@@ -364,6 +364,32 @@ export async function fetchOrganizationDailyReportConfig(
   return { config: parseDailyExpenseReportConfig(data?.daily_expense_report_config) };
 }
 
+/**
+ * DOC-113 follow-up. Project Unique IDs where more than one distinct
+ * Project Name has genuinely been recorded across the org — used to tell
+ * "no data exists" apart from "data exists but is ambiguous" when flagging
+ * blank cells in the export. Live-computed on the server every call, never
+ * a stale snapshot.
+ */
+export async function fetchDailyReportProjectNameAmbiguity(
+  organizationId: string,
+): Promise<Set<string>> {
+  if (!organizationId) return new Set();
+
+  const { data, error } = await (supabase.rpc as any)(
+    "get_daily_report_project_name_ambiguity_v1",
+    { p_organization_id: organizationId },
+  );
+
+  if (error) {
+    console.warn("fetchDailyReportProjectNameAmbiguity", error);
+    return new Set();
+  }
+
+  const rows = (data ?? []) as { project_id: string }[];
+  return new Set(rows.map((r) => r.project_id));
+}
+
 export async function saveOrganizationDailyReportConfig(
   organizationId: string,
   config: DailyExpenseReportConfig,

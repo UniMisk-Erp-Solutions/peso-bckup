@@ -11,6 +11,7 @@ import { useCashierCapabilities } from "@/hooks/useCashierCapabilities";
 import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
 import {
   DAILY_PROJECT_REPORT_HEADERS,
+  fetchDailyReportProjectNameAmbiguity,
   fetchOrganizationDailyReportConfig,
   isDailyReportConfigReady,
   isDailyReportRowNeedsReview,
@@ -1625,12 +1626,19 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
     }
   };
 
-  const exportDailyProjectReport = (format: "xlsx" | "csv") => {
+  const exportDailyProjectReport = async (format: "xlsx" | "csv") => {
+    // DOC-113 follow-up: flag genuinely-ambiguous blank Project Name cells
+    // in the exported file itself rather than leaving them indistinguishable
+    // from an ordinary blank. Best-effort -- an empty set on failure just
+    // means ambiguous cells fall back to the plain "no data" marker, which
+    // is still correct, just less specific.
+    const ambiguousProjectIds = await fetchDailyReportProjectNameAmbiguity(organizationId ?? "");
     downloadDailyProjectExpenseReportFile({
       rows: dailyReportRows,
       dateFrom: dailyAllTime ? null : dailyDateFrom,
       dateTo: dailyAllTime ? null : dailyDateTo,
       format,
+      ambiguousProjectIds,
     });
   };
 
@@ -1652,7 +1660,7 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
     else if (exportTab === "approval") exportApprovalList(format);
     else if (exportTab === "detailed") exportDetailedReport(format);
     else if (exportTab === "daily" && (format === "csv" || format === "xlsx")) {
-      exportDailyProjectReport(format);
+      void exportDailyProjectReport(format);
     }
     setExportDialogOpen(false);
   };
