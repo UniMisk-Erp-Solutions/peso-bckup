@@ -85,6 +85,12 @@ type Group = {
   employeeName: string;
   employeeCode: string;
   costs: Record<string, number>;
+  /** Every underlying expense's own free-text remark (base `purpose`), in the
+   * order the RPC emits source_expenses. Joined into the "Remarks" column --
+   * a report row groups a whole batch, so all of its lines' remarks belong on
+   * that one row. Mirrors finalizeDailyReportGroups in
+   * src/lib/buildDailyProjectExpenseReport.ts. */
+  remarks: string[];
 };
 
 /**
@@ -130,6 +136,17 @@ function toGroup(row: Record<string, unknown>): Group {
   const costsIn = (row.costs ?? {}) as Record<string, unknown>;
   const costs: Record<string, number> = {};
   for (const { key } of COST_COLUMNS) costs[key] = num(costsIn[key]);
+
+  // source_expenses arrives already ordered by (trip_start, category, id) from
+  // the RPC -- keep that order, keep duplicates (five real lines can share a
+  // remark), and drop only genuinely empty ones so no stray comma appears.
+  const srcRows = Array.isArray(row.source_expenses)
+    ? (row.source_expenses as Record<string, unknown>[])
+    : [];
+  const remarks = srcRows
+    .map((src) => String(src?.purpose ?? "").trim())
+    .filter((p) => p !== "");
+
   return {
     trackDate: formatTrackDate((row.track_date as string) || null),
     userId: String(row.user_id ?? ""),
@@ -140,6 +157,7 @@ function toGroup(row: Record<string, unknown>): Group {
     employeeName: String(row.employee_name ?? ""),
     employeeCode: String(row.employee_code ?? ""),
     costs,
+    remarks,
   };
 }
 
@@ -168,6 +186,7 @@ function finalize(groups: Group[]): Record<string, string | number>[] {
       row["Employee Code"] = g.employeeCode;
       row["Location"] = g.location;
       row["Presence"] = "P";
+      row["Remarks"] = g.remarks.join(", ");
       row["percent"] = payrollPercent(
         perEmployeeDay.get(`${g.trackDate}${g.userId}`) ?? 1,
       );
