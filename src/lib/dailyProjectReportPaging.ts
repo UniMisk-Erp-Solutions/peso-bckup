@@ -56,6 +56,7 @@ type ServerSourceExpense = {
   transaction_number: string | null;
   voucher_no: string | null;
   cost_column: string | null;
+  purpose: string | null;
 };
 
 type ServerReportRow = {
@@ -268,6 +269,7 @@ export function serverRowToGroup(row: ServerReportRow): DailyReportGroup {
       projectId,
       projectName,
       location,
+      purpose: src.purpose ?? null,
     };
   });
 

@@ -115,6 +115,10 @@ export type DailyReportSourceExpense = {
   projectId: string;
   projectName: string;
   location: string;
+  /** Base `purpose` column -- shown as "Remark" in Batch Review after this
+   * org's own field relabeling. Comma-joined across every expense in a
+   * grouped report row to populate the "Remarks" export column. */
+  purpose: string | null;
 };
 
 export type DailyProjectExpenseReportBuildResult = {
@@ -179,39 +183,51 @@ export function finalizeDailyReportGroups(
       if (projCmp !== 0) return projCmp;
       return a.projectName.localeCompare(b.projectName);
     })
-    .map((g) => ({
-      row: (() => {
-        const row = {} as DailyProjectExpenseReportRow;
-        for (const header of DAILY_PROJECT_REPORT_HEADERS) {
-          row[header] = "";
-        }
-        row["Track Date"] = g.trackDate;
-        row["Voucher No"] = g.voucherNo;
-        row["project id"] = g.projectId;
-        row["project name"] = g.projectName;
-        row["Employee"] = g.employeeName;
-        row["Employee Code"] = g.employeeCode;
-        row["Location"] = g.location;
-        row["Presence"] = "P";
-        row["percent"] = payrollPercentForEmployeeDay(
-          projectsPerEmployeeDay.get(employeeDayKey(g.trackDate, g.userId)) ?? 1,
-        );
-
-        for (const colKey of Object.keys(g.costs) as DailyReportCostColumnKey[]) {
-          const amount = g.costs[colKey];
-          if (amount > 0) {
-            row[costColumnToHeader(colKey)] = amount;
-          }
-        }
-
-        return row;
-      })(),
-      sourceExpenses: [...g.sourceExpenses].sort((a, b) => {
+    .map((g) => {
+      const sortedSourceExpenses = [...g.sourceExpenses].sort((a, b) => {
         const dateCmp = String(a.trip_start ?? "").localeCompare(String(b.trip_start ?? ""));
         if (dateCmp !== 0) return dateCmp;
         return String(a.category ?? "").localeCompare(String(b.category ?? ""));
-      }),
-    }));
+      });
+
+      // A report row groups every expense sharing (trackDate, employee,
+      // project) -- e.g. every line of one multi-line batch. Each line's
+      // own free-text remark (base `purpose`, shown as "Remark" after this
+      // org's own field relabeling -- see expenseFormConfig.ts) is joined
+      // here in the group's own natural order, one comma-separated string
+      // per line, duplicates and all -- this is real per-line data, not
+      // deduplicated or reordered.
+      const remarks = sortedSourceExpenses
+        .map((src) => String(src.purpose ?? "").trim())
+        .filter((p) => p !== "")
+        .join(", ");
+
+      const row = {} as DailyProjectExpenseReportRow;
+      for (const header of DAILY_PROJECT_REPORT_HEADERS) {
+        row[header] = "";
+      }
+      row["Track Date"] = g.trackDate;
+      row["Voucher No"] = g.voucherNo;
+      row["project id"] = g.projectId;
+      row["project name"] = g.projectName;
+      row["Employee"] = g.employeeName;
+      row["Employee Code"] = g.employeeCode;
+      row["Location"] = g.location;
+      row["Presence"] = "P";
+      row["Remarks"] = remarks;
+      row["percent"] = payrollPercentForEmployeeDay(
+        projectsPerEmployeeDay.get(employeeDayKey(g.trackDate, g.userId)) ?? 1,
+      );
+
+      for (const colKey of Object.keys(g.costs) as DailyReportCostColumnKey[]) {
+        const amount = g.costs[colKey];
+        if (amount > 0) {
+          row[costColumnToHeader(colKey)] = amount;
+        }
+      }
+
+      return { row, sourceExpenses: sortedSourceExpenses };
+    });
 }
 
 export function buildDailyProjectExpenseReportRows(input: {
@@ -275,6 +291,7 @@ export function buildDailyProjectExpenseReportRows(input: {
       projectId: normalizedProjectId,
       projectName: String(fields.projectName ?? "").trim(),
       location: String(fields.location ?? "").trim(),
+      purpose: exp.purpose ?? null,
     });
   }
 
