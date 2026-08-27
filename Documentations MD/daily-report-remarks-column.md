@@ -1,9 +1,9 @@
 # Daily Project Report — populate the Remarks column
 
 **Doc ID:** DOC-115
-**Status:** authored for peso-bckup only. NOT applied to Production. Migration NOT yet applied to the backup database either (SSH host unreachable at commit time — see revision log).
+**Status:** deployed to peso-bckup and verified end-to-end against a real generated CSV. NOT applied to Production.
 **Last updated:** 2026-08-27
-**Owner / area:** Daily Project Report export, `get_daily_project_report_page_v1`, `buildDailyProjectExpenseReport.ts`
+**Owner / area:** Daily Project Report export, `report_daily_project_rows_v1` + the `run-report-export-job` worker (the path that builds the download), `get_daily_project_report_page_v1` + `buildDailyProjectExpenseReport.ts` (the browser preview path)
 
 ---
 
@@ -27,16 +27,58 @@ Scope check performed before implementing: the other 3 reports (Claim Verificati
 ## 4) Key files
 
 ```
+# Browser path (first pass -- correct, but NOT what produces the download)
 supabase/migrations/20260827100000_daily_report_source_expense_purpose.sql
 supabase/rollbacks/20260827100000_daily_report_source_expense_purpose_rollback.sql
 src/lib/buildDailyProjectExpenseReport.ts (DailyReportSourceExpense.purpose, finalizeDailyReportGroups)
 src/lib/dailyProjectReportPaging.ts (ServerSourceExpense.purpose, serverRowToGroup)
 src/lib/__tests__/buildDailyProjectExpenseReport.test.ts (2 new tests)
+
+# Server worker path (second pass -- THIS is what actually builds the CSV)
+supabase/migrations/20260827110000_daily_report_worker_rows_purpose.sql
+supabase/functions/run-report-export-job/index.ts (Group.remarks, toGroup, finalize)
 ```
+
+### The path that actually matters (found only after the first fix shipped)
+
+The first pass fixed `get_daily_project_report_page_v1` — the RPC the **browser**
+calls — and it was verified working. The exported file was still blank, because
+since DOC-104/105 the download is **not built by the browser at all**. The Deno
+worker in `supabase/functions/run-report-export-job/` builds it, and that worker:
+
+- calls a **different** RPC, `report_daily_project_rows_v1`, not the one the
+  first migration fixed;
+- **re-implements** the row shaping itself (its own `Group` type, `toGroup`,
+  `finalize`) rather than importing the shared `finalizeDailyReportGroups`.
+
+So three separate things all had to change for the CSV to show Remarks:
+
+1. `report_daily_project_rows_v1`'s `enriched` CTE selects an explicit column
+   list and was **dropping `purpose` entirely**, even though `filtered` already
+   had it — so it had to be carried forward there first (`resolved` selects
+   `en.*`, so it propagates from that point automatically).
+2. That same function's `source_expenses` payload had to emit `'purpose'`,
+   matching what the browser-side RPC already emits.
+3. The worker's `Group` gained a `remarks: string[]`, `toGroup` now reads
+   `source_expenses[].purpose` (already ordered by the RPC), and `finalize`
+   sets `row["Remarks"]`.
+
+**The standing hazard this exposes:** two independent implementations of the
+same report shaping exist, and a change to one silently does nothing to the
+other. The worker's own header comment already asserts "OUTPUT PARITY ... a
+direct port of `finalizeDailyReportGroups`" — that parity is maintained by hand
+and is exactly what broke here. Any future column added to the Daily Project
+Report must be added in **both** places, or it will appear in the UI preview and
+be missing from the downloaded file.
 
 ## 5) Database / migrations
 
-One new additive migration, `CREATE OR REPLACE` on `get_daily_project_report_page_v1` only (same signature — the deployed frontend keeps calling it unchanged). Adds `'purpose', g.purpose` to the existing `source_expenses` jsonb payload; every other line of the function body is byte-identical to `20260826100000_daily_report_dynamic_project_name.sql`.
+Two additive migrations, both `CREATE OR REPLACE` with unchanged signatures, so every existing caller keeps working:
+
+1. `20260827100000_daily_report_source_expense_purpose.sql` — adds `'purpose', g.purpose` to `get_daily_project_report_page_v1`'s `source_expenses` (browser preview path). Otherwise byte-identical to `20260826100000_daily_report_dynamic_project_name.sql`.
+2. `20260827110000_daily_report_worker_rows_purpose.sql` — the same two-part change to `report_daily_project_rows_v1` (worker/download path): carry `f.purpose` through the `enriched` CTE, and emit `'purpose'` in `source_expenses`. Generated from the live `pg_get_functiondef` output so nothing else in that function drifts.
+
+Both applied to the backup database. The worker's `index.ts` was deployed into the running edge-functions container and the container restarted (this instance has no `supabase functions deploy`; the established method is `docker cp` + restart).
 
 ## 6) Test plan
 
@@ -45,7 +87,9 @@ One new additive migration, `CREATE OR REPLACE` on `get_daily_project_report_pag
 - [x] Existing 51 tests across `buildDailyProjectExpenseReport.test.ts`, `dailyProjectReportPaging.test.ts`, `exportDailyProjectExpenseReport.test.ts` all still pass (53 total after the 2 new ones)
 - [x] `tsc --noEmit -p tsconfig.app.json`: 16 pre-existing errors in touched files, identical set to baseline, zero new
 - [x] Clean production build
-- [ ] Migration applied to the live backup database and verified against real data — blocked at commit time by an unreachable SSH host (transient network issue, not a code problem); see revision log for resolution
+- [x] Both migrations applied to the live backup database; worker deployed to the edge container and restarted (`Remarks` assignment confirmed present in the running file)
+- [x] `deno check` clean on the modified worker
+- [x] **End-to-end against a real generated file** — enqueued a genuine export job through `create_daily_project_report_export_job_v1`, ran the worker, downloaded the produced CSV from Storage and parsed it: 4,261 rows, **3,340 with non-empty Remarks**, and the reference row (Virendrasinh Mahida, 03-07-2026) reads exactly `Doormatory, Private lucjury, Auto, Personal auto`. This is the check that should have been done the first time — every earlier "verified" claim tested the browser path, which does not produce the download.
 
 Backup instance only. NOT applied to Production.
 
@@ -56,3 +100,4 @@ Backup instance only. NOT applied to Production.
 | Date | Notes |
 |---|---|
 | 2026-08-27 | Initial implementation. Code, tests, typecheck, and build all verified clean. Migration authored but not yet applied — SSH host to the backup database was unreachable at commit time. Pushed to a feature branch, not merged to `main`, specifically so the deployed app and the database schema never drift out of sync; will apply the migration and verify live before merging. |
+| 2026-08-27 (third pass) | **The exported CSV was still blank after the first fix, and the user was right to keep pushing.** Root cause: the download is produced by the `run-report-export-job` Deno worker, not by the browser code the first pass fixed — a separate re-implementation calling a different RPC (`report_daily_project_rows_v1`). Three changes were needed: carry `purpose` through that RPC's `enriched` CTE (it was being dropped there), emit `'purpose'` in its `source_expenses`, and teach the worker's own `Group`/`toGroup`/`finalize` to collect and join remarks. Verified by generating a real export job end-to-end and reading the produced file: 3,340 of 4,261 rows now carry Remarks, and the user's reference row (Virendrasinh Mahida, 03-07-2026) reads exactly `"Doormatory, Private lucjury, Auto, Personal auto"`. Lesson recorded in §4: the UI preview path and the download path are two separate implementations, and a column added to only one will silently be missing from the other. |
