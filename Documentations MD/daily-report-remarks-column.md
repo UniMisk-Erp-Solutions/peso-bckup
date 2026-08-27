@@ -1,7 +1,7 @@
 # Daily Project Report — populate the Remarks column
 
 **Doc ID:** DOC-115
-**Status:** authored for peso-bckup only. NOT applied to Production. Migration NOT yet applied to the backup database either (SSH host unreachable at commit time — see revision log).
+**Status:** deployed to peso-bckup. Migration applied to and verified against the live backup database. NOT applied to Production. Merged to `main` from `feature/daily-report-remarks-column`.
 **Last updated:** 2026-08-27
 **Owner / area:** Daily Project Report export, `get_daily_project_report_page_v1`, `buildDailyProjectExpenseReport.ts`
 
@@ -45,7 +45,7 @@ One new additive migration, `CREATE OR REPLACE` on `get_daily_project_report_pag
 - [x] Existing 51 tests across `buildDailyProjectExpenseReport.test.ts`, `dailyProjectReportPaging.test.ts`, `exportDailyProjectExpenseReport.test.ts` all still pass (53 total after the 2 new ones)
 - [x] `tsc --noEmit -p tsconfig.app.json`: 16 pre-existing errors in touched files, identical set to baseline, zero new
 - [x] Clean production build
-- [ ] Migration applied to the live backup database and verified against real data — blocked at commit time by an unreachable SSH host (transient network issue, not a code problem); see revision log for resolution
+- [x] Migration applied to the live backup database and verified against real data — the exact Yavatmal/Virendrasinh Mahida batch shown earlier this session: expected join "Doormatory, Private lucjury, Auto, Personal auto" (blank purpose skipped) matched exactly, and the deployed function body was confirmed to actually contain the `purpose` addition
 
 Backup instance only. NOT applied to Production.
 
@@ -56,3 +56,4 @@ Backup instance only. NOT applied to Production.
 | Date | Notes |
 |---|---|
 | 2026-08-27 | Initial implementation. Code, tests, typecheck, and build all verified clean. Migration authored but not yet applied — SSH host to the backup database was unreachable at commit time. Pushed to a feature branch, not merged to `main`, specifically so the deployed app and the database schema never drift out of sync; will apply the migration and verify live before merging. |
+| 2026-08-27 (later same day) | SSH connectivity restored. Migration applied to the backup database and verified: deployed function body confirmed to contain the `purpose` addition (5 occurrences, matching the source exactly), and the joined Remarks value for the real Yavatmal/Virendrasinh Mahida batch matched the expected `"Doormatory, Private lucjury, Auto, Personal auto"` (blank purpose correctly skipped) computed independently via SQL. Merged `feature/daily-report-remarks-column` into `main` (no-fast-forward), 53/53 tests re-verified on the merged tree, pushed to `origin`. |
