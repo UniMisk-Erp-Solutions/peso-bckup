@@ -113,9 +113,43 @@ A rejected column fails the run **before any value is read into a row**.
   imports/               prepared import files
   exports/               generated output (default --out)
   temporary/             scratch, cleaned each run
+  db-backups/<date>/     full database dumps (see 4a)
 ```
 
 Entirely gitignored. Nothing in it is ever committed.
+
+### 4a. Database backups (added 2026-09-01)
+
+Full `pg_dump` backups of the **backup** Supabase instance are written to
+`.local-sensitive-data/db-backups/<YYYY-MM-DD>/`. A dump is the single most
+sensitive artifact this repository's workflow ever produces — one file holding
+every auth user, every profile and every expense record — so it is treated as
+strictly as the employee TSV that caused this policy to exist.
+
+Each dated folder holds:
+
+| File | Contents |
+|---|---|
+| `pesowise_<date>_full_db.sql.gz` | every schema, all data, ownership, ACLs, RLS policies, functions |
+| `pesowise_<date>_globals.sql.gz` | cluster roles, role passwords, memberships, grants |
+| `SHA256SUMS.txt` | checksums, verified against the server after transfer |
+| `MANIFEST.md` | provenance, object/row counts, restore procedure, exclusions |
+
+Rules specific to dumps:
+
+- **Storage bucket contents are never included.** Only `storage.objects`
+  metadata rows travel in the dump. Bucket blobs are excluded by construction
+  (they do not live in Postgres) and must not be added.
+- **The globals file contains role passwords.** It is small enough to be
+  mistaken for something harmless. It is not.
+- Take dumps from the **backup** instance. A Production dump requires explicit
+  owner authorization and does not belong on a workstation by default.
+- Verify with `sha256sum -c SHA256SUMS.txt` before relying on a backup, and
+  `gzip -t` before restoring.
+- Restores use `--clean --if-exists`; they **DROP before recreating**. Never
+  restore over a live database you intend to keep.
+- Delete dated folders once they are no longer needed. They do not expire on
+  their own, and every stale copy is standing exposure.
 
 **Verify a file is ignored** before you put anything real in it:
 
@@ -216,3 +250,4 @@ credential reset to values outside the original scheme would resolve it.
 | Date | Rev | Author | Notes |
 |------|-----|--------|-------|
 | 2026-08-03 | 1.0 | Agent | Created with the authorized sensitive-data removal and history rewrite. Documents why the employee TSV is absent and must not be restored, the six other paths removed with it, the real DB password literal scrubbed from two post-restore scripts, the runtime `--input` contract and its validation rules, the ignored `.local-sensitive-data/` directory, the synthetic template, the `npm run security:secrets` scanner, the `git add -f` prohibition, disposal expectations, and the owner-accepted residual account risk. Names no person, password, formula or credential. |
+| 2026-09-01 | 1.1 | Agent | Added §4a covering full database backups, a new class of local sensitive artifact: `.local-sensitive-data/db-backups/<date>/` now holds gzipped `pg_dump` output for the backup instance. Records the two-file layout (database + cluster globals, the latter carrying role passwords), the checksum/manifest requirement, that storage bucket blobs are excluded by construction while `storage.objects` metadata is retained, that dumps come from the backup instance rather than Production absent owner authorization, that restores are destructive (`--clean --if-exists`), and that stale dated folders must be deleted rather than left to accumulate. Names no person, credential or record. |
