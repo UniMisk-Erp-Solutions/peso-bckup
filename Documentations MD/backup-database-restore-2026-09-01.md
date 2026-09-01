@@ -129,6 +129,95 @@ No dump file is committed by this change.
 first attempt. It is a perf-test database, not application data, and is safe to
 drop if the space is wanted. Left in place rather than removed unasked.
 
+## 10) Post-restore repair (same day) — "nothing showing on the frontend"
+
+Reported symptom: the app loaded but displayed no data. Two separate causes,
+one environmental and one real.
+
+### 10a. The server was down
+
+At the time of the report the backup host was unreachable: `ping 192.168.23.46`
+returned *Destination host unreachable* from the gateway, SSH was refused, and
+Cloudflare returned **530** (origin unreachable) for
+`pesowise-backup-supabase.unimisk.com`. `peso-backup.vercel.app` still returned
+200 because the frontend is static on Vercel — so the page rendered while every
+query failed. That is exactly the "loads but empty" symptom. The host later came
+back and all 14 containers returned healthy on their own; the restored data was
+intact (794 users / 22,707 expenses / 488 profiles).
+
+### 10b. Real defects found and fixed
+
+**No planner statistics.** A freshly restored database has none until `ANALYZE`
+runs — **115 of 115 public tables had zero statistics**, so the planner used
+default estimates. `VACUUM ANALYZE` was run across the database. (This alone did
+not fix the anon 3s timeout below, but it is required hygiene and was missing.)
+
+**Schema/code version mismatch — the significant finding.** The dump came from a
+*newer* codebase than the frontend deployed at `peso-backup.vercel.app` (which
+builds from this repository). Comparing the pre-restore backup against the
+restored database: **7 functions lost, 5 new**.
+
+| Lost in restore | Status |
+|---|---|
+| `admin_submit_expense_for_employee_v1` | superseded by `_v2` upstream |
+| `admin_bulk_submit_expenses_v1` | superseded by `_v2` upstream |
+| `get_daily_report_project_name_ambiguity_v1` | superseded by `_batch_v2` upstream |
+| `save_generated_report_v1` | **no replacement — feature removed upstream** |
+| `list_generated_reports_v1` | **no replacement** |
+| `get_generated_report_v1` | **no replacement** |
+| `purge_expired_generated_report_snapshots_v1` | **no replacement** |
+
+Six of the seven are called by code in `src/`, and none of the new `v2` names
+appear anywhere in this repository — confirming the database moved forward and
+the deployed frontend did not. The `generated_reports` **table itself was gone**,
+so those functions could not simply be recreated.
+
+Repaired without guessing at upstream semantics:
+
+1. Re-applied this repository's own migration
+   `20260823100000_generated_report_snapshots.sql` (idempotent), recreating
+   `generated_reports` and `generated_report_runs` with their indexes, RLS
+   policies and all four functions.
+2. Restored `admin_submit_expense_for_employee_v1`,
+   `admin_bulk_submit_expenses_v1` and
+   `get_daily_report_project_name_ambiguity_v1` **verbatim** from the pre-restore
+   backup. They coexist with the newer `v2` functions; nothing was replaced.
+3. Recreated the `graphql_public.graphql` wrapper (the 4 restore errors in §4).
+
+All 7 functions and both tables are present again, verified through the live
+API as a real authenticated admin: `list_generated_reports_v1` → 200,
+`get_daily_report_project_name_ambiguity_v1` → 200, `get_backend_health` → 200,
+`admin_bulk_submit_expenses_v1` → its own validation error (i.e. it executes),
+and `admin_submit_expense_for_employee_v1` present in PostgREST's live schema.
+Expenses / profiles / organizations return 200 in 0.5–0.9 s for admins of all
+five organizations.
+
+### 10c. Verification-method notes
+
+Two 404s and three "NOT exposed" results during this work were **test artifacts,
+not defects**, and are recorded so they are not re-investigated:
+
+- PostgREST matches RPCs *by signature*. Calling a function that takes arguments
+  with `{}` returns `404 PGRST202`, which reads identically to "function
+  missing". `list_my_teams_overview`, `list_manager_pending_expenses` and
+  `get_cashier_for_engineer` all require arguments and were present throughout.
+- The OpenAPI spec is generated **per role**. Fetched with the anon key it omits
+  functions granted only to `authenticated`/`service_role` — which is why three
+  working functions appeared "NOT exposed" while one of them had just returned
+  a real 200.
+
+### 10d. Still outstanding
+
+- **Anon queries on `expenses` return 500 / 57014** (3 s `statement_timeout` for
+  `anon`). Harmless in practice — a logged-out browser never queries expenses,
+  and authenticated reads are 0.5–0.9 s — but the RLS policy set on `expenses`
+  (20 policies, all `roles=public`, so they evaluate for `anon` too) is slow
+  enough to exceed 3 s. Worth a policy review, not fixed here.
+- **1,608 receipt images still 404** (§5) — unchanged, needs a bucket sync.
+- The frontend remains one codebase version behind the database. The `v1`
+  functions restored above are a compatibility bridge, not a substitute for
+  eventually moving the frontend onto the `v2` API.
+
 ---
 
 ## Revision log
@@ -136,3 +225,4 @@ drop if the space is wanted. Left in place rather than removed unasked.
 | Date | Notes |
 |---|---|
 | 2026-09-01 | Restore performed and verified. Documents the false-success first attempt (wrong grep pattern, missing `ON_ERROR_STOP`, `postgres` not being a superuser), the row-count parity check that caught it, the targeted section restore as `supabase_admin` that avoided dropping the live `_supabase` analytics database, the `graphql_public` repair, the 1,608 receipt records with no bytes behind them, DOC-115 survival plus the wrapper consolidation, retained rollback artifacts, and the gitignore fix for a 244 MB dump sitting committable in the repo root. |
+| 2026-09-01 (post-restore repair) | Frontend showed no data. Root cause was twofold: the backup host was unreachable at the time (gateway said destination host unreachable, Cloudflare 530; the static Vercel page still returned 200, which is why it looked like an app bug), and separately the restore had left real defects. Fixed: ran VACUUM ANALYZE (115 of 115 tables had zero planner statistics after the restore), recreated the graphql_public wrapper, and repaired a genuine schema/code version mismatch — the dump came from a newer codebase, dropping 7 functions and the generated_reports table that the deployed frontend still calls. Recreated the tables and 4 functions from this repo's own idempotent migration 20260823100000, and restored 3 admin/ambiguity v1 functions verbatim from the pre-restore backup, alongside the newer v2 ones. All verified live per-organization. Also recorded two verification traps that produced false 'missing function' readings: PostgREST matches RPCs by signature (a no-arg call to an arg-taking function returns 404 PGRST202), and its OpenAPI spec is per-role (anon-key fetches omit authenticated-only functions). |
