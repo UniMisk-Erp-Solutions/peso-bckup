@@ -134,3 +134,8 @@ __pycache__/
 *_db.sql
 *_db.sql.gz
 Pesowise-main_*.sql
+
+# Loose DB dumps dropped in the repo root for a restore (sensitive — never commit)
+updated-peso-backup.sql
+*-peso-backup.sql
+/*.sql
