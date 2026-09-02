@@ -1,3 +1,23 @@
+-- ############################################################################
+-- ## DO NOT RE-APPLY TO peso-bckup AS-IS  (added 2026-09-02, DOC-116)       ##
+-- ############################################################################
+-- This migration does CREATE OR REPLACE on get_daily_project_report_page_v1
+-- using the OLD self-contained implementation.
+--
+-- Since the 2026-09-01 backup reload, that function on peso-bckup is a THIN
+-- WRAPPER that delegates to report_daily_project_rows_v1, so the row-shaping
+-- logic exists in exactly one place. Re-running this file would overwrite the
+-- wrapper with the old ~250-line copy and reintroduce the two-implementation
+-- drift that let the Remarks column ship blank in the CSV (DOC-115).
+--
+-- Kept for history and because it is still the correct migration for any
+-- environment that has NOT had the 2026-09-01 reload (e.g. Production).
+-- Before applying anywhere, check first:
+--   SELECT pg_get_functiondef(oid) FROM pg_proc
+--    WHERE proname = 'get_daily_project_report_page_v1';
+-- If that returns a short body calling report_daily_project_rows_v1, SKIP this.
+-- ############################################################################
+
 -- DOC-113 follow-up — fix the Daily Project Report's Project Name resolution.
 --
 -- ============================================================================

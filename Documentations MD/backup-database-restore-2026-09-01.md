@@ -218,6 +218,80 @@ not defects**, and are recorded so they are not re-investigated:
   functions restored above are a compatibility bridge, not a substitute for
   eventually moving the frontend onto the `v2` API.
 
+## 11) Verification: do the recovered/predicted project IDs still render? (2026-09-02)
+
+The DOC-113 / DOC-114 project-ID and project-name recovery was applied to the
+**old** backup database, which the 2026-09-01 reload replaced. Three things from
+that work are gone from the database:
+
+| Lost | Evidence |
+|---|---|
+| The `dynamic` source kind | `_daily_report_parse_source_v1` no longer contains it |
+| MicroLink's `dynamic:project_name_by_project_id` config | `projectName` is back to `template:7ae2b9f5-…` |
+| The written recovery values | MicroLink's "Project Name" template has **0** stored values |
+
+**None of it needs to be re-applied, because upstream solved the same problem a
+better way.** The current `report_daily_project_rows_v1` resolves project name
+through a built-in three-tier fallback:
+
+1. the configured template/branch value,
+2. the expense's own branch-field value (`expense_form_field_option_branches`),
+3. last resort, the branch *definition* for that expense's project id.
+
+That is the DOC-113 `dynamic` behaviour promoted into the function itself, so it
+works without a special config kind. The frontend never referenced `dynamic:`
+anyway — `dailyExpenseReportConfig.ts` only parses `base:`, `branch:` and
+`template:` — so the current config is fully compatible.
+
+### Measured live, not assumed
+
+A real export job was enqueued for MicroLink (all dates), run through the actual
+worker, and the produced CSV downloaded from Storage and parsed:
+
+| Column | Filled | Coverage |
+|---|---|---|
+| Voucher No | 5,078 / 5,078 | **100 %** |
+| project id | 5,020 / 5,078 | **98.9 %** |
+| project name | 5,016 / 5,078 | **98.8 %** |
+| Location | 4,936 / 5,078 | 97.2 % |
+| Remarks | 3,983 / 5,078 | 78.4 % |
+
+**213 distinct projects render with correct id → name pairing** (e.g.
+`202508M352 → Reliance CBG Mansa Implementation`, `199601M1 → At Office`).
+
+58 rows have a blank project id and 62 a blank project name — the same
+genuinely-unresolvable residue DOC-114 ended with (65 pending), so coverage is
+equal to or slightly better than the hand-recovered state, achieved with **zero
+data written**.
+
+The UI preview path was checked separately, since it is a different RPC:
+`get_daily_project_report_page_v1` as a real authenticated MicroLink admin
+returned HTTP 200 in 1.9 s with **25/25** rows carrying both project id and
+project name.
+
+**Conclusion: no repair was required.** Re-applying the DOC-113 migration would
+have been actively harmful — see below.
+
+### Guard added to three migrations
+
+`20260820160000`, `20260826100000` and `20260827100000` each `CREATE OR REPLACE`
+`get_daily_project_report_page_v1` with the **old self-contained** implementation.
+On peso-bckup that function is now a thin wrapper delegating to
+`report_daily_project_rows_v1`. Re-running any of them would overwrite the
+wrapper with the old ~250-line copy and reintroduce exactly the
+two-implementation drift that let the Remarks column ship blank (DOC-115 §4).
+
+A `DO NOT RE-APPLY` header was added to all three, with the check to run first:
+
+```sql
+SELECT pg_get_functiondef(oid) FROM pg_proc
+ WHERE proname = 'get_daily_project_report_page_v1';
+```
+
+A short body calling `report_daily_project_rows_v1` means skip the migration.
+They are kept, not deleted — they remain correct for any environment that has
+not had the 2026-09-01 reload, Production included.
+
 ---
 
 ## Revision log
@@ -226,3 +300,4 @@ not defects**, and are recorded so they are not re-investigated:
 |---|---|
 | 2026-09-01 | Restore performed and verified. Documents the false-success first attempt (wrong grep pattern, missing `ON_ERROR_STOP`, `postgres` not being a superuser), the row-count parity check that caught it, the targeted section restore as `supabase_admin` that avoided dropping the live `_supabase` analytics database, the `graphql_public` repair, the 1,608 receipt records with no bytes behind them, DOC-115 survival plus the wrapper consolidation, retained rollback artifacts, and the gitignore fix for a 244 MB dump sitting committable in the repo root. |
 | 2026-09-01 (post-restore repair) | Frontend showed no data. Root cause was twofold: the backup host was unreachable at the time (gateway said destination host unreachable, Cloudflare 530; the static Vercel page still returned 200, which is why it looked like an app bug), and separately the restore had left real defects. Fixed: ran VACUUM ANALYZE (115 of 115 tables had zero planner statistics after the restore), recreated the graphql_public wrapper, and repaired a genuine schema/code version mismatch — the dump came from a newer codebase, dropping 7 functions and the generated_reports table that the deployed frontend still calls. Recreated the tables and 4 functions from this repo's own idempotent migration 20260823100000, and restored 3 admin/ambiguity v1 functions verbatim from the pre-restore backup, alongside the newer v2 ones. All verified live per-organization. Also recorded two verification traps that produced false 'missing function' readings: PostgREST matches RPCs by signature (a no-arg call to an arg-taking function returns 404 PGRST202), and its OpenAPI spec is per-role (anon-key fetches omit authenticated-only functions). |
+| 2026-09-02 | Verified the DOC-113/114 project-ID and project-name recovery against the reloaded database. That work's three artifacts (the `dynamic` source kind, MicroLink's dynamic config, and the written values) are all gone, but no repair was needed: upstream promoted the same behaviour into `report_daily_project_rows_v1` as a built-in three-tier fallback, so it resolves without a special config kind. Proven on a real generated CSV rather than by inspection — 5,078 rows, project id 98.9%, project name 98.8%, voucher 100%, 213 distinct projects with correct id-to-name pairing, and the residue (58/62 blank) matches DOC-114's genuinely-unresolvable 65. UI preview RPC returned 25/25 populated. Added DO-NOT-RE-APPLY guards to migrations 20260820160000 / 20260826100000 / 20260827100000, each of which would overwrite the new thin wrapper with the old self-contained implementation and reintroduce the DOC-115 drift. |
