@@ -1,0 +1,29 @@
+# Coolify Traefik dynamic file — pesowise-backup-supabase.unimisk.com
+# Upstream MUST be reachable from coolify-proxy container (bridge network).
+# Use host LAN IP, not 127.0.0.1:8088.
+
+http:
+  routers:
+    pesowise-supabase-lb-http:
+      rule: Host(`pesowise-backup-supabase.unimisk.com`)
+      entryPoints:
+        - http
+      middlewares:
+        - redirect-to-https
+      service: pesowise-supabase-lb
+      priority: 20000
+    pesowise-supabase-lb-https:
+      rule: Host(`pesowise-backup-supabase.unimisk.com`)
+      entryPoints:
+        - https
+      middlewares:
+        - gzip
+      service: pesowise-supabase-lb
+      tls:
+        certresolver: letsencrypt
+      priority: 20000
+  services:
+    pesowise-supabase-lb:
+      loadBalancer:
+        servers:
+          - url: http://192.168.23.46:8088

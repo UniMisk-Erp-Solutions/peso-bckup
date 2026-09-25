@@ -1,0 +1,97 @@
+# L7 lab sidecars — Redis + PgBouncer on BOTH "servers" (simulated on your PC).
+# Does NOT modify .46 / .68 Coolify. Pesowise app still uses gateway → LAN Kong for real API.
+
+services:
+  redis-46:
+    image: redis:7-alpine
+    container_name: l7-redis-46
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-68:
+    image: redis:7-alpine
+    container_name: l7-redis-68
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres-sim-46:
+    image: postgres:16-alpine
+    container_name: l7-postgres-sim-46
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+    networks:
+      - l7internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres-sim-68:
+    image: postgres:16-alpine
+    container_name: l7-postgres-sim-68
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+    networks:
+      - l7internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pgbouncer-46:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    container_name: l7-pgbouncer-46
+    ports:
+      - "6432:5432"
+    volumes:
+      - ./pgbouncer/46/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres-sim-46:
+        condition: service_healthy
+    networks:
+      - l7internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U postgres || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgbouncer-68:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    container_name: l7-pgbouncer-68
+    ports:
+      - "6433:5432"
+    volumes:
+      - ./pgbouncer/68/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres-sim-68:
+        condition: service_healthy
+    networks:
+      - l7internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U postgres || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  l7internal:
+    driver: bridge

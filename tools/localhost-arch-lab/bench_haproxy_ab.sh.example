@@ -1,0 +1,43 @@
+#!/bin/bash
+# Run ONLY on server .46 as ops — not from CI.
+# Copy to /tmp and set env vars (never commit secrets):
+#   export SUDO_PASS_46=...
+#   export SSH_PASS_68=...
+#   export BENCH_ANON_KEY=...   # SERVICE_SUPABASEANON_KEY from Pesowise .46
+set -e
+: "${SUDO_PASS_46:?Set SUDO_PASS_46}"
+: "${SSH_PASS_68:?Set SSH_PASS_68}"
+: "${BENCH_ANON_KEY:?Set BENCH_ANON_KEY}"
+
+PASS="$SUDO_PASS_46"
+PASS68="$SSH_PASS_68"
+KEY="$BENCH_ANON_KEY"
+CFG=/data/coolify/proxy/haproxy-pesowise/haproxy.cfg
+LEAST=/data/coolify/proxy/haproxy-pesowise/haproxy.cfg.bak-before-46only-test
+L7_SAVE=/tmp/haproxy-l7-live.cfg
+
+echo "$PASS" | sudo -S cp -a "$CFG" "$L7_SAVE"
+
+apply_cfg() {
+  local src=$1
+  echo "$PASS" | sudo -S cp -a "$src" "$CFG"
+  echo "$PASS" | sudo -S docker restart haproxy-pesowise-lb
+  sleep 5
+  curl -sk -o /dev/null -w "health_rest:%{http_code}\n" -H "apikey: $KEY" "http://127.0.0.1:8088/rest/v1/"
+}
+
+run_one() {
+  local mode=$1
+  export BENCH_ANON_KEY="$KEY"
+  bash /tmp/bench_alltypes_run_8088.sh "$mode"
+}
+
+echo "=== A: real app HAProxy (leastconn) ==="
+apply_cfg "$LEAST"
+run_one "real_app_leastconn"
+sleep 120
+echo "=== B: new L7 HAProxy ==="
+apply_cfg "$L7_SAVE"
+run_one "new_l7_haproxy"
+apply_cfg "$L7_SAVE"
+echo "=== Done — L7 restored ==="

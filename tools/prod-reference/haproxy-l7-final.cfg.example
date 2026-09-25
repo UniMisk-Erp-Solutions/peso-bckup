@@ -1,0 +1,44 @@
+global
+  maxconn 50000
+
+defaults
+  mode http
+  timeout connect 10s
+  timeout client  60s
+  timeout server  60s
+
+frontend fe_pesowise_supabase
+  bind *:8088
+
+  acl path_auth path_beg /auth/v1
+  acl path_storage path_beg /storage/v1
+  acl path_realtime path_beg /realtime/v1
+  acl path_rest path_beg /rest/v1
+  acl path_graphql path_beg /graphql/v1
+  acl path_functions path_beg /functions/v1
+
+  acl meth_write method POST PUT PATCH DELETE
+  acl meth_read method GET HEAD OPTIONS
+
+  use_backend be_pesowise_write if path_auth
+  use_backend be_pesowise_write if path_realtime
+  use_backend be_pesowise_write if path_functions
+  use_backend be_pesowise_write if path_storage
+  use_backend be_pesowise_write if path_rest meth_write
+  use_backend be_pesowise_write if path_graphql meth_write
+
+  use_backend be_pesowise_read if path_rest meth_read
+  use_backend be_pesowise_read if path_graphql meth_read
+
+  default_backend be_pesowise_write
+
+backend be_pesowise_read
+  option tcp-check
+  tcp-check connect port 54321
+  server app68 192.168.23.68:54321 check
+  server app46 192.168.23.46:54321 check backup
+
+backend be_pesowise_write
+  option tcp-check
+  tcp-check connect port 54321
+  server app46 192.168.23.46:54321 check

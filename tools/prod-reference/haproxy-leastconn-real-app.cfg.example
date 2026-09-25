@@ -1,0 +1,19 @@
+global
+  maxconn 50000
+
+defaults
+  mode http
+  timeout connect 10s
+  timeout client  60s
+  timeout server  60s
+
+frontend fe_pesowise_supabase
+  bind *:8088
+  default_backend be_pesowise_supabase
+
+backend be_pesowise_supabase
+  balance leastconn
+  option tcp-check
+  tcp-check connect port 54321
+  server app46 192.168.23.46:54321 check
+  server app68 192.168.23.68:54321 check

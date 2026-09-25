@@ -1,0 +1,13 @@
+{
+  "name": "pesowise-localhost-arch-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Localhost gateway lab for current vs greatest Supabase routing (does not modify peso-bckup or production app)",
+  "scripts": {
+    "start": "node server.cjs",
+    "start:greatest": "set LAB_DEFAULT_MODE=l7-dual&& node server.cjs"
+  },
+  "engines": {
+    "node": ">=6.0.0"
+  }
+}
