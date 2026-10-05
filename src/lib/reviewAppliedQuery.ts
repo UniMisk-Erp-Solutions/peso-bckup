@@ -22,6 +22,12 @@
  */
 
 import type { ReviewCustomFilter, ReviewQueueSort } from "@/features/reviewQueueServer/types";
+import {
+  ALL_MONTHS,
+  expenseMonthBounds,
+  expenseMonthInclusiveEnd,
+  type ExpenseMonthValue,
+} from "@/lib/expenseMonthFilter";
 
 /** Draft/applied custom-field selection: display-label → chosen value ("all" = off). */
 export type ReviewCustomFilterRecord = Record<string, string>;
@@ -51,6 +57,13 @@ export type AppliedReviewQuery = {
   sortBy: string;
   sortOrder: "asc" | "desc";
   timePeriod: string;
+  /**
+   * Exact calendar MONTH+YEAR filter on `expenses.trip_start`, mutually
+   * exclusive with `timePeriod`'s relative period. Unlike every other field
+   * here, this is applied IMMEDIATELY on selection -- it bypasses the
+   * draft/Search-submit gate entirely, so it has no draft twin.
+   */
+  expenseMonth: ExpenseMonthValue;
   customFilters: ReviewCustomFilterRecord;
   showOnlyActionable: boolean;
   includeTeamLeaderReports: boolean;
@@ -63,6 +76,7 @@ export const DEFAULT_SORT_BY = "created_at";
 export const DEFAULT_SORT_ORDER: "asc" | "desc" = "desc";
 export const DEFAULT_TIME_PERIOD = "all";
 export const DEFAULT_STATUS = "all";
+export const DEFAULT_EXPENSE_MONTH: ExpenseMonthValue = ALL_MONTHS;
 
 /** A fresh, unfiltered applied query. Hierarchy defaults are supplied by the caller. */
 export function defaultAppliedReviewQuery(
@@ -77,6 +91,7 @@ export function defaultAppliedReviewQuery(
     sortBy: DEFAULT_SORT_BY,
     sortOrder: DEFAULT_SORT_ORDER,
     timePeriod: DEFAULT_TIME_PERIOD,
+    expenseMonth: DEFAULT_EXPENSE_MONTH,
     customFilters: {},
     showOnlyActionable: false,
     includeTeamLeaderReports: false,
@@ -103,19 +118,27 @@ export function isDefaultSort(sortBy: string, sortOrder: string): boolean {
 /**
  * THE mode decision (§14/§21). Server-query mode is active when ANY applied
  * server-supported modifier is set: employee, general search, a non-default
- * status, a non-default sort, a non-"all" time period, or any custom filter.
+ * status, a non-default sort, a non-"all" time period, an exact expense
+ * month, or any custom filter.
  *
  * The actionable toggle and the hierarchy-inclusion controls are DELIBERATELY
  * excluded — the actionable filter stays a client-side refinement over the
  * loaded page (§41) and hierarchy inclusion changes reviewer scope rather than
  * requesting server-filtered results (§42). A completely-default query (no
- * employee, no search, status "all", default sort, time "all", no custom
- * filters) is the ONLY normal-mode query (§21).
+ * employee, no search, status "all", default sort, time "all", month "all",
+ * no custom filters) is the ONLY normal-mode query (§21).
  */
 export function isServerQueryActive(
   q: Pick<
     AppliedReviewQuery,
-    "employeeUserId" | "generalSearch" | "status" | "sortBy" | "sortOrder" | "timePeriod" | "customFilters"
+    | "employeeUserId"
+    | "generalSearch"
+    | "status"
+    | "sortBy"
+    | "sortOrder"
+    | "timePeriod"
+    | "expenseMonth"
+    | "customFilters"
   >,
 ): boolean {
   return Boolean(
@@ -124,6 +147,7 @@ export function isServerQueryActive(
       q.status !== DEFAULT_STATUS ||
       !isDefaultSort(q.sortBy, q.sortOrder) ||
       q.timePeriod !== DEFAULT_TIME_PERIOD ||
+      q.expenseMonth !== DEFAULT_EXPENSE_MONTH ||
       hasActiveCustomFilters(q.customFilters),
   );
 }
@@ -142,28 +166,103 @@ export function appliedSortToServerSort(sortBy: string, sortOrder: string): Revi
 }
 
 /**
+ * Subtract calendar months from a UTC date, CLAMPING the day-of-month to the
+ * last valid day of the target month instead of letting it overflow (the
+ * final-pass correctness fix: raw `date.setUTCMonth(date.getUTCMonth() - n)`
+ * overflows at month ends -- e.g. 2026-03-31 minus one month naively becomes
+ * March 3, 2026, since February only has 28 days and JS's Date setters roll
+ * the excess forward into the next month instead of clamping).
+ *
+ * `months` may be any non-negative integer (12 for one year, 36 for three
+ * years, etc.) -- there is deliberately no separate year-subtraction path;
+ * "1y" is just `subtractUtcMonthsClamped(d, 12)`, which is also what makes
+ * 2024-02-29 minus one year correctly land on 2023-02-28 rather than
+ * overflowing into March.
+ */
+export function subtractUtcMonthsClamped(date: Date, months: number): Date {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+
+  const totalMonths = year * 12 + month - months;
+  const targetYear = Math.floor(totalMonths / 12);
+  const targetMonth = ((totalMonths % 12) + 12) % 12;
+
+  // Day 0 of the month AFTER the target month is the target month's last day.
+  const lastDayOfTargetMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+  const clampedDay = Math.min(day, lastDayOfTargetMonth);
+
+  return new Date(
+    Date.UTC(
+      targetYear,
+      targetMonth,
+      clampedDay,
+      date.getUTCHours(),
+      date.getUTCMinutes(),
+      date.getUTCSeconds(),
+      date.getUTCMilliseconds(),
+    ),
+  );
+}
+
+/**
  * Derive an inclusive lower date bound from the time period. `all` means no
  * bound. UTC-based arithmetic keeps it timezone-stable and deterministic; `now`
  * is injected so tests need no clock control (and no date-fns mock).
+ *
+ * Recognizes BOTH desktop's values (week/month/year/all) and mobile's
+ * (7d/30d/3m/6m/1y/all, from MobileReviewQueueView) -- previously this only
+ * understood the desktop set, so every mobile relative-time option silently
+ * produced NO date bound at all (§19-20 hardening pass). "week"/"7d" and
+ * "year"/"1y" are deliberately synonymous (same underlying bound, different
+ * control surfaced them under different values).
+ *
+ * 7d/30d use exact day-count subtraction (`setUTCDate`, immune to month-
+ * length overflow by construction); month/3m/6m/year/1y use
+ * `subtractUtcMonthsClamped` so a month-end date never overflows into the
+ * following month (the final-pass calendar-arithmetic fix).
  */
 export function deriveDateRange(
   timePeriod: string,
   now: Date,
 ): { from: string | null; to: string | null } {
-  const d = new Date(now.getTime());
-  if (timePeriod === "week") {
+  if (timePeriod === "week" || timePeriod === "7d") {
+    const d = new Date(now.getTime());
     d.setUTCDate(d.getUTCDate() - 7);
     return { from: d.toISOString(), to: null };
   }
-  if (timePeriod === "month") {
-    d.setUTCMonth(d.getUTCMonth() - 1);
+  if (timePeriod === "30d") {
+    const d = new Date(now.getTime());
+    d.setUTCDate(d.getUTCDate() - 30);
     return { from: d.toISOString(), to: null };
   }
-  if (timePeriod === "year") {
-    d.setUTCFullYear(d.getUTCFullYear() - 1);
-    return { from: d.toISOString(), to: null };
+  if (timePeriod === "month") {
+    return { from: subtractUtcMonthsClamped(now, 1).toISOString(), to: null };
+  }
+  if (timePeriod === "3m") {
+    return { from: subtractUtcMonthsClamped(now, 3).toISOString(), to: null };
+  }
+  if (timePeriod === "6m") {
+    return { from: subtractUtcMonthsClamped(now, 6).toISOString(), to: null };
+  }
+  if (timePeriod === "year" || timePeriod === "1y") {
+    return { from: subtractUtcMonthsClamped(now, 12).toISOString(), to: null };
   }
   return { from: null, to: null };
+}
+
+/**
+ * Derive the server date range for an exact expense month, adapted to the
+ * Review queue RPCs' existing INCLUSIVE `p_date_to` contract (they filter
+ * `trip_start <= p_date_to`, not `< p_date_to`). "all" (or an invalid value)
+ * yields no bound, matching `deriveDateRange`'s "all" shape.
+ */
+export function deriveExpenseMonthDateRange(
+  expenseMonth: ExpenseMonthValue,
+): { from: string | null; to: string | null } {
+  const bounds = expenseMonthBounds(expenseMonth);
+  if (!bounds) return { from: null, to: null };
+  return { from: bounds.from, to: expenseMonthInclusiveEnd(bounds.toExclusive) };
 }
 
 /**
@@ -211,9 +310,10 @@ export function customFilterRecordToServer(
 
 /**
  * Stable identity for the applied query. INCLUDES custom filters, the actionable
- * toggle and the hierarchy-inclusion controls (§37) so the return cache and the
- * page fetch can never mistake one filter shape for another. Independent of
- * `revision` (two identical submits share a key).
+ * toggle, the hierarchy-inclusion controls (§37) and the exact expense month
+ * (§14) so the return cache and the page fetch can never mistake one filter
+ * shape — or one month — for another. Independent of `revision` (two
+ * identical submits share a key).
  */
 export function buildAppliedQueryKey(q: AppliedReviewQuery): string {
   const mode = isServerQueryActive(q) ? "server" : "normal";
@@ -227,6 +327,7 @@ export function buildAppliedQueryKey(q: AppliedReviewQuery): string {
     (q.generalSearch ?? "").trim().toLowerCase(),
     q.status,
     q.timePeriod,
+    q.expenseMonth,
     q.sortBy,
     q.sortOrder,
     customEntries,

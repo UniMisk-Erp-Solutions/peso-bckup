@@ -139,3 +139,12 @@ Pesowise-main_*.sql
 updated-peso-backup.sql
 *-peso-backup.sql
 /*.sql
+
+# Generated report output. These files routinely contain real employee names,
+# employee IDs and expense totals -- exactly the operational data CLAUDE.md
+# forbids committing. Verified 2026-09-02: without this rule a plain
+# `git add -A` stages tmp/reports/*.xlsx containing 208 real employee records.
+tmp/
+tmp/**
+*.xlsx
+!Documentations MD/**/*.xlsx

@@ -53,7 +53,7 @@ export function HomeNavbar() {
 
           <div className="hidden md:flex items-center gap-3">
             <Button variant="outline" asChild className="text-sm">
-              <Link to="/contact">Get Started Free</Link>
+              <Link to="/contact">Book a Demo</Link>
             </Button>
             <Button
               asChild
@@ -113,7 +113,7 @@ export function HomeNavbar() {
               <div className="px-4 py-3">
                 <Button variant="outline" asChild className="w-full min-h-[44px] touch-manipulation">
                   <Link to="/contact" onClick={() => setMobileMenuOpen(false)}>
-                    Get Started Free
+                    Book a Demo
                   </Link>
                 </Button>
               </div>

@@ -1,15 +1,76 @@
 import * as React from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { DayPicker } from "react-day-picker";
+import { Button as DayPickerButton, DayPicker, type DayProps, useDayRender } from "react-day-picker";
 
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-export type CalendarProps = React.ComponentProps<typeof DayPicker>;
+export type CalendarProps = React.ComponentProps<typeof DayPicker> & {
+  /**
+   * Returns a user-facing explanation for why `date` is unselectable, for a
+   * reason the caller wants EXPLAINED to the user (e.g. an admin-imposed
+   * expense date lock) -- distinct from the plain `disabled` matcher
+   * (future dates, etc.), which gets no tooltip/aria explanation at all.
+   * A day this returns non-null for is rendered as visually
+   * disabled-looking (muted, "not-allowed" cursor) but deliberately does
+   * NOT get the HTML `disabled` attribute: a real disabled button blocks
+   * hover/focus/click at the browser level, which would make it impossible
+   * to show a tooltip on hover/focus or a tap-to-explain message on
+   * mobile. The caller's `onDayClick`/`onSelect` is responsible for
+   * refusing to actually select a day this returns a reason for.
+   */
+  getLockedDayReason?: (date: Date) => string | null;
+};
 
-function Calendar({ className, classNames, showOutsideDays = true, ...props }: CalendarProps) {
+/** Wraps react-day-picker's own default `Day` rendering (see its
+ *  `useDayRender` docs) to add a tooltip + accessible explanation for a day
+ *  `getLockedDayReason` flags, without altering any other day's behavior. */
+function LockAwareDay(props: DayProps & { getLockedDayReason?: CalendarProps["getLockedDayReason"] }) {
+  const { getLockedDayReason, ...dayProps } = props;
+  const buttonRef = React.useRef<HTMLButtonElement>(null);
+  const dayRender = useDayRender(dayProps.date, dayProps.displayMonth, buttonRef);
+
+  if (dayRender.isHidden) {
+    return <div role="gridcell" />;
+  }
+  if (!dayRender.isButton) {
+    return <div {...dayRender.divProps} />;
+  }
+
+  const reason = getLockedDayReason?.(dayProps.date) ?? null;
+  if (!reason) {
+    return <DayPickerButton name="day" ref={buttonRef} {...dayRender.buttonProps} />;
+  }
+
+  const dateLabel = dayProps.date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  const button = (
+    <DayPickerButton
+      name="day"
+      ref={buttonRef}
+      {...dayRender.buttonProps}
+      className={cn(dayRender.buttonProps.className, "opacity-50 cursor-not-allowed")}
+      aria-label={`${dateLabel} — ${reason}`}
+      title={reason}
+    />
+  );
+
   return (
-    <DayPicker
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent>{reason}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function Calendar({ className, classNames, showOutsideDays = true, getLockedDayReason, components, ...props }: CalendarProps) {
+  return (
+    <TooltipProvider>
+      <DayPicker
       showOutsideDays={showOutsideDays}
       className={cn("p-3", className)}
       classNames={{
@@ -44,9 +105,12 @@ function Calendar({ className, classNames, showOutsideDays = true, ...props }: C
       components={{
         IconLeft: ({ ..._props }) => <ChevronLeft className="h-4 w-4" />,
         IconRight: ({ ..._props }) => <ChevronRight className="h-4 w-4" />,
+        Day: (dayProps) => <LockAwareDay {...dayProps} getLockedDayReason={getLockedDayReason} />,
+        ...components,
       }}
-      {...props}
-    />
+        {...props}
+      />
+    </TooltipProvider>
   );
 }
 Calendar.displayName = "Calendar";

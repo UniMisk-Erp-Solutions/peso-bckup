@@ -1,4 +1,12 @@
 {
+  "dateLock": {
+    "closed": "This expense date is closed for submission.",
+    "closedWithReason": "This expense date is closed for submission. Reason: {{reason}}",
+    "checking": "Checking available expense dates…",
+    "loadError": "Expense dates could not be loaded. Please retry before submitting an expense.",
+    "adminBlocked": "Expense submission has been blocked by your admin for this date.",
+    "reasonLabel": "Reason"
+  },
   "title": "Expenses",
   "myExpenses": "My Expenses",
   "pageDescription": "Manage and track your expense submissions",
@@ -102,6 +110,9 @@
       "show": "Show Recommended Categories ({{count}})",
       "topPicks": "Top picks"
     },
+    "recentValues": {
+      "heading": "Recent"
+    },
     "placeholders": {
       "title": "e.g., Office supplies purchase",
       "destination": "e.g., Amazon, New York, NY",
@@ -128,7 +139,8 @@
     "adjustedByOrgHint": "You can view the details but cannot edit it while it is in review.",
     "batchEditDescription": "You are editing one line in a batch. Save updates this expense the same way as a regular expense; batch totals refresh automatically.",
     "submitSuccess": "Expense submitted successfully.",
-    "receiptsTempFallback": "Expense submitted. Some receipts are temporarily stored and will be finalized later.",
+    "receiptsTempFallbackTitle": "Receipt saved temporarily",
+    "receiptsTempFallback": "Some receipts are temporarily stored and will be finalized later.",
     "loadFailed": "Failed to load expense data",
     "fieldRequired": "{{field}} is required",
     "bills": {

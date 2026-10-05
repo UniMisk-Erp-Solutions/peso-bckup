@@ -30,7 +30,20 @@ import { MobileAppShell } from "@/components/mobile/MobileAppShell";
 import { UserActivityNoticeGate } from "@/components/UserActivityNoticeGate";
 import { TransferOfferPromptGate } from "@/components/TransferOfferPromptGate";
 
-export function Layout({ children }: { children: React.ReactNode }) {
+export function Layout({
+  children,
+  fullWidth = false,
+}: {
+  children: React.ReactNode;
+  /**
+   * Opts this page out of the default max-w-7xl centered content column.
+   * Used by dense expense tables (Admin Expenses, Review) so they can use
+   * the full available desktop width instead of being capped at 1280px
+   * and centered with wasted margins on wider monitors. Every other page
+   * keeps the default centered column unless it explicitly opts in too.
+   */
+  fullWidth?: boolean;
+}) {
   const { t } = useTranslation(["nav", "common"]);
   const location = useLocation();
   const { isMobile } = useViewportMode();
@@ -333,7 +346,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             id={APP_MAIN_SCROLL_ID}
             className="app-main-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 sm:p-5 md:p-6 pb-safe w-full max-w-full"
           >
-            <div className="max-w-7xl mx-auto w-full">
+            <div className={fullWidth ? "w-full" : "max-w-7xl mx-auto w-full"}>
               {children}
             </div>
           </div>

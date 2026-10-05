@@ -117,7 +117,7 @@ describe("resolveStarterSheetSchema", () => {
   it("reports every missing canonical column when the file does not match the starter sheet", () => {
     const result = resolveStarterSheetSchema(["Employee ID", "Email"], "historical_opening");
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok === true) return;
     expect(result.missing).toEqual(
       expect.arrayContaining(["Employee Name", "Current Balance", "Opening Balance", "Effective Date", "Note"]),
     );
@@ -128,7 +128,7 @@ describe("resolveStarterSheetSchema", () => {
     const headers = canonicalStarterHeaders("allocation");
     const result = resolveStarterSheetSchema(headers, "historical_opening");
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok === true) return;
     expect(result.missing).toContain("Opening Balance");
   });
 

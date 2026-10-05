@@ -40,6 +40,9 @@ import {
 import { translateBaseFieldConfig } from "@/lib/translateBaseFieldConfig";
 import { useBatchExpenseEntry } from "@/hooks/useBatchExpenseEntry";
 import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
+import { useExpenseDateLocks } from "@/hooks/useExpenseDateLocks";
+import { getExpenseDateLockMessage } from "@/lib/expenseDateLocks";
+import { formatExpenseDateLockError } from "@/lib/expenseDateLockError";
 import { BatchLineFormFields } from "@/components/BatchLineFormFields";
 import { getVisibleBranchIds } from "@/lib/conditionalFormFields";
 import { useCanSubmitOwnExpenses } from "@/hooks/useCanSubmitOwnExpenses";
@@ -63,6 +66,8 @@ import {
 import { fetchRecommendedCategories } from "@/lib/recommendedCategories";
 import { BatchCategoryField } from "@/components/BatchCategoryField";
 import { BaseExpenseFieldInput } from "@/components/BaseExpenseFieldInput";
+import { useRecentExpenseFieldValues } from "@/hooks/useRecentExpenseFieldValues";
+import { memoryFieldKey } from "@/lib/expenseFieldMemory";
 import { BatchLineReceiptSection } from "@/components/BatchLineReceiptSection";
 import { BatchExpenseLinesTable } from "@/components/BatchExpenseLinesTable";
 import { BatchSharedCategoryFields } from "@/components/BatchSharedCategoryFields";
@@ -77,6 +82,7 @@ import type { OptionBranchDefinition } from "@/lib/conditionalFormFieldTypes";
 import { fetchRuntimeOptionBranches } from "@/lib/runtimeOptionBranches";
 import { useBatchFieldPlan } from "@/hooks/useBatchFieldPlan";
 import { trackBaseFieldSelections, trackFormFieldSelectionsForCategory } from "@/lib/recommendedFormFieldOptions";
+import { recordRecentExpenseFieldValues } from "@/lib/expenseFieldMemory";
 import { NumberInput } from "@/components/NumberInput";
 import type { TempUploadMeta } from "@/lib/expenseBatchAttachments";
 import {
@@ -109,6 +115,19 @@ export default function ExpenseBatchForm() {
   const { t, i18n } = useTranslation(["expenses", "common"]);
   const navigate = useNavigate();
   const { user, userRole, organizationId, organizationFeatureFlags } = useAuth();
+  const {
+    locks: expenseDateLocks,
+    loading: expenseDateLocksLoading,
+    error: expenseDateLocksError,
+    enabled: expenseDateLockingEnabled,
+    reload: reloadExpenseDateLocks,
+  } = useExpenseDateLocks();
+  // Fail CLOSED: see ExpenseForm.tsx's identical gate for the single-expense
+  // form (2026-10-01 fail-closed fix) -- while the feature is on and the
+  // client cannot currently prove a date is safe, the shared date field and
+  // every forward action (Next / Submit) must be blocked.
+  const expenseDateLocksUnproven =
+    expenseDateLockingEnabled && (expenseDateLocksLoading || !!expenseDateLocksError);
   const allowConditionalDropdown =
     organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.allow_conditional_dropdown_fields] === true;
   const allowNestedConditional =
@@ -116,6 +135,17 @@ export default function ExpenseBatchForm() {
     organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.allow_nested_conditional_dropdown_fields] === true;
   const baseFieldCustomizationEnabled =
     organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.allow_base_field_input_customization] === true;
+  const expenseFieldMemoryEnabled =
+    organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.expense_field_memory] === true;
+  // DOC-130: batch entry recorded saved values (below) but never fetched them
+  // back -- destination/purpose here never showed a Recent suggestion at
+  // all, regardless of the base-field gating fix in BaseExpenseFieldInput.
+  const recentBaseValuesByKey = useRecentExpenseFieldValues(
+    organizationId,
+    user?.id,
+    [memoryFieldKey("system", "destination"), memoryFieldKey("system", "purpose")],
+    expenseFieldMemoryEnabled,
+  );
   const { toast } = useToast();
   const { isMobile } = useViewportMode();
   const { canSubmitExpenses, loading: canSubmitLoading } = useCanSubmitOwnExpenses();
@@ -147,6 +177,19 @@ export default function ExpenseBatchForm() {
   const [receiptTick, setReceiptTick] = useState(0);
 
   const [expenseDate, setExpenseDate] = useState<Date>(new Date());
+  // "Already selected, now locked" case for the shared trip date -- see
+  // ExpenseForm.tsx's identical effect for why this does not clear
+  // `expenseDate` itself (it is a non-nullable `Date`, always defaulted to
+  // `new Date()`, read unconditionally by `format()` below).
+  // Holds the composed explanation (admin reason, or the plain-language
+  // fallback) when the shared trip date is locked -- see ExpenseForm.tsx's
+  // identical notice for why this isn't just a boolean.
+  const [expenseDateClosedNotice, setExpenseDateClosedNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (expenseDateLocksUnproven) return;
+    setExpenseDateClosedNotice(getExpenseDateLockMessage(expenseDate, expenseDateLocks, t));
+  }, [expenseDateLocks, expenseDateLocksUnproven, expenseDate, t]);
+  const expenseDateLockBlocksForward = expenseDateLocksUnproven || !!expenseDateClosedNotice;
   const [sharedDestination, setSharedDestination] = useState("");
   const [batchLabel, setBatchLabel] = useState("");
   const [sharedTitle, setSharedTitle] = useState("");
@@ -475,6 +518,16 @@ export default function ExpenseBatchForm() {
   };
 
   const goNextFromStep1 = () => {
+    // Fail CLOSED: block advancing past the shared-date step while lock data
+    // is unproven, or while the picked shared date has just become locked
+    // (e.g. an admin created a lock while this form sat open on step 1).
+    if (expenseDateLockBlocksForward) {
+      toast({
+        variant: "destructive",
+        title: expenseDateLocksUnproven ? t("dateLock.loadError") : (expenseDateClosedNotice ?? t("dateLock.closed")),
+      });
+      return;
+    }
     const ctxCheck = validateBatchSharedContext(
       { expenseDate, sharedDestination, label: batchLabel },
       translatedBaseFields,
@@ -585,6 +638,25 @@ export default function ExpenseBatchForm() {
 
   const handleSubmit = async () => {
     if (!user?.id) return;
+    // Fail CLOSED (2026-10-01): never reach the write path while lock data
+    // is unproven (still loading, or the fetch failed) -- a warning next to
+    // a usable Submit button is not enough, this must actually block.
+    if (expenseDateLocksUnproven) {
+      toast({ variant: "destructive", title: t("dateLock.loadError") });
+      return;
+    }
+    // Admin-controlled expense date locking (hotfix 2026-10-01): the
+    // Calendar's `onSelect` already refuses to pick a locked date, but this
+    // is the backstop so the whole batch can never reach the write path
+    // with a locked shared date. The database trigger on public.expenses
+    // is the real, unbypassable enforcement.
+    {
+      const lockMessage = getExpenseDateLockMessage(expenseDate, expenseDateLocks, t);
+      if (lockMessage) {
+        toast({ variant: "destructive", description: lockMessage });
+        return;
+      }
+    }
     if (anyLoadError) {
       toast({
         variant: "destructive",
@@ -764,6 +836,10 @@ export default function ExpenseBatchForm() {
               },
             );
           }
+          // DOC-130: best-effort, independent of the analytics tracking above.
+          if (expenseFieldMemoryEnabled && r.expenseId) {
+            void recordRecentExpenseFieldValues(organizationId, user.id, r.expenseId);
+          }
         }
       }
 
@@ -776,7 +852,10 @@ export default function ExpenseBatchForm() {
         description: `${result.successCount} of ${linesPrepared.length} expenses submitted.`,
       });
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Submit failed";
+      // The date-lock trigger's rejection (PW010) must never surface as a
+      // raw/generic error -- recognise it first (see
+      // src/lib/expenseDateLockError.ts).
+      const msg = formatExpenseDateLockError(e) ?? (e instanceof Error ? e.message : "Submit failed");
       failSubmitProgress(t("progress.batchSubmitting"), msg);
       toast({ variant: "destructive", title: "Error", description: msg });
     } finally {
@@ -852,7 +931,7 @@ export default function ExpenseBatchForm() {
                 <Label>{getBaseField("expense_date").label} *</Label>
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant="outline" className="w-full justify-start">
+                    <Button variant="outline" className="w-full justify-start" disabled={expenseDateLocksUnproven}>
                       <CalendarIcon className="mr-2 h-4 w-4" />
                       {format(expenseDate, "PPP")}
                     </Button>
@@ -861,11 +940,39 @@ export default function ExpenseBatchForm() {
                     <Calendar
                       mode="single"
                       selected={expenseDate}
-                      onSelect={(d) => d && setExpenseDate(d)}
+                      onSelect={(d) => {
+                        if (!d) return;
+                        // Locked days are deliberately NOT HTML-disabled
+                        // (see `getLockedDayReason`) so hover/tap still
+                        // reach this handler -- refuse the selection here.
+                        const lockMessage = getExpenseDateLockMessage(d, expenseDateLocks, t);
+                        if (lockMessage) {
+                          setExpenseDateClosedNotice(lockMessage);
+                          toast({ variant: "destructive", description: lockMessage });
+                          return;
+                        }
+                        setExpenseDate(d);
+                        setExpenseDateClosedNotice(null);
+                      }}
                       disabled={(date) => date > new Date()}
+                      getLockedDayReason={(date) => getExpenseDateLockMessage(date, expenseDateLocks, t)}
                     />
                   </PopoverContent>
                 </Popover>
+                {expenseDateLocksUnproven && !expenseDateLocksError && (
+                  <p className="text-xs text-muted-foreground mt-1">{t("dateLock.checking")}</p>
+                )}
+                {expenseDateLocksError && (
+                  <div className="space-y-1 mt-1">
+                    <p className="text-xs text-destructive">{t("dateLock.loadError")}</p>
+                    <Button type="button" variant="outline" size="sm" onClick={() => reloadExpenseDateLocks()}>
+                      {t("progress.retry")}
+                    </Button>
+                  </div>
+                )}
+                {!expenseDateLocksUnproven && expenseDateClosedNotice && (
+                  <p className="text-xs text-destructive mt-1">{expenseDateClosedNotice}</p>
+                )}
               </div>
             )}
             {getBaseField("destination").is_visible && (
@@ -881,6 +988,8 @@ export default function ExpenseBatchForm() {
                   featureEnabled={baseFieldCustomizationEnabled}
                   organizationId={organizationId}
                   userId={user?.id}
+                  memoryEnabled={expenseFieldMemoryEnabled}
+                  recentValues={recentBaseValuesByKey[memoryFieldKey("system", "destination")]}
                   defaultControl={
                     <Input
                       value={sharedDestination}
@@ -894,7 +1003,7 @@ export default function ExpenseBatchForm() {
               <Button variant="outline" onClick={() => navigate("/expenses")}>
                 Cancel
               </Button>
-              <Button onClick={goNextFromStep1}>
+              <Button onClick={goNextFromStep1} disabled={expenseDateLockBlocksForward}>
                 Next <ChevronRight className="ml-2 h-4 w-4" />
               </Button>
             </div>
@@ -1152,6 +1261,8 @@ export default function ExpenseBatchForm() {
                         featureEnabled={baseFieldCustomizationEnabled}
                         organizationId={organizationId}
                         userId={user?.id}
+                        memoryEnabled={expenseFieldMemoryEnabled}
+                        recentValues={recentBaseValuesByKey[memoryFieldKey("system", "destination")]}
                         defaultControl={
                           <Input
                             value={line.destination || ""}
@@ -1176,6 +1287,8 @@ export default function ExpenseBatchForm() {
                         featureEnabled={baseFieldCustomizationEnabled}
                         organizationId={organizationId}
                         userId={user?.id}
+                        memoryEnabled={expenseFieldMemoryEnabled}
+                        recentValues={recentBaseValuesByKey[memoryFieldKey("system", "purpose")]}
                         defaultControl={
                           <Textarea
                             value={line.purpose || ""}
@@ -1335,7 +1448,7 @@ export default function ExpenseBatchForm() {
               <Button variant="outline" onClick={() => setStep(2)} disabled={loading}>
                 <ChevronLeft className="mr-2 h-4 w-4" /> Back
               </Button>
-              <Button onClick={() => void handleSubmit()} disabled={loading}>
+              <Button onClick={() => void handleSubmit()} disabled={loading || expenseDateLockBlocksForward}>
                 <Send className="mr-2 h-4 w-4" />
                 {loading ? "Submitting…" : `Submit ${lines.length} expenses`}
               </Button>

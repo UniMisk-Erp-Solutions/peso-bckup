@@ -29,6 +29,7 @@ const snapshot = (over: Partial<ReviewWorkspaceState> = {}): ReviewWorkspaceStat
     generalSearch: null,
     statusFilter: "all",
     timePeriod: "all",
+    expenseMonth: "all",
     sortBy: "created_at",
     sortOrder: "desc",
     customFilters: { Vehicle: "Car" },
@@ -57,6 +58,12 @@ describe("save / load round-trip", () => {
     expect(loaded?.query.showOnlyActionable).toBe(true);
     expect(loaded?.query.includeTeamLeaderReports).toBe(false);
     expect(loaded?.query.includeExecutiveReports).toBe(true);
+  });
+
+  it("v3: exact expense month round-trips", () => {
+    saveReviewWorkspaceState(snapshot({ query: { ...snapshot().query, expenseMonth: "2026-08" } }));
+    const loaded = loadReviewWorkspaceState(ORG, REV, NOW + 1000);
+    expect(loaded?.query.expenseMonth).toBe("2026-08");
   });
 
   it("clear removes it", () => {
@@ -115,6 +122,24 @@ describe("version + TTL + corrupt (§23/§24/§25/§44 J)", () => {
     const bad = snapshot();
     (bad.query.employee as unknown) = { name: "x" };
     expect(validateReviewWorkspaceState(bad, { organizationId: ORG, reviewerUserId: REV, now: NOW })).toBeNull();
+  });
+
+  it("§16: an old v2 payload (pre-month-filter, no expenseMonth field) is rejected wholesale by the version bump, never crashes", () => {
+    const v2Payload = { ...snapshot(), version: 2 };
+    expect(
+      validateReviewWorkspaceState(v2Payload, { organizationId: ORG, reviewerUserId: REV, now: NOW }),
+    ).toBeNull();
+  });
+
+  it("§16: a same-version payload missing/corrupt expenseMonth falls back to 'all', not a crash", () => {
+    const withoutMonth = snapshot();
+    (withoutMonth.query as { expenseMonth?: unknown }).expenseMonth = undefined;
+    const result = validateReviewWorkspaceState(withoutMonth, { organizationId: ORG, reviewerUserId: REV, now: NOW });
+    expect(result?.query.expenseMonth).toBe("all");
+
+    const corrupt = snapshot({ query: { ...snapshot().query, expenseMonth: "not-a-month" as never } });
+    const result2 = validateReviewWorkspaceState(corrupt, { organizationId: ORG, reviewerUserId: REV, now: NOW });
+    expect(result2?.query.expenseMonth).toBe("all");
   });
 });
 

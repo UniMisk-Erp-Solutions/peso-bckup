@@ -29,12 +29,16 @@ import { useEmployeeBalanceLedger } from "@/hooks/useEmployeeBalanceLedger";
 const DEFAULT_PAGE_SIZE = 25;
 
 /**
- * Balance History — deliberately NOT a complete ledger.
+ * Balance History (Additive Credit V3, 2026-09-01).
  *
- * PesoWise deducts approved expenses from `profiles.balance` on a separate path,
- * so the credits listed here do not sum to the current balance and the page never
- * claims they do. Current balance comes from the authoritative AuthContext value;
- * it is never derived from this list.
+ * The Balance Ledger card below now DOES include expense deductions,
+ * positioned on each expense's own business date (not its approval date),
+ * with a server-reconstructed running balance -- get_my_unified_balance_timeline_v3
+ * (via useEmployeeBalanceLedger) unions balance_ledger and
+ * expense_balance_deductions and computes the running balance over the full
+ * chronological event set before pagination. Current balance still comes
+ * from the authoritative AuthContext value (userBalance), which the
+ * reconstructed timeline's own last row is proven to match.
  */
 export default function EmployeeBalanceHistory() {
   const { t, i18n } = useTranslation(["transfers", "common"]);
@@ -48,7 +52,7 @@ export default function EmployeeBalanceHistory() {
   const { featureEnabled, data, isLoading, isError, isFetching, refetch } =
     useEmployeeBalanceHistory(page, pageSize);
   const [ledgerPage, setLedgerPage] = useState(1);
-  const ledger = useEmployeeBalanceLedger(ledgerPage, DEFAULT_PAGE_SIZE);
+  const ledger = useEmployeeBalanceLedger(ledgerPage, DEFAULT_PAGE_SIZE, featureEnabled);
 
   // Records can change between renders (a new credit lands, an admin backdates a
   // row). Clamp so the view never sits on a page that no longer exists.
@@ -90,6 +94,18 @@ export default function EmployeeBalanceHistory() {
       expense_deduction: "Expense Deduction",
       reversal: "Reversal",
       correction: "Correction",
+      // Additive Credit V3 (2026-09-01). historical_balance_update /
+      // historical_anchor_reversal (the old target-anchor engine's own
+      // vocabulary) are never shown here in normal use -- a reversed credit
+      // and its reversal are excluded server-side by
+      // get_my_unified_balance_timeline_v3 -- but are mapped defensively in
+      // case an old, still-active (non-reversed) anchor from before this
+      // cutover is ever surfaced.
+      historical_balance_update: "Balance Update",
+      historical_anchor_recalculation: "Balance Recalculation",
+      opening_credit: "Opening Balance Credit",
+      balance_credit: "Balance Credit",
+      credit_reversal: "Reversal",
     };
     return labels[entryType] ?? entryType;
   };
@@ -304,9 +320,9 @@ export default function EmployeeBalanceHistory() {
         <CardHeader>
           <CardTitle className="text-base sm:text-lg">Balance Ledger</CardTitle>
           <CardDescription>
-            Every recorded change to your balance, in order: opening balances, allocations,
-            cash transfers, adjustments and reversals. Expense deductions are not yet included
-            here -- see your expense history for those.
+            Every recorded change to your balance, in chronological order: opening balances,
+            balance credits, allocations, cash transfers, adjustments, and expense deductions
+            (shown on the expense's own date, not when it was approved).
           </CardDescription>
         </CardHeader>
         <CardContent className="px-3 sm:px-6">
@@ -327,6 +343,7 @@ export default function EmployeeBalanceHistory() {
                   <TableRow>
                     <TableHead className="whitespace-nowrap">Date</TableHead>
                     <TableHead className="whitespace-nowrap">Type</TableHead>
+                    <TableHead className="whitespace-nowrap">Transaction</TableHead>
                     <TableHead className="whitespace-nowrap">Amount</TableHead>
                     <TableHead className="whitespace-nowrap">Balance After</TableHead>
                     <TableHead>Note</TableHead>
@@ -338,6 +355,9 @@ export default function EmployeeBalanceHistory() {
                       <TableCell className="whitespace-nowrap">{formatDate(entry.effective_at)}</TableCell>
                       <TableCell>
                         <Badge variant="secondary">{ledgerEntryTypeLabel(entry.entry_type)}</Badge>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-blue-600">
+                        {entry.transactionNumber ?? "—"}
                       </TableCell>
                       <TableCell
                         className={`font-semibold whitespace-nowrap ${entry.amount_delta >= 0 ? "text-green-700" : "text-red-600"}`}

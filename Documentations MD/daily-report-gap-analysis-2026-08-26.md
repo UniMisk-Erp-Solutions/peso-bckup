@@ -1,5 +1,7 @@
 # Daily Project Report gap analysis — 2026-08-26
 
+**Doc ID:** DOC-140 (formerly DOC-113) (renumbered on the 2026-10-05 upstream sync — see DOC-143; the pre-sync `peso-bckup` index gave this a different ID than upstream's independently-numbered catalog)
+
 **Status:** analysis only, nothing written to the database.
 **Scope:** MicroLink organization (`6709c1fe-e8c8-404d-bc68-d1edda923344`), all 12,946 expenses.
 **Requested by:** user, in response to blank Voucher No / project id / project name cells in the Daily Project Report.

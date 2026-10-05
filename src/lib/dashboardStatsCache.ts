@@ -12,13 +12,18 @@ export type DashboardStatsSnapshot = {
   totalEmployeeBalance?: number;
   totalEngineerBalance?: number;
   totalCashierBalance?: number;
+  /** Whether currentBalance is live or a month-end balance (Month filter). */
+  balanceBasis?: "live" | "month_end";
+  balanceAsOf?: string | null;
 };
 
 type CachedPayload = DashboardStatsSnapshot & {
   cachedAt: number;
 };
 
-const STORAGE_PREFIX = "pesowise-dashboard-stats-v1";
+// v2: the key now includes the selected month. v1 entries (All time only, no
+// month segment) are simply never read again -- no mixed-scope hydration.
+const STORAGE_PREFIX = "pesowise-dashboard-stats-v2";
 /** Keep showing cached totals for up to 7 days while refreshing in the background. */
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -26,8 +31,9 @@ export function dashboardStatsCacheKey(
   userId: string,
   role: string,
   organizationId: string | null,
+  month: string = "all",
 ): string {
-  return `${STORAGE_PREFIX}:${userId}:${role}:${organizationId ?? "none"}`;
+  return `${STORAGE_PREFIX}:${userId}:${role}:${organizationId ?? "none"}:${month}`;
 }
 
 export function readDashboardStatsCache(key: string): DashboardStatsSnapshot | null {

@@ -26,6 +26,9 @@ import { formatINR, parseLocalDate } from "@/lib/format";
 import { FileUpload } from "@/components/FileUpload";
 import { ExpenseService, CreateExpenseData, UpdateExpenseData } from "@/services/ExpenseService";
 import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
+import { useExpenseDateLocks } from "@/hooks/useExpenseDateLocks";
+import { getExpenseDateLockMessage } from "@/lib/expenseDateLocks";
+import { formatExpenseDateLockError } from "@/lib/expenseDateLockError";
 import { CategoryFormFieldsSection } from "@/components/CategoryFormFieldsSection";
 import { useOnDemandOptionBranches } from "@/hooks/useOnDemandOptionBranches";
 import {
@@ -38,6 +41,18 @@ import { BaseExpenseFieldInput } from "@/components/BaseExpenseFieldInput";
 import { translateBaseFieldConfig } from "@/lib/translateBaseFieldConfig";
 import { getDateLocale } from "@/lib/formatLocale";
 import { canOwnerEditExpenseStatus } from "@/lib/expenseEditRules";
+import {
+  buildMicroLinkExpenseSnapshotV1,
+  microLinkFormStateFromExpenseForm,
+  type CategoryFormFieldLike,
+} from "@/lib/microlinkExpenseSnapshot";
+import {
+  saveMicroLinkExpenseDraft,
+  submitMicroLinkExpense,
+  updateSubmittedMicroLinkExpense,
+  usesAtomicSubmissionV1,
+  verifyPersistedExpense,
+} from "@/services/microlinkExpensePersistence";
 import { useViewportMode } from "@/hooks/useViewportMode";
 import { MobileExpenseFormLayout } from "@/components/mobile/MobileExpenseFormLayout";
 import { MobileStickyActionBar } from "@/components/mobile/MobileStickyActionBar";
@@ -45,6 +60,12 @@ import { useOperationProgress } from "@/hooks/useOperationProgress";
 import { AsyncOperationProgress } from "@/components/AsyncOperationProgress";
 import { trackBaseFieldSelections, trackFormFieldSelections } from "@/lib/recommendedFormFieldOptions";
 import { buildExpenseCustomFieldPayload } from "@/lib/expenseFormFieldPayload";
+import {
+  isEligibleBaseFieldForMemory,
+  memoryFieldKey,
+  recordRecentExpenseFieldValues,
+} from "@/lib/expenseFieldMemory";
+import { useRecentExpenseFieldValues } from "@/hooks/useRecentExpenseFieldValues";
 import {
   BatchExpenseContextCard,
   type BatchExpenseContextInfo,
@@ -182,6 +203,21 @@ export default function ExpenseForm() {
     organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.allow_nested_conditional_dropdown_fields] === true;
   const baseFieldCustomizationEnabled =
     organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.allow_base_field_input_customization] === true;
+  const expenseFieldMemoryEnabled =
+    organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.expense_field_memory] === true;
+  const {
+    locks: expenseDateLocks,
+    loading: expenseDateLocksLoading,
+    error: expenseDateLocksError,
+    enabled: expenseDateLockingEnabled,
+    reload: reloadExpenseDateLocks,
+  } = useExpenseDateLocks();
+  // Fail CLOSED: while the feature is on and the client cannot currently
+  // prove a date is safe (still loading, or the fetch failed), the date
+  // field and Submit must both be blocked rather than letting the user
+  // proceed on a guess (2026-10-01 fail-closed fix; see useExpenseDateLocks.ts).
+  const expenseDateLocksUnproven =
+    expenseDateLockingEnabled && (expenseDateLocksLoading || !!expenseDateLocksError);
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -222,9 +258,39 @@ export default function ExpenseForm() {
     amount: 0,
     category: "",
   });
+  // "Already selected, now locked" case: the employee picked a date before
+  // locks finished loading, or an admin created a new lock while this form
+  // was open and locks refetched. `expense.expense_date` is a non-nullable
+  // `Date` throughout this form (always defaults to `new Date()`, read by
+  // `format()` unconditionally elsewhere) -- there is no existing "empty"
+  // state for this field to fall back to, so rather than force one in just
+  // to "clear" it, the selected date is left visible (never silently
+  // swapped to a different date) and gated by this notice instead: it
+  // reopens the Calendar already showing the date disabled, and blocks
+  // Submit until the employee picks a different, currently-open date.
+  // Holds the composed explanation (admin reason, or the plain-language
+  // fallback) when the currently-selected date is locked -- `null` means
+  // "not locked" (or not yet evaluable). Showing the actual message here
+  // (not just a boolean) is what lets this same notice serve the "reason"
+  // requirement without a second lookup.
+  const [expenseDateClosedNotice, setExpenseDateClosedNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (expenseDateLocksUnproven) return; // cannot evaluate without proven lock data
+    setExpenseDateClosedNotice(getExpenseDateLockMessage(expense.expense_date, expenseDateLocks, t));
+  }, [expenseDateLocks, expenseDateLocksUnproven, expense.expense_date, t]);
+  // Combined submit gate for the date-lock feature: unproven lock data
+  // (loading/error) OR the currently-selected date having just become
+  // locked both must block Submit, not just the date field.
+  const expenseDateLockBlocksSubmit = expenseDateLocksUnproven || !!expenseDateClosedNotice;
   // Line items state removed
   const [isEditing, setIsEditing] = useState(false);
   const [expenseStatus, setExpenseStatus] = useState<string | null>(null);
+  // One idempotency key per logical submission attempt. A retry of the SAME
+  // attempt reuses it so the server replays one receipt instead of creating a
+  // second expense; it is cleared once the attempt succeeds.
+  const submissionAttemptKeyRef = useRef<string | null>(null);
+  // The revision this form was loaded at, for optimistic concurrency.
+  const loadedRevisionRef = useRef<number | null>(null);
   const [batchInfo, setBatchInfo] = useState<BatchExpenseContextInfo | null>(null);
   const [batchSiblings, setBatchSiblings] = useState<BatchExpenseSibling[]>([]);
   /** Temp bucket object names uploaded during this form session (avoids moving stale temp files on submit). */
@@ -273,6 +339,9 @@ export default function ExpenseForm() {
     selectOptionValue: selectOptionBranches,
     reset: resetOptionBranches,
     hasError: optionBranchLoadError,
+    isResolvedFor: isOptionBranchResolvedFor,
+    isLoadingFor: isOptionBranchLoadingFor,
+    hasErrorFor: isOptionBranchErroredFor,
   } = useOnDemandOptionBranches(organizationId);
   const [branchValues, setBranchValues] = useState<Record<string, string>>({});
   const [baseFieldConfig, setBaseFieldConfig] = useState<Record<BaseExpenseFieldKey, BaseFieldConfig>>(DEFAULT_BASE_FIELD_CONFIG);
@@ -307,6 +376,25 @@ export default function ExpenseForm() {
   const getBaseField = (key: BaseExpenseFieldKey): BaseFieldConfig =>
     translatedBaseFields[key] ||
     translateBaseFieldConfig(DEFAULT_BASE_FIELD_CONFIG, t)[key];
+
+  // DOC-130: recently-used free-text values for title/destination/purpose.
+  // Purely additive -- an empty map (feature off, fetch error, no history yet)
+  // renders identically to today's plain inputs.
+  const baseMemoryIdentities = useMemo(() => {
+    const ids: string[] = [];
+    (Object.keys(baseFieldConfig) as BaseExpenseFieldKey[]).forEach((key) => {
+      if (isEligibleBaseFieldForMemory(key, baseFieldConfig[key].input_type)) {
+        ids.push(memoryFieldKey("system", key));
+      }
+    });
+    return ids;
+  }, [baseFieldConfig]);
+  const recentBaseValuesByKey = useRecentExpenseFieldValues(
+    effectiveOrganizationId,
+    activeUserId,
+    baseMemoryIdentities,
+    expenseFieldMemoryEnabled,
+  );
 
   const fetchBaseFieldConfig = async () => {
     try {
@@ -904,10 +992,20 @@ export default function ExpenseForm() {
         return;
       }
 
-      // Fetch form fields for this category and load existing values
+      // Fetch form fields for this category and load existing values.
+      //
+      // INCIDENT hotfix (2026-09): the previously-saved TEMPLATE values must
+      // be loaded and passed into fetchCategoryFormFields's own
+      // `preserveFormValues` prefetch path BEFORE it runs — that path is
+      // what pre-fetches conditional branch DEFINITIONS for any select-type
+      // template that already has a value (see fetchCategoryFormFields
+      // above). The old order called fetchCategoryFormFields first (with no
+      // options), so optionBranches permanently stayed empty for an
+      // edit/resubmit unless the user happened to re-open the dropdown —
+      // deterministically dropping any existing Project ID / Project Name
+      // (or any other conditional field) on save. See
+      // editResubmitBranchDataLoss.test.ts for the regression test.
       if (expenseData.category) {
-        await fetchCategoryFormFields(expenseData.category);
-
         // Load existing form field values (with org filter, then without for legacy rows)
         let existingValues: { template_id: string | null; field_value: string }[] | null = null;
         const withOrg = await supabase
@@ -933,8 +1031,16 @@ export default function ExpenseForm() {
           existingValues.forEach((val: any) => {
             if (val.template_id) values[val.template_id] = val.field_value;
           });
-          setFormFieldValues(values);
+          // Passing preserveFormValues triggers fetchCategoryFormFields's
+          // existing (already-correct) prefetch of branch definitions for
+          // every select-type template that has a value here.
+          await fetchCategoryFormFields(expenseData.category, { preserveFormValues: values });
+        } else {
+          // No existing values at all: fall back to normal category-default
+          // population (unchanged from prior behavior).
+          await fetchCategoryFormFields(expenseData.category);
         }
+
         if (allowConditionalDropdown && organizationId && expenseData.id) {
           const loaded = await ExpenseService.loadBranchFieldValuesForExpense(
             expenseData.id,
@@ -1174,8 +1280,16 @@ export default function ExpenseForm() {
     });
 
     if (tempFallbackCount > 0) {
+      // This fires from moveTempFilesToExpense, which can run BEFORE the
+      // expense is actually submitted (the "attach first, then submit" path
+      // for a brand-new expense that requires a bill, see
+      // submitMicroLinkAtomically's needsAttachmentFirst branch above). Using
+      // the real "Expense submitted" success key/title here would be
+      // misleading -- the expense has not been submitted yet at this point
+      // in that path. This is its own, accurate, non-"submitted" notice
+      // (2026-10-01 review fix).
       toast({
-        title: t("expenses:form.submitSuccess"),
+        title: t("expenses:form.receiptsTempFallbackTitle"),
         description: t("expenses:form.receiptsTempFallback", {
           defaultValue: "Some receipts are temporarily stored and will be finalized later.",
         }),
@@ -1307,7 +1421,236 @@ export default function ExpenseForm() {
     }
   };
 
-  // Save custom form field values via the atomic replace RPC.
+  /**
+   * MicroLink atomic submission (V1).
+   *
+   * The whole expense — core columns, Project Unique ID, Project ID, Project
+   * Name, From/To location and any other applicable field — travels as ONE
+   * immutable snapshot to ONE RPC, which commits it in ONE transaction. There
+   * is no second custom-field request and no status PATCH, so the state that
+   * stranded employee 6818 (core row committed, project fields missing, status
+   * refused) cannot occur.
+   *
+   * Attachments are the one deliberate exception, and the reason is worth
+   * stating. A bill photo can only be moved onto an expense that already
+   * exists, so for an expense that REQUIRES one we save an atomic draft first,
+   * attach, then submit. Both calls are individually atomic, and a failure
+   * between them leaves exactly what today's behaviour leaves: a draft holding
+   * everything the employee entered. Submitting first would risk a submitted
+   * expense missing a bill the organization requires, which would be a new
+   * failure mode rather than a fixed one.
+   */
+  const submitMicroLinkAtomically = async (
+    expenseDateStr: string,
+    validatedExpense: { title: string; destination: string; purpose?: string | null; amount: number; category: string },
+    // Passed in explicitly rather than closed over: this function is a sibling
+    // of handleSubmit, not nested inside it, so it cannot see handleSubmit's
+    // local `requiresAttachment`. (Preview caught this as a ReferenceError —
+    // do not reintroduce an implicit dependency on the caller's local scope.)
+    requiresAttachment: boolean,
+  ): Promise<void> => {
+    if (!effectiveOrganizationId) {
+      throw new Error("Your organization could not be determined. Please reload and try again.");
+    }
+
+    // 1. Refuse to build while any selected project's configuration is unresolved.
+    //    An unresolved fetch is indistinguishable from "no conditional fields",
+    //    and treating it as the latter is exactly how values were dropped.
+    const unresolved = allowConditionalDropdown
+      ? (categoryFormFields as CategoryFormFieldLike[]).find((f) => {
+          const templateId = f.template?.id;
+          const value = templateId ? formFieldValues[templateId] : undefined;
+          return (
+            f.template?.field_type === "select" &&
+            !!value &&
+            !!templateId &&
+            !isOptionBranchResolvedFor(templateId, value)
+          );
+        })
+      : undefined;
+    if (unresolved) {
+      throw new Error(
+        "Project details are still loading. Please wait a moment and submit again.",
+      );
+    }
+
+    // 2. Freeze ONE snapshot from the form's current state. Nothing is read again.
+    const { form: mlForm, visibility } = microLinkFormStateFromExpenseForm({
+      core: {
+        expenseId: id ?? null,
+        expectedRevision: loadedRevisionRef.current,
+        title: validatedExpense.title,
+        destination: validatedExpense.destination,
+        tripStart: expenseDateStr,
+        tripEnd: expenseDateStr,
+        category: validatedExpense.category,
+        totalAmount: validatedExpense.amount,
+        purpose: validatedExpense.purpose ?? null,
+      },
+      categoryFormFields,
+      formFieldValues,
+      branchValues,
+      optionBranches,
+    });
+
+    // One key per logical attempt. A retry of THIS attempt reuses it, so the
+    // server replays one receipt instead of creating a second expense.
+    if (!submissionAttemptKeyRef.current) {
+      submissionAttemptKeyRef.current = crypto.randomUUID();
+    }
+    const idempotencyKey = submissionAttemptKeyRef.current;
+
+    const snapshot = buildMicroLinkExpenseSnapshotV1(mlForm, {
+      idempotencyKey,
+      visibility,
+      configResolved: true,
+    });
+
+    const hasPendingAttachments =
+      sessionTempFilenamesRef.current.size > 0 || (attachments?.length ?? 0) > 0;
+    const needsAttachmentFirst = !id && requiresAttachment && hasPendingAttachments;
+
+    startSubmitProgress(t("progress.preparing"), {
+      description: t("progress.preparingHint"),
+      currentStep: 1,
+      totalSteps: needsAttachmentFirst ? 3 : 2,
+    });
+
+    let workingSnapshot = snapshot;
+
+    // The client, not the server error path, decides which atomic action this
+    // is — mirroring the legacy path's own isEditing/status branching
+    // (ExpenseService.updateExpense vs submitExpense). Editing an expense that
+    // is ALREADY 'submitted' is an in-place update: it must not re-resolve
+    // routing or log a second submission event, so it uses a dedicated action
+    // rather than overloading "submit".
+    const isSubmittedEdit = isEditing && !!id && expenseStatus === "submitted";
+
+    // 3a. Bill required on a brand-new expense: atomic draft, attach, then submit.
+    if (needsAttachmentFirst) {
+      const draft = await saveMicroLinkExpenseDraft(snapshot);
+      if (draft.kind !== "committed") {
+        throw new Error(
+          draft.kind === "rejected"
+            ? draft.message
+            : "Your expense could not be saved. Nothing was submitted.",
+        );
+      }
+      updateSubmitProgress(t("progress.savingReceipts"), {
+        description: t("progress.savingReceiptsHint"),
+        currentStep: 2,
+        totalSteps: 3,
+      });
+      await moveTempFilesToExpense(draft.receipt.expense_id, {
+        requireAtLeastOne: requiresAttachment,
+        attachmentUrls: attachments,
+      });
+      await enforceMaxAttachmentSize(draft.receipt.expense_id);
+      workingSnapshot = {
+        ...snapshot,
+        expense_id: draft.receipt.expense_id,
+        expected_revision: draft.receipt.revision,
+      };
+    }
+
+    // 3b. THE submit. One request.
+    updateSubmitProgress(t("progress.submitting"), {
+      description: t("progress.submittingHint"),
+      currentStep: needsAttachmentFirst ? 3 : 2,
+      totalSteps: needsAttachmentFirst ? 3 : 2,
+    });
+
+    const outcome = isSubmittedEdit
+      ? await updateSubmittedMicroLinkExpense(workingSnapshot)
+      : await submitMicroLinkExpense(workingSnapshot);
+
+    if (outcome.kind === "rejected") {
+      // The employee stays on the form with every value intact. Nothing is
+      // cleared, nothing is navigated away from, and this is NOT called a draft.
+      throw new Error(outcome.message);
+    }
+    if (outcome.kind === "unknown") {
+      warnSubmitProgress(t("progress.draftWarning"), {
+        description: "We could not confirm your submission. Please reload this page before trying again — it may already have been submitted.",
+      });
+      toast({
+        variant: "destructive",
+        title: "Submission not confirmed",
+        description:
+          "Your connection dropped and we could not confirm whether the expense was submitted. Reload before retrying so you do not submit it twice.",
+      });
+      return;
+    }
+
+    // 4. Attachments for an expense that did not need them up front.
+    if (!needsAttachmentFirst && hasPendingAttachments) {
+      try {
+        await moveTempFilesToExpense(outcome.receipt.expense_id, {
+          requireAtLeastOne: false,
+          attachmentUrls: attachments,
+        });
+        await enforceMaxAttachmentSize(outcome.receipt.expense_id);
+      } catch (attachErr) {
+        // The expense IS saved/submitted; say so, and be specific about what failed.
+        toast({
+          variant: "destructive",
+          title: isSubmittedEdit
+            ? "Expense saved, but a receipt did not attach"
+            : "Expense submitted, but a receipt did not attach",
+          description:
+            attachErr instanceof Error ? attachErr.message : "Please open the expense and re-upload the photo.",
+        });
+      }
+    }
+
+    // 5. Readback. Trust the database, not the receipt alone.
+    const mismatches = await verifyPersistedExpense(outcome.receipt, {
+      status: "submitted",
+      transactionNumberPresent: true,
+    });
+    if (mismatches.length > 0) {
+      console.error("[ExpenseForm] V1 readback mismatch", {
+        expenseId: outcome.receipt.expense_id,
+        mismatches,
+      });
+      toast({
+        variant: "destructive",
+        title: "Submitted, but please verify",
+        description: `The saved expense did not match what the server confirmed (${mismatches.join("; ")}). Please open it and check.`,
+      });
+    }
+
+    submissionAttemptKeyRef.current = null;
+    persistSubmittedSafetyCopy(outcome.receipt.expense_id, "submitted");
+    completeSubmitProgress(isSubmittedEdit ? t("progress.editComplete") : t("progress.complete"));
+    sessionTempFilenamesRef.current.clear();
+    sessionTempUploadMetaRef.current.clear();
+    tempStoragePathByUrlRef.current.clear();
+    persistedAttachmentUrlsRef.current.clear();
+    finalizationResultsRef.current = [];
+    sessionBlobCacheRef.current = new Map();
+    finalizeAfterSubmit();
+    if (!isEditing) resetExpenseFormState();
+
+    // A submitted edit is an UPDATE, not a fresh submission — say so, not
+    // "Expense submitted / Transaction ####" as if it were resubmitted.
+    if (isSubmittedEdit) {
+      toast({ title: t("toast.saved") });
+      navigate(`/expenses/${outcome.receipt.expense_id}`, { state: { refreshExpenses: true } });
+      return;
+    }
+
+    toast({
+      title: t("toast.submitted"),
+      description: outcome.receipt.transaction_number
+        ? `Transaction ${outcome.receipt.transaction_number}`
+        : undefined,
+    });
+    navigate("/expenses", { state: { refreshExpenses: true } });
+  };
+
+  // Save custom form field values via the atomic replace RPC. LEGACY PATH:
+  // used by every organization except MicroLink, which now submits atomically.
   // Throws on failure so the overall submit/update aborts (no false success).
   const saveFormFieldValues = async (expenseId: string) => {
     if (!organizationId) {
@@ -1319,6 +1662,31 @@ export default function ExpenseForm() {
     // Nothing configured for this category: nothing to save or clear.
     if (categoryFormFields.length === 0 && optionBranches.length === 0) {
       return;
+    }
+
+    // INCIDENT hotfix (2026-09): `optionBranches.length === 0` used to be
+    // treated as "this template has no conditional fields", which is
+    // indistinguishable from "the fetch for the selected value hasn't
+    // resolved yet". That let a pending or never-triggered fetch silently
+    // compute visibleBranchIds = new Set() (drop everything) instead of
+    // failing loudly. A currently-selected select-type template's config
+    // must be positively confirmed `ready` before it is safe to derive
+    // which branch values are visible.
+    if (allowConditionalDropdown) {
+      const unresolvedSelection = categoryFormFields.find((f: any) => {
+        const templateId = f.template?.id;
+        const value = templateId ? formFieldValues[templateId] : undefined;
+        return (
+          f.template?.field_type === "select" &&
+          !!value &&
+          !isOptionBranchResolvedFor(templateId, value)
+        );
+      });
+      if (unresolvedSelection) {
+        throw new Error(
+          "Could not load additional field configuration for the selected option. Please retry before submitting.",
+        );
+      }
     }
 
     const visibleBranchIds =
@@ -1404,6 +1772,12 @@ export default function ExpenseForm() {
         } catch (trackErr) {
           console.warn("trackFormFieldSelections failed (non-fatal):", trackErr);
         }
+        // DOC-130: separate, independently-guarded best-effort call -- a
+        // failure here must never be conflated with (or block reporting of)
+        // the analytics tracking above.
+        if (expenseFieldMemoryEnabled) {
+          await recordRecentExpenseFieldValues(organizationId, user.id, expenseId);
+        }
       })();
     }
   };
@@ -1474,6 +1848,20 @@ export default function ExpenseForm() {
       if (dateCfg.is_visible && dateCfg.is_required && !validatedExpense.expense_date) {
         throw new Error(t("form.fieldRequired", { field: dateCfg.label }));
       }
+      // Admin-controlled expense date locking (hotfix 2026-10-01): the
+      // Calendar's `onSelect` already refuses to pick a locked date, but
+      // this covers the draft-created-before-the-lock-existed case (task
+      // requirement) and any other path that reaches here with an
+      // already-set locked date. The database trigger is the real,
+      // unbypassable enforcement -- this is purely so the user sees a
+      // friendly message (with the admin's own reason, when given) instead
+      // of a raw server error.
+      {
+        const lockMessage = getExpenseDateLockMessage(validatedExpense.expense_date, expenseDateLocks, t);
+        if (lockMessage) {
+          throw new Error(lockMessage);
+        }
+      }
 
       // Validate form fields
       for (const field of categoryFormFields) {
@@ -1509,7 +1897,29 @@ export default function ExpenseForm() {
             "Could not load additional field configuration for the selected option. Please retry before submitting.",
           );
         }
-        if (optionBranches.length > 0) {
+        // INCIDENT hotfix (2026-09): `optionBranches.length > 0` used to gate
+        // this validation entirely — a PENDING fetch (not yet resolved, not
+        // failed) presents as `length === 0` and looked identical to "this
+        // template genuinely has no conditional fields", silently skipping
+        // validation for both branch fields at once. Block submission
+        // outright whenever any currently-selected select-type template's
+        // config is not yet confirmed `ready`, instead of inferring
+        // completeness from an empty array.
+        const unresolvedSelection = categoryFormFields.find((f: any) => {
+          const templateId = f.template?.id;
+          const value = templateId ? formFieldValues[templateId] : undefined;
+          return (
+            f.template?.field_type === "select" &&
+            !!value &&
+            !isOptionBranchResolvedFor(templateId, value)
+          );
+        });
+        if (unresolvedSelection) {
+          throw new Error(
+            "Loading project information… please wait a moment and try submitting again.",
+          );
+        }
+        {
           const branchValidation = validateVisibleBranchFields(
             optionBranches,
             formFieldValues,
@@ -1591,6 +2001,21 @@ export default function ExpenseForm() {
         category: validatedExpense.category,
       };
 
+      // ---------------------------------------------------------------------
+      // MicroLink atomic submission V1 — ONE request, ONE transaction.
+      //
+      // The server creates or updates the expense row, writes every custom and
+      // conditional branch value, allocates the transaction number, transitions
+      // the status and records the audit event together. The legacy path below
+      // does the same work as three independent network mutations, which is how
+      // an expense could end up committed as a draft with its project fields
+      // missing. Other organizations stay on that path until this is proven.
+      // ---------------------------------------------------------------------
+      if (usesAtomicSubmissionV1(effectiveOrganizationId)) {
+        await submitMicroLinkAtomically(expenseDateStr, validatedExpense, requiresAttachment);
+        return;
+      }
+
       // Validation passed — now start showing progress
       startSubmitProgress(
         isEditing ? t("progress.saving") : t("progress.preparing"),
@@ -1628,7 +2053,17 @@ export default function ExpenseForm() {
       } else {
         // Create new expense (starts as draft until submitExpense succeeds)
         updateSubmitProgress(t("progress.saving"), { description: t("progress.savingHint"), currentStep: 2, totalSteps: 4 });
-        const newExpense = await ExpenseService.createExpense(user.id, expenseData as CreateExpenseData);
+        // Server-authoritative expense-date-lock preflight (DOC-138): the
+        // client-side check above (isExpenseDateLocked against the locally
+        // fetched lock list) is a UX convenience only. Passing the
+        // already-in-memory feature flag costs nothing extra when the
+        // feature is off for this org (createExpense() skips the RPC
+        // entirely in that case) and adds exactly one round-trip when it's
+        // on, before any row/attachment/custom-field write happens.
+        const newExpense = await ExpenseService.createExpense(user.id, expenseData as CreateExpenseData, {
+          dateLockingEnabled:
+            organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.expense_date_locking] === true,
+        });
 
         // Custom field saving and attachment processing are independent — run in parallel.
         updateSubmitProgress(t("progress.savingReceipts"), { description: t("progress.savingReceiptsHint"), currentStep: 3, totalSteps: 4 });
@@ -1753,9 +2188,16 @@ export default function ExpenseForm() {
           description: error.errors[0].message,
         });
       } else {
+        // The date-lock trigger's own rejection (PW010 / DETAIL
+        // 'EXPENSE_DATE_LOCKED') must never surface as a raw "Database
+        // error (PW010): ..." -- recognise it by its stable SQLSTATE first,
+        // same precedent as PW001 in src/lib/formatApiError.ts.
+        const dateLockMessage = formatExpenseDateLockError(error);
         // Provide more detailed error information
         let errorMessage = t("toast.error");
-        if (error?.message) {
+        if (dateLockMessage) {
+          errorMessage = dateLockMessage;
+        } else if (error?.message) {
           errorMessage = error.message;
         } else if (error?.code) {
           errorMessage = `Database error (${error.code}): ${error.message || 'Unknown error'}`;
@@ -1993,6 +2435,10 @@ export default function ExpenseForm() {
                     organizationId={organizationId}
                     userId={user?.id}
                     onSelectOptionValue={allowConditionalDropdown ? selectOptionBranches : undefined}
+                    isOptionResolved={allowConditionalDropdown ? isOptionBranchResolvedFor : undefined}
+                    isOptionLoading={allowConditionalDropdown ? isOptionBranchLoadingFor : undefined}
+                    isOptionErrored={allowConditionalDropdown ? isOptionBranchErroredFor : undefined}
+                    memoryEnabled={expenseFieldMemoryEnabled}
                   />
 
                   <div className={cn("space-y-2", !getBaseField("title").is_visible && "hidden")}>
@@ -2006,6 +2452,8 @@ export default function ExpenseForm() {
                       userId={activeUserId}
                       id="title"
                       placeholder={t("form.placeholders.title")}
+                      memoryEnabled={expenseFieldMemoryEnabled}
+                      recentValues={recentBaseValuesByKey[memoryFieldKey("system", "title")]}
                       defaultControl={
                         <Input
                           id="title"
@@ -2028,6 +2476,8 @@ export default function ExpenseForm() {
                       userId={activeUserId}
                       id="destination"
                       placeholder={t("form.placeholders.destination")}
+                      memoryEnabled={expenseFieldMemoryEnabled}
+                      recentValues={recentBaseValuesByKey[memoryFieldKey("system", "destination")]}
                       defaultControl={
                         <Input
                           id="destination"
@@ -2047,16 +2497,19 @@ export default function ExpenseForm() {
                       onChange={(v) => {
                         const parsed = parseLocalDate(v);
                         setExpense((prev) => ({ ...prev, expense_date: parsed ?? prev.expense_date }));
+                        setExpenseDateClosedNotice(null);
                       }}
                       featureEnabled={baseFieldCustomizationEnabled}
                       organizationId={effectiveOrganizationId}
                       userId={activeUserId}
                       placeholder={t("form.placeholders.pickDate")}
+                      disabled={expenseDateLocksUnproven}
                       defaultControl={
-                        <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+                        <Popover open={datePickerOpen && !expenseDateLocksUnproven} onOpenChange={(open) => !expenseDateLocksUnproven && setDatePickerOpen(open)}>
                           <PopoverTrigger asChild>
                             <Button
                               variant="outline"
+                              disabled={expenseDateLocksUnproven}
                               className={cn(
                                 "w-full justify-start text-left font-normal",
                                 !expense.expense_date && "text-muted-foreground"
@@ -2074,23 +2527,60 @@ export default function ExpenseForm() {
                               selected={expense.expense_date}
                               onSelect={(date) => {
                                 if (!date) return;
+                                // Locked days are deliberately NOT given the
+                                // HTML `disabled` attribute (see
+                                // `getLockedDayReason` below) so hover/tap
+                                // still reach this handler -- refuse the
+                                // selection here instead, and surface the
+                                // same reason/fallback text inline AND as a
+                                // toast (mobile has no hover to show the
+                                // Calendar's own tooltip).
+                                const lockMessage = getExpenseDateLockMessage(date, expenseDateLocks, t);
+                                if (lockMessage) {
+                                  setExpenseDateClosedNotice(lockMessage);
+                                  toast({ variant: "destructive", description: lockMessage });
+                                  return;
+                                }
                                 // Use local date parts so the highlighted day matches the day the user clicked (no off-by-one)
                                 const localMidnight = new Date(date.getFullYear(), date.getMonth(), date.getDate());
                                 setExpense((prev) => ({ ...prev, expense_date: localMidnight }));
+                                setExpenseDateClosedNotice(null);
                                 setDatePickerOpen(false);
                               }}
                               initialFocus
                               disabled={(date) => {
-                                // Disable all future dates (dates after today)
+                                // Disable all future dates (dates after today).
+                                // Locked dates are intentionally NOT disabled
+                                // here -- see `getLockedDayReason` below.
                                 const today = new Date();
                                 today.setHours(23, 59, 59, 999); // End of today
                                 return date > today;
                               }}
+                              getLockedDayReason={(date) => getExpenseDateLockMessage(date, expenseDateLocks, t)}
                             />
                           </PopoverContent>
                         </Popover>
                       }
                     />
+                    {expenseDateLocksUnproven && !expenseDateLocksError && (
+                      <p className="text-xs text-muted-foreground">{t("dateLock.checking")}</p>
+                    )}
+                    {expenseDateLocksError && (
+                      <div className="space-y-1">
+                        <p className="text-xs text-destructive">{t("dateLock.loadError")}</p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => reloadExpenseDateLocks()}
+                        >
+                          {t("progress.retry")}
+                        </Button>
+                      </div>
+                    )}
+                    {!expenseDateLocksUnproven && expenseDateClosedNotice && (
+                      <p className="text-xs text-destructive">{expenseDateClosedNotice}</p>
+                    )}
                   </div>
 
                   <div className={cn("space-y-2", !getBaseField("purpose").is_visible && "hidden")}>
@@ -2104,6 +2594,8 @@ export default function ExpenseForm() {
                       userId={activeUserId}
                       id="purpose"
                       placeholder={t("form.placeholders.purpose")}
+                      memoryEnabled={expenseFieldMemoryEnabled}
+                      recentValues={recentBaseValuesByKey[memoryFieldKey("system", "purpose")]}
                       defaultControl={
                         <Textarea
                           id="purpose"
@@ -2310,7 +2802,7 @@ export default function ExpenseForm() {
                 )}
                 <Button
                   onClick={() => saveExpense()}
-                  disabled={loading || !formReady || !effectiveOrganizationId}
+                  disabled={loading || !formReady || !effectiveOrganizationId || expenseDateLockBlocksSubmit}
                   className="w-full"
                 >
                   {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
@@ -2336,7 +2828,7 @@ export default function ExpenseForm() {
           onSubmit={saveExpense}
           onCancel={handleCancelForm}
           submitLabel={isEditing && expenseStatus === "rejected" ? t("form.resubmit") : t("form.submit")}
-          disabled={loading || !formReady || !effectiveOrganizationId}
+          disabled={loading || !formReady || !effectiveOrganizationId || expenseDateLockBlocksSubmit}
           loading={loading}
           progressTitle={submitProgress.phase || undefined}
           progressDescription={submitProgress.description}

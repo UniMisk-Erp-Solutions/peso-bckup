@@ -1,12 +1,13 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { RecentValueTextInput } from "@/components/RecentValueTextInput";
 import { SearchableSelectField } from "@/components/SearchableSelectField";
 import { Badge } from "@/components/ui/badge";
 import type { OptionBranchDefinition } from "@/lib/conditionalFormFieldTypes";
 import type { VisibleBranch } from "@/lib/conditionalFormFields";
 import { cn } from "@/lib/utils";
 import { fieldRecKey } from "@/lib/recommendedFormFieldOptions";
+import { memoryFieldKey } from "@/lib/expenseFieldMemory";
 
 type BranchFieldInputsProps = {
   visibleBranches: VisibleBranch[];
@@ -14,6 +15,8 @@ type BranchFieldInputsProps = {
   onBranchChange: (branchId: string, value: string) => void;
   idPrefix?: string;
   recommendedByKey?: Record<string, string[]>;
+  /** DOC-130: recently-used free-text values for branch text/textarea fields. */
+  recentTextByKey?: Record<string, string[]>;
 };
 
 export function BranchFieldInputs({
@@ -22,6 +25,7 @@ export function BranchFieldInputs({
   onBranchChange,
   idPrefix = "branch",
   recommendedByKey = {},
+  recentTextByKey = {},
 }: BranchFieldInputsProps) {
   if (visibleBranches.length === 0) return null;
 
@@ -36,6 +40,7 @@ export function BranchFieldInputs({
           onChange={(val) => onBranchChange(branch.id, val)}
           idPrefix={idPrefix}
           recommendedOptions={recommendedByKey[fieldRecKey("branch", branch.id)] ?? []}
+          recentTextValues={recentTextByKey[memoryFieldKey("branch", branch.id)] ?? []}
         />
       ))}
     </div>
@@ -49,6 +54,7 @@ function BranchFieldRow({
   onChange,
   idPrefix,
   recommendedOptions = [],
+  recentTextValues = [],
 }: {
   branch: OptionBranchDefinition;
   depth: number;
@@ -56,6 +62,7 @@ function BranchFieldRow({
   onChange: (value: string) => void;
   idPrefix: string;
   recommendedOptions?: string[];
+  recentTextValues?: string[];
 }) {
   const fieldId = `${idPrefix}-${branch.id}`;
   const isRequired = branch.required;
@@ -73,10 +80,11 @@ function BranchFieldRow({
       </Label>
 
       {branch.field_type === "text" && (
-        <Input
+        <RecentValueTextInput
           id={fieldId}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={onChange}
+          recentValues={recentTextValues}
           placeholder={branch.placeholder || ""}
           required={isRequired}
         />
@@ -104,12 +112,14 @@ function BranchFieldRow({
       )}
 
       {branch.field_type === "textarea" && (
-        <Textarea
+        <RecentValueTextInput
           id={fieldId}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={onChange}
+          recentValues={recentTextValues}
           placeholder={branch.placeholder || ""}
           required={isRequired}
+          multiline
           rows={2}
         />
       )}

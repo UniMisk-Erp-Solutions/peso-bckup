@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { SEOHead } from "@/components/SEOHead";
 import { absoluteUrl, DEFAULT_OG_IMAGE } from "@/lib/siteConfig";
 import { breadcrumbSchema, faqPageSchema } from "@/lib/schema/jsonLd";
@@ -7,17 +6,20 @@ import StaggerContainer, { StaggerItem } from "@/components/marketing/StaggerCon
 import { Testimonials, CTASection, FAQAccordion } from "@/components/marketing/sections";
 import {
   ReceiptIllustration,
-  MockExpenseForm,
-  MockExpenseCard,
-  MockWorkflowDiagram,
-  MockBalanceTransfer,
   MockOrgChart,
-  MockAnalyticsDashboard,
   MockAuditLog,
-  MockApprovalTimeline,
-  type MockExpenseFormData,
 } from "@/components/marketing/features";
 import {
+  LazyDemo,
+  LazyInteractiveApprovalWorkflow,
+  LazyInteractiveBalanceTransfer,
+  LazyInteractiveDashboardPreview,
+  LazyInteractiveExpenseFormPreview,
+  LazyInteractiveReportPreview,
+  LazyInteractiveTeamPreview,
+} from "@/components/marketing/product/lazy";
+import {
+  ArrowRight,
   FileText,
   GitBranch,
   Wallet,
@@ -28,75 +30,106 @@ import {
   FileCheck,
   Upload,
   Users,
-  type LucideIcon,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Link } from "react-router-dom";
 import type { FAQItem } from "@/components/marketing/sections";
+import type { ReactNode } from "react";
 import {
+  ADAPT_SECTION,
   analyticsFeatures,
   auditFeatures,
   balanceFeatures,
+  CTA_PRICING,
   expenseFeatures,
   featuresFaqItems,
   FEATURES_META_DESCRIPTION,
   multiorgFeatures,
+  REPORTING_SECTION,
   workflowFeatures,
 } from "@/lib/marketingCopy";
 
-/* Feature category data */
-const featureCategories = [
+/* Feature category data. Major categories carry a playable preview; the rest a lighter illustration. */
+const featureCategories: {
+  id: string;
+  title: string;
+  description: string;
+  icon: typeof FileText;
+  features: readonly string[];
+  demo: ReactNode;
+}[] = [
   {
     id: "expense",
-    title: "Expense Management",
+    title: "Expense Capture & Documentation",
     description:
-      "Complete expense tracking from creation to approval with full documentation support.",
+      "Capture expenses with the details your finance team actually needs, from a form that adapts to the category. Bills and receipts stay attached to the expense they belong to, instead of living in a separate chat or inbox.",
     icon: FileText,
     features: expenseFeatures,
-    mockComponent: MockExpenseCard,
+    demo: (
+      <LazyDemo minHeight={520}>
+        <LazyInteractiveExpenseFormPreview />
+      </LazyDemo>
+    ),
   },
   {
     id: "workflow",
-    title: "Approval Workflow",
+    title: "Approval Workflows, Roles & Permissions",
     description:
-      "Structured approval process with role-based permissions and configurable stages.",
+      "Route spend through the review tiers your organization uses. Every tier is optional and configurable, and each role sees and acts only on what its permissions allow — enforced in the application and the database, not only on screen.",
     icon: GitBranch,
     features: workflowFeatures,
-    mockComponent: MockWorkflowDiagram,
+    demo: (
+      <div className="space-y-6">
+        <LazyDemo minHeight={460}>
+          <LazyInteractiveApprovalWorkflow />
+        </LazyDemo>
+        <LazyDemo minHeight={330}>
+          <LazyInteractiveTeamPreview />
+        </LazyDemo>
+      </div>
+    ),
   },
   {
     id: "balance",
     title: "Balance Management",
-    description:
-      "Real-time balance tracking and control across all your expense accounts.",
+    description: "Know where employee funds stand, from cash additions to transfers, returns and history.",
     icon: Wallet,
     features: balanceFeatures,
-    mockComponent: MockBalanceTransfer,
+    demo: (
+      <LazyDemo minHeight={330}>
+        <LazyInteractiveBalanceTransfer />
+      </LazyDemo>
+    ),
   },
   {
     id: "multiorg",
-    title: "Multi-Organization Support",
+    title: "Multi-Team & Organizational Management",
     description:
-      "Manage multiple branches or entities independently with complete data isolation.",
+      "Structure expense management around your teams, departments, branches or entities. Access follows each user's active organization membership, and data stays isolated between organizations.",
     icon: Building2,
     features: multiorgFeatures,
-    mockComponent: MockOrgChart,
+    demo: <MockOrgChart />,
   },
   {
     id: "analytics",
-    title: "Analytics & Reporting",
+    title: "Reporting & Expense Tracking",
     description:
-      "Insights and exports for better decision making and budget management.",
+      "Every expense carries a status — draft, submitted, under review, approved or rejected — so nothing sits in limbo. Month-aware dashboards and server-generated reports can be inspected in the browser before you export.",
     icon: BarChart3,
     features: analyticsFeatures,
-    mockComponent: MockAnalyticsDashboard,
+    demo: (
+      <LazyDemo minHeight={380}>
+        <LazyInteractiveDashboardPreview />
+      </LazyDemo>
+    ),
   },
   {
     id: "audit",
     title: "Audit & Compliance",
-    description:
-      "Complete audit trails for accountability and regulatory compliance.",
+    description: "Clear records of who did what and when, so reviews and audits do not depend on memory.",
     icon: Shield,
     features: auditFeatures,
-    mockComponent: MockAuditLog,
+    demo: <MockAuditLog />,
   },
 ];
 
@@ -124,12 +157,10 @@ const useCases = [
 const faqItems: FAQItem[] = featuresFaqItems;
 
 export default function FeaturesPage() {
-  const [productTourSubmittedExpense, setProductTourSubmittedExpense] = useState<MockExpenseFormData | null>(null);
-
   return (
     <MarketingShell>
       <SEOHead
-        title="Expense software features | PesoWise"
+        title="Expense management features | PesoWise"
         description={FEATURES_META_DESCRIPTION}
         canonicalUrl={absoluteUrl("/features")}
         ogImage={DEFAULT_OG_IMAGE}
@@ -146,27 +177,55 @@ export default function FeaturesPage() {
         <div className="grid items-center gap-12 lg:grid-cols-2">
           <ScrollReveal variant="fade-up">
             <h1 className="text-4xl font-bold leading-tight text-foreground md:text-5xl">
-              Features built for real expense workflows
+              Features built for real operations finance
             </h1>
             <p className="mt-4 text-lg text-muted-foreground">
-              Everything from custom form fields and hierarchy approvals to balances, transfer offers, batch entry, and audit trails—structured, secure, and organization-ready.
+              From configurable expense forms and approval hierarchies to employee balances, month-aware dashboards and
+              report preview, everything below is a playable preview you can try.
             </p>
           </ScrollReveal>
           <ScrollReveal variant="fade-left" delay={0.2}>
             <div className="relative flex items-center justify-center">
               <ReceiptIllustration className="h-48 w-auto" />
-              <div className="absolute -right-4 top-1/2 -translate-y-1/2">
-                <MockExpenseForm />
-              </div>
             </div>
           </ScrollReveal>
         </div>
       </FullBleedBand>
 
+      {/* Custom Workflows — the most important category, shown first */}
+      <FullBleedBand variant="soft" className="py-16">
+        <ScrollReveal className="mx-auto max-w-3xl text-center">
+          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-primary">Custom Workflows</p>
+          <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">
+            PesoWise fits your workflow — not the other way around.
+          </h2>
+          <p className="text-muted-foreground leading-relaxed">{ADAPT_SECTION.body}</p>
+        </ScrollReveal>
+        <StaggerContainer className="mx-auto mt-8 grid max-w-4xl grid-cols-2 gap-3 sm:grid-cols-3">
+          {ADAPT_SECTION.areas.map((area) => (
+            <StaggerItem key={area}>
+              <div className="flex h-full items-center gap-2 rounded-lg border border-border bg-card px-3 py-2.5 text-sm text-foreground shadow-soft">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-accent" aria-hidden /> {area}
+              </div>
+            </StaggerItem>
+          ))}
+        </StaggerContainer>
+        <p className="mx-auto mt-6 max-w-2xl text-center text-sm text-muted-foreground">{ADAPT_SECTION.scopeNote}</p>
+        <ScrollReveal>
+          <div className="mt-8 text-center">
+            <Button asChild size="lg" className="btn-glow group">
+              <Link to="/contact">
+                {CTA_PRICING}
+                <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" aria-hidden />
+              </Link>
+            </Button>
+          </div>
+        </ScrollReveal>
+      </FullBleedBand>
+
       {/* Feature Categories (6 blocks) */}
       {featureCategories.map((category, index) => {
         const Icon = category.icon;
-        const MockComponent = category.mockComponent;
         const isEven = index % 2 === 0;
         return (
           <FullBleedBand
@@ -199,9 +258,7 @@ export default function FeaturesPage() {
                 className={!isEven ? "lg:order-1" : undefined}
               >
                 <div className="flex justify-center">
-                  <div className="w-full max-w-sm">
-                    <MockComponent />
-                  </div>
+                  <div className="w-full max-w-xl min-w-0">{category.demo}</div>
                 </div>
               </ScrollReveal>
             </div>
@@ -209,34 +266,15 @@ export default function FeaturesPage() {
         );
       })}
 
-      {/* Product Tour */}
+      {/* Reporting: full-width interactive report preview */}
       <FullBleedBand variant="hero" className="py-20">
-        <ScrollReveal className="text-center mb-12">
-          <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">
-            See it in action
-          </h2>
-          <p className="text-muted-foreground">Interactive previews of key workflows</p>
+        <ScrollReveal className="mx-auto mb-10 max-w-3xl text-center">
+          <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">{REPORTING_SECTION.heading}</h2>
+          <p className="text-muted-foreground">{REPORTING_SECTION.body}</p>
         </ScrollReveal>
-        <StaggerContainer className="grid gap-8 md:grid-cols-3">
-          <StaggerItem>
-            <p className="mb-4 text-center text-sm font-medium text-muted-foreground">
-              Submit Expense
-            </p>
-            <MockExpenseForm onSubmit={(data) => setProductTourSubmittedExpense(data)} />
-          </StaggerItem>
-          <StaggerItem>
-            <p className="mb-4 text-center text-sm font-medium text-muted-foreground">
-              Track Approval
-            </p>
-            <MockApprovalTimeline submittedExpense={productTourSubmittedExpense} />
-          </StaggerItem>
-          <StaggerItem>
-            <p className="mb-4 text-center text-sm font-medium text-muted-foreground">
-              Manage Balances
-            </p>
-            <MockBalanceTransfer />
-          </StaggerItem>
-        </StaggerContainer>
+        <LazyDemo minHeight={560}>
+          <LazyInteractiveReportPreview />
+        </LazyDemo>
       </FullBleedBand>
 
       {/* Use Cases */}

@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { formatINR } from "@/lib/format";
 import { createNotification } from "./NotificationService";
+import { pickCurrentMembership } from "@/lib/currentMembership";
 
 export interface MoneyReturnRequest {
   id: string;
@@ -20,16 +21,33 @@ export interface MoneyReturnRequest {
 }
 
 export class MoneyReturnService {
-  private static async getOrganizationIdForUser(userId: string): Promise<string | null> {
+  /**
+   * Resolve the organization to create/evaluate a return request against.
+   *
+   * A user can hold several active organization_memberships rows (e.g. a
+   * cashier who is also an employee of a second organization). The previous
+   * implementation fetched a single arbitrary row via `.limit(1)` with no
+   * ORDER BY -- Postgres does not guarantee which row that is. For a
+   * multi-org user this could silently resolve a DIFFERENT organization than
+   * the one the requester/cashier are actually operating in, which then
+   * either rejects a legitimately-assigned cashier ("not active in your
+   * organization") or stamps the created request with an organization_id
+   * that the resolved cashier/requester isn't a member of -- making
+   * approve_money_return_request_v2's own org-scoped role checks fail later.
+   * Mirrors the `pickCurrentMembership` resolution already used by
+   * AuthContext (src/lib/currentMembership.ts) for exactly this class of bug.
+   */
+  private static async getOrganizationIdForUser(
+    userId: string,
+    preferredOrganizationId?: string | null
+  ): Promise<string | null> {
     const { data, error } = await supabase
       .from("organization_memberships")
       .select("organization_id")
       .eq("user_id", userId)
-      .eq("is_active", true)
-      .limit(1)
-      .maybeSingle();
+      .eq("is_active", true);
     if (error) return null;
-    return data?.organization_id ?? null;
+    return pickCurrentMembership(data ?? [], preferredOrganizationId)?.organization_id ?? null;
   }
 
   /**
@@ -44,7 +62,7 @@ export class MoneyReturnService {
     // First, verify the requester has sufficient balance
     const { data: requesterProfile, error: profileError } = await supabase
       .from("profiles")
-      .select("balance, name")
+      .select("balance, name, organization_id")
       .eq("user_id", requesterId)
       .single();
 
@@ -56,8 +74,13 @@ export class MoneyReturnService {
     }
 
     // Resolve organization for this return request. Some deployments enforce
-    // money_return_requests.organization_id as NOT NULL.
-    const organizationId = await this.getOrganizationIdForUser(requesterId);
+    // money_return_requests.organization_id as NOT NULL. Prefer the
+    // requester's profile organization_id (their "current" org) over an
+    // arbitrary active membership row -- see getOrganizationIdForUser.
+    const organizationId = await this.getOrganizationIdForUser(
+      requesterId,
+      (requesterProfile as any)?.organization_id ?? null
+    );
     if (!organizationId) {
       throw new Error("Could not determine your organization. Please contact an administrator.");
     }

@@ -513,12 +513,16 @@ describe("EngineerReview — identity hydrated before the first visible commit",
 /* ========================================================================== */
 
 describe("EngineerReview — cache repair", () => {
-  it("38. uses the v4 cache key and abandons identity-less earlier snapshots", () => {
-    // v4 carries hydrated identity; v2/v3 stored identity-less rows that would
-    // flash "—" on restore, so those keys must be gone.
-    expect(engineerReview).toContain('"pesowise-review-v4"');
+  it("38. uses the v5 cache key and abandons earlier snapshots (REVIEW-VERIFIED-READY-CLASSIFICATION hotfix)", () => {
+    // v5 was bumped because manager_queue_ready/available_actions semantics
+    // changed (an assigned final-tier reviewer whose org role differs from
+    // the canonical role is now recognized) -- v4 and earlier rows computed
+    // readiness under the old, narrower rule and must not be trusted for
+    // display after this change, so those keys must be gone.
+    expect(engineerReview).toContain('"pesowise-review-v5"');
     expect(engineerReview).not.toContain("pesowise-review-v2");
     expect(engineerReview).not.toContain('"pesowise-review-v3"');
+    expect(engineerReview).not.toContain('"pesowise-review-v4"');
   });
 
   it("39/42. a truncated cache can never be reported as complete", () => {

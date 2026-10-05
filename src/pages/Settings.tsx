@@ -20,6 +20,7 @@ import { DEFAULT_BASE_FIELD_CONFIG, normalizeBaseFieldOptions, resolveBaseFieldC
 import { useBatchExpenseEntry } from "@/hooks/useBatchExpenseEntry";
 import { TeamManagementSection } from "@/components/TeamManagementSection";
 import { DailyExpenseReportMappingSection } from "@/components/DailyExpenseReportMappingSection";
+import { ExpenseDateLockSection } from "@/components/ExpenseDateLockSection";
 import { PwaInstallSettingsSection } from "@/components/PwaInstallSettingsSection";
 import { AdditionalInfoLayoutSection } from "@/components/AdditionalInfoLayoutSection";
 import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
@@ -67,6 +68,9 @@ export default function Settings() {
   );
   const baseFieldCustomizationEnabled = hasOrganizationFeature(
     ORGANIZATION_FEATURE_KEYS.allow_base_field_input_customization,
+  );
+  const expenseDateLockingEnabled = hasOrganizationFeature(
+    ORGANIZATION_FEATURE_KEYS.expense_date_locking,
   );
   const { batchExpenseEntryEnabled } = useBatchExpenseEntry();
   const { toast } = useToast();
@@ -1096,6 +1100,7 @@ export default function Settings() {
           hierarchyEnabled={hierarchyEnabled}
           teamsEnabled={teamsEnabled}
           dailyProjectReportEnabled={dailyProjectReportEnabled}
+          expenseDateLockingEnabled={expenseDateLockingEnabled}
           baseFieldCustomizationEnabled={baseFieldCustomizationEnabled}
           batchExpenseEntryEnabled={batchExpenseEntryEnabled}
           dashboardTheme={dashboardTheme}
@@ -1562,6 +1567,9 @@ export default function Settings() {
         )}
         {dailyProjectReportEnabled && organizationId && userRole === "admin" && (
           <DailyExpenseReportMappingSection />
+        )}
+        {expenseDateLockingEnabled && organizationId && userRole === "admin" && (
+          <ExpenseDateLockSection />
         )}
         <Card>
           <CardHeader>

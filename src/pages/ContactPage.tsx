@@ -17,6 +17,7 @@ import {
   Send,
   Phone,
 } from "lucide-react";
+import { CONTACT_HERO } from "@/lib/marketingCopy";
 
 const CONSENT_VERSION = 1;
 
@@ -115,11 +116,9 @@ export default function ContactPage() {
         <div className="grid items-center gap-12 lg:grid-cols-2">
           <ScrollReveal variant="fade-up">
             <h1 className="mb-6 text-4xl font-bold leading-tight text-foreground md:text-5xl">
-              Get started with PesoWise
+              {CONTACT_HERO.heading}
             </h1>
-            <p className="text-lg text-muted-foreground">
-              Tell us about your organization. We'll set up the right workflow and get you live quickly.
-            </p>
+            <p className="text-lg text-muted-foreground">{CONTACT_HERO.body}</p>
           </ScrollReveal>
           <ScrollReveal variant="fade-left" delay={0.2}>
             <div className="relative flex items-center justify-center overflow-hidden min-w-0">

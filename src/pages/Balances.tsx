@@ -138,6 +138,10 @@ export default function Balances() {
 
   // Bulk balance import wizard + history (DOC-103) - admin only
   const [importBalancesDialogOpen, setImportBalancesDialogOpen] = useState(false);
+  // Which source ImportBalancesDialog opens into -- "Import from Tally" and
+  // the general "Import Balances" button share the exact same dialog
+  // component/parser/services, never two separate implementations.
+  const [importDialogInitialSource, setImportDialogInitialSource] = useState<"template" | "tally">("template");
   const [importHistoryDialogOpen, setImportHistoryDialogOpen] = useState(false);
 
   const {
@@ -1245,9 +1249,23 @@ export default function Balances() {
                   {userRole === 'admin' && (
                     <Button
                       variant="outline"
-                      onClick={() => setImportBalancesDialogOpen(true)}
+                      onClick={() => {
+                        setImportDialogInitialSource("template");
+                        setImportBalancesDialogOpen(true);
+                      }}
                     >
                       Import Balances
+                    </Button>
+                  )}
+                  {userRole === 'admin' && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setImportDialogInitialSource("tally");
+                        setImportBalancesDialogOpen(true);
+                      }}
+                    >
+                      Import from Tally
                     </Button>
                   )}
                   {userRole === 'admin' && (
@@ -2076,10 +2094,18 @@ export default function Balances() {
 
           {userRole === 'admin' && organizationId && (
             <ImportBalancesDialog
+              // Remounts the dialog fresh whenever the entry point changes --
+              // its internal step/mode/source state is only initialized once
+              // per mount, so reusing the same instance across a "Import
+              // Balances" open and a later "Import from Tally" open (or vice
+              // versa) would otherwise keep showing whichever source was
+              // selected first.
+              key={importDialogInitialSource}
               open={importBalancesDialogOpen}
               onOpenChange={setImportBalancesDialogOpen}
               organizationId={organizationId}
               onImportApplied={fetchProfiles}
+              initialSource={importDialogInitialSource}
             />
           )}
           {userRole === 'admin' && organizationId && (

@@ -35,6 +35,35 @@ export const ORGANIZATION_FEATURE_KEYS = {
   user_activity_insights: "user_activity_insights",
   /** Employees may view balance credits recorded to their account (amount + effective transfer date). */
   employee_transfer_history: "employee_transfer_history",
+  /**
+   * Historical Balance Anchor V2: Opening Balance, Balance Update, Tally
+   * Group Summary import, and anchor edit/replace/reverse in the Balances
+   * import wizard. This flag controls UI AVAILABILITY only -- it never
+   * selects between v1 and v2 financial RPCs. When enabled, the wizard
+   * additionally requires balance_historical_v2_capabilities_v1 to report
+   * ready=true (see src/lib/balanceHistoricalV2Capability.ts) before
+   * exposing these modes; if the backend migrations aren't installed yet it
+   * shows an "unavailable" state instead of calling any RPC, v1 or v2.
+   * Allocation is unaffected by this flag (pre-existing behavior, always
+   * available regardless of its state).
+   */
+  historical_balance_v2: "historical_balance_v2",
+  /**
+   * Recently-used free-text expense field suggestions (title/destination/
+   * purpose + custom text/textarea template + branch fields). Convenience
+   * only -- never required to save an expense. See DOC-130.
+   */
+  expense_field_memory: "expense_field_memory",
+  /**
+   * Admin-controlled expense date locking: org admins define locked date
+   * ranges (single date, month, custom range) during which NEW expense
+   * submissions / expense-date changes are blocked. Server-side
+   * enforcement (a trigger on public.expenses, see
+   * 20261018100000_expense_date_locking_v1.sql) always checks this flag
+   * first -- OFF means byte-for-byte unchanged behavior even if lock rows
+   * exist. See src/lib/expenseDateLocks.ts.
+   */
+  expense_date_locking: "expense_date_locking",
 } as const;
 
 export type OrganizationFeatureKey = (typeof ORGANIZATION_FEATURE_KEYS)[keyof typeof ORGANIZATION_FEATURE_KEYS];
@@ -127,6 +156,21 @@ export const MASTER_ADMIN_FEATURE_DEFINITIONS: FeatureDefinition[] = [
   {
     key: ORGANIZATION_FEATURE_KEYS.employee_transfer_history,
     labelKey: "features.employeeTransferHistory",
+    requiresSubdomain: false,
+  },
+  {
+    key: ORGANIZATION_FEATURE_KEYS.historical_balance_v2,
+    labelKey: "features.historicalBalanceV2",
+    requiresSubdomain: false,
+  },
+  {
+    key: ORGANIZATION_FEATURE_KEYS.expense_field_memory,
+    labelKey: "features.expenseFieldMemory",
+    requiresSubdomain: false,
+  },
+  {
+    key: ORGANIZATION_FEATURE_KEYS.expense_date_locking,
+    labelKey: "features.expenseDateLocking",
     requiresSubdomain: false,
   },
 ];

@@ -20,7 +20,9 @@
  * Pure and sessionStorage-only; no React, no network — fully unit-testable.
  */
 
-export const REVIEW_WORKSPACE_VERSION = 2 as const;
+import { isExpenseMonthValue, ALL_MONTHS, type ExpenseMonthValue } from "@/lib/expenseMonthFilter";
+
+export const REVIEW_WORKSPACE_VERSION = 3 as const;
 /** Session-scoped TTL backstop; sessionStorage already dies with the tab (§25). */
 export const REVIEW_WORKSPACE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -39,6 +41,8 @@ export type ReviewWorkspaceQuery = {
   generalSearch: string | null;
   statusFilter: string;
   timePeriod: string;
+  /** Exact expense-month filter (v3). */
+  expenseMonth: ExpenseMonthValue;
   sortBy: string;
   sortOrder: string;
   /** Opaque custom-field filter object owned by the caller; stored/restored as-is. */
@@ -163,6 +167,7 @@ export function validateReviewWorkspaceState(
       generalSearch: typeof q.generalSearch === "string" ? q.generalSearch : null,
       statusFilter: str(q.statusFilter, "all"),
       timePeriod: str(q.timePeriod, "all"),
+      expenseMonth: isExpenseMonthValue(q.expenseMonth) ? q.expenseMonth : ALL_MONTHS,
       sortBy: str(q.sortBy, "created_at"),
       sortOrder: str(q.sortOrder, "desc"),
       customFilters: q.customFilters ?? null,

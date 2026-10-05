@@ -45,8 +45,8 @@ import NotificationSettings from "./pages/NotificationSettings";
 import HelpTutorial from "./pages/HelpTutorial";
 
 const AdminPanel = lazyWithRetry(() => import("./pages/AdminPanel"));
-const UserManagement = lazyWithRetry(() => import("./pages/UserManagement"));
 const AdminSubmitExpense = lazyWithRetry(() => import("./pages/AdminSubmitExpense"));
+const UserManagement = lazyWithRetry(() => import("./pages/UserManagement"));
 const Balances = lazyWithRetry(() => import("./pages/Balances"));
 const Reports = lazyWithRetry(() => import("./pages/Reports"));
 const Settings = lazyWithRetry(() => import("./pages/Settings"));
@@ -248,9 +248,23 @@ const App = () => (
             path="/admin/expenses"
             element={
               <ProtectedRoute allowedRoles={["admin", "cashier"]} blockAccountantCashier>
-                <Layout>
+                <Layout fullWidth>
                   <LazyPage>
                     <AdminPanel />
+                  </LazyPage>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          {/* Admin submits an expense on behalf of an employee — delegated
+              action, admin-only (never accountant-cashier). */}
+          <Route
+            path="/admin/submit-expense"
+            element={
+              <ProtectedRoute allowedRoles={["admin"]}>
+                <Layout>
+                  <LazyPage>
+                    <AdminSubmitExpense />
                   </LazyPage>
                 </Layout>
               </ProtectedRoute>
@@ -263,19 +277,6 @@ const App = () => (
                 <Layout>
                   <LazyPage>
                     <UserManagement />
-                  </LazyPage>
-                </Layout>
-              </ProtectedRoute>
-            }
-          />
-          {/* DOC-107 — admin submits an expense on behalf of an employee. */}
-          <Route
-            path="/admin/submit-expense"
-            element={
-              <ProtectedRoute allowedRoles={["admin"]}>
-                <Layout>
-                  <LazyPage>
-                    <AdminSubmitExpense />
                   </LazyPage>
                 </Layout>
               </ProtectedRoute>
@@ -371,7 +372,7 @@ const App = () => (
             path="/review"
             element={
               <ProtectedRoute allowedRoles={[...EXPENSE_REVIEW_ROLES]}>
-                <Layout>
+                <Layout fullWidth>
                   <ReviewExpenses />
                 </Layout>
               </ProtectedRoute>

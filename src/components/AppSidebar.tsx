@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   Receipt,
   Users,
-  UserRoundSearch,
   FileText,
   LogOut,
   BarChart3,
@@ -16,6 +15,7 @@ import {
   Wallet,
   CircleHelp,
   ArrowDownToLine,
+  UserRoundSearch,
 } from "lucide-react";
 import {
   Sidebar,
@@ -110,9 +110,9 @@ export function AppSidebar() {
     { titleKey: "dashboard", url: "/dashboard", icon: LayoutDashboard },
     { titleKey: "myExpenses", url: "/expenses", icon: FileText },
     { titleKey: "allExpenses", url: "/admin/expenses", icon: Receipt },
+    { titleKey: "submitForEmployee", url: "/admin/submit-expense", icon: UserRoundSearch },
     { titleKey: "balances", url: "/balances", icon: FileText },
     { titleKey: "manageUsers", url: "/admin/users", icon: Users },
-    { titleKey: "submitForEmployee", url: "/admin/submit-expense", icon: UserRoundSearch },
     { titleKey: "categories", url: "/admin/categories", icon: Tag },
     { titleKey: "reports", url: "/admin/reports", icon: FileText },
     { titleKey: "analytics", url: "/analytics", icon: BarChart3 },

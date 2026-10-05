@@ -1,118 +1,115 @@
-/**
- * Status-choice popup shown when an admin submits an expense on behalf of an
- * employee (single or bulk) — lets them pick the RESULTING status instead of
- * always landing on "submitted". Reuses existing, already-audited RPCs
- * (ExpenseService.adminVerifyExpense / approveExpense — see
- * applyAdminSubmitStatusChoice in src/lib/adminSubmitExpense.ts) for the
- * actual transition; this component is presentation + the confirm gate only.
- *
- * A comment is REQUIRED specifically for "Approved" (not Verified/Submitted)
- * — a cheap, zero-schema-change segregation-of-duties mitigation: the same
- * admin who creates the expense and chooses to approve it leaves a written
- * reason, which lands in the real audit_logs row (see
- * buildStatusTransitionComment's self-approval marker).
- */
 import { useState } from "react";
 import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
-} from "@/components/ui/alert-dialog";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 import { AlertTriangle } from "lucide-react";
 import type { AdminSubmitStatusChoice } from "@/lib/adminSubmitExpense";
 
-interface SubmitStatusChoiceDialogProps {
+type SubmitStatusChoiceDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** e.g. "this expense" or "these 12 expenses" — used in the description copy. */
-  subjectLabel: string;
   onConfirm: (status: AdminSubmitStatusChoice, comment: string) => void;
-  confirming?: boolean;
-}
+  submitting?: boolean;
+};
 
+/**
+ * Lets the admin choose the expense's initial status. "Approved" means the
+ * SAME admin both created and approved the expense in one action — a real
+ * segregation-of-duties scenario, not an ordinary approval, so it requires an
+ * explicit typed reason and a visible warning rather than being one more
+ * radio option with no friction.
+ */
 export function SubmitStatusChoiceDialog({
-  open, onOpenChange, subjectLabel, onConfirm, confirming = false,
+  open,
+  onOpenChange,
+  onConfirm,
+  submitting,
 }: SubmitStatusChoiceDialogProps) {
   const [status, setStatus] = useState<AdminSubmitStatusChoice>("submitted");
   const [comment, setComment] = useState("");
 
-  const reset = () => { setStatus("submitted"); setComment(""); };
-
-  const handleOpenChange = (next: boolean) => {
-    if (!next) reset();
-    onOpenChange(next);
-  };
-
   const approvedCommentMissing = status === "approved" && comment.trim() === "";
 
   return (
-    <AlertDialog open={open} onOpenChange={handleOpenChange}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>How should {subjectLabel} be saved?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Choose the status {subjectLabel} should land on. This applies to all of them if it's a batch.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Choose submission status</DialogTitle>
+          <DialogDescription>
+            The expense will be created for the selected employee with this status.
+          </DialogDescription>
+        </DialogHeader>
 
         <RadioGroup value={status} onValueChange={(v) => setStatus(v as AdminSubmitStatusChoice)} className="space-y-3">
-          <div className="flex items-start gap-3">
+          <div className="flex items-start gap-2">
             <RadioGroupItem value="submitted" id="status-submitted" className="mt-1" />
-            <Label htmlFor="status-submitted" className="font-normal cursor-pointer">
-              <span className="font-medium">Submitted</span> — the normal flow. Goes through the usual review pipeline.
+            <Label htmlFor="status-submitted" className="font-normal">
+              <span className="font-medium">Submitted</span> — goes through the usual review pipeline.
+              The employee's own reviewer/hierarchy is assigned normally.
             </Label>
           </div>
-          <div className="flex items-start gap-3">
+          <div className="flex items-start gap-2">
             <RadioGroupItem value="verified" id="status-verified" className="mt-1" />
-            <Label htmlFor="status-verified" className="font-normal cursor-pointer">
-              <span className="font-medium">Verified</span> — skips straight to verified, bypassing the reviewer hierarchy. No money moves.
+            <Label htmlFor="status-verified" className="font-normal">
+              <span className="font-medium">Verified</span> — skips straight to verified. No money moves.
             </Label>
           </div>
-          <div className="flex items-start gap-3">
+          <div className="flex items-start gap-2">
             <RadioGroupItem value="approved" id="status-approved" className="mt-1" />
-            <Label htmlFor="status-approved" className="font-normal cursor-pointer">
-              <span className="font-medium">Approved</span> — skips straight to approved, with no independent review by anyone else.
+            <Label htmlFor="status-approved" className="font-normal">
+              <span className="font-medium">Approved</span> — skips straight to approved, with no
+              independent review by anyone else. The employee's balance is deducted immediately.
             </Label>
           </div>
         </RadioGroup>
 
         {status === "approved" && (
-          <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200 flex items-start gap-2">
+          <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-            <span>This immediately deducts the amount from the employee's balance. There is no independent review — please explain why below.</span>
+            <p>
+              This immediately deducts the amount from the employee&apos;s balance. There is no
+              independent review — please explain why below.
+            </p>
           </div>
         )}
 
-        {status !== "submitted" && (
-          <div className="space-y-1.5">
-            <Label htmlFor="status-comment">
-              Reason / comment {status === "approved" ? "(required)" : "(optional)"}
-            </Label>
-            <Textarea
-              id="status-comment"
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              placeholder={status === "approved" ? "Why is this being approved immediately?" : "Optional note"}
-              rows={3}
-            />
-          </div>
-        )}
+        <div className="space-y-1.5">
+          <Label htmlFor="status-comment">
+            {status === "approved" ? "Reason (required)" : "Comment (optional)"}
+          </Label>
+          <Textarea
+            id="status-comment"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder={
+              status === "approved"
+                ? "Why is this being approved directly, without independent review?"
+                : "Optional note for the audit trail"
+            }
+          />
+        </div>
 
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={confirming}>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            disabled={confirming || approvedCommentMissing}
-            onClick={(e) => {
-              e.preventDefault();
-              onConfirm(status, comment.trim());
-            }}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => onConfirm(status, comment.trim())}
+            disabled={approvedCommentMissing || submitting}
           >
-            {confirming ? "Submitting…" : "Confirm"}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+            {submitting ? "Submitting…" : "Confirm"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

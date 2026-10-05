@@ -271,7 +271,21 @@ export function ServerPagedParentOptionsSection({
   const handleSavePending = useCallback(async () => {
     setSavingPending(true);
     try {
-      const { results } = await draft.saveDirty([], undefined, "server_paged_bulk_edit");
+      // A dirty option isn't necessarily an already-active one: a Matrix
+      // edit or a dependent-fields import can leave pending branch data for
+      // a parent option value the template doesn't have yet (e.g.
+      // `existingOptions` was still the pre-import snapshot when the drafts
+      // were staged). save_parent_option_branch_configuration_atomically
+      // rejects any entry whose parent_option_value isn't already in the
+      // template's options[] ("... is not an active option on this
+      // template"), so those values must be threaded through as
+      // newOptionValues -- the RPC appends them (case-insensitively
+      // deduped against the live options[] in the SAME transaction) before
+      // validating the entries, so this is always safe even if the value
+      // was already created by an earlier step.
+      const existingLower = new Set(existingOptions.map((o) => o.toLowerCase()));
+      const newOptionValues = draft.dirtyOptionValues.filter((v) => !existingLower.has(v.toLowerCase()));
+      const { results } = await draft.saveDirty(newOptionValues, undefined, "server_paged_bulk_edit");
       const failed = results.filter((r) => r.status === "error");
       const ok = results.filter((r) => r.status === "ok");
       if (failed.length === 0) {
@@ -294,7 +308,7 @@ export function ServerPagedParentOptionsSection({
     } finally {
       setSavingPending(false);
     }
-  }, [draft, toast, search, onOptionSaved]);
+  }, [draft, existingOptions, toast, search, onOptionSaved]);
 
   const handleDiscardPending = useCallback(() => {
     draft.dirtyOptionValues.forEach((v) => draft.clearDraft(v));

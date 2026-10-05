@@ -1,6 +1,6 @@
 # Full recovery detail — every transaction, recovered and pending — 2026-08-26
 
-**Doc ID:** DOC-114 detail companion
+**Doc ID:** DOC-141 detail companion (formerly DOC-114) (renumbered on the 2026-10-05 upstream sync — see DOC-143; the pre-sync `peso-bckup` index gave this a different ID than upstream's independently-numbered catalog)
 **Scope:** MicroLink, all 12,946 expenses, all statuses.
 **Total recovered this session:** 1095 field values, across 505 distinct expenses.
 **Total still pending:** 65 field gaps (60 expenses with no Project Unique ID at all, 5 with a known Project Unique ID but a genuinely ambiguous or unconfigured dependent field).

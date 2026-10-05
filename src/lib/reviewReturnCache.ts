@@ -57,6 +57,8 @@ export function reviewQueryKey(input: {
   generalSearch: string | null;
   statusFilter: string;
   timePeriod: string;
+  /** Exact expense-month filter; distinct months must never share identity (§14). */
+  expenseMonth?: string;
   sortBy: string;
   sortOrder: string;
 }): string {
@@ -66,6 +68,7 @@ export function reviewQueryKey(input: {
     (input.generalSearch ?? "").trim().toLowerCase(),
     input.statusFilter,
     input.timePeriod,
+    input.expenseMonth ?? "all",
     input.sortBy,
     input.sortOrder,
   ].join("|");

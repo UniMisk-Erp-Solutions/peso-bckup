@@ -8,9 +8,26 @@ vi.mock("@/integrations/maintenance-cloud/maintenanceHistoryService", () => ({
   MAINTENANCE_HISTORY_PAGE_SIZE: 20,
 }));
 
-import { MaintenanceHistoryTab } from "../MaintenanceHistoryTab";
-
 const OWN_USER_ID = "owner-uuid";
+
+/**
+ * MaintenanceHistoryTab.tsx's own module graph reads MAINTENANCE_ENV as a
+ * module-level constant captured from import.meta.env at first import --
+ * exactly once, whenever this file's module graph first loads. A static
+ * top-level `import` resolves before ANY test code (including beforeEach)
+ * ever runs, so a `vi.stubEnv` call in beforeEach would be setting the env
+ * var only AFTER that constant was already frozen -- its actual value would
+ * then depend on whatever import.meta.env.VITE_MAINTENANCE_ENV happened to
+ * be at whatever point this test file's module graph was first evaluated
+ * relative to other files sharing the same vitest fork, not on this file's
+ * own stub. vi.resetModules() + a dynamic import performed fresh inside
+ * each test (after the stub already ran) is what MaintenanceAdminDashboard's
+ * own test file already does correctly for the same reason -- mirrored here.
+ */
+async function renderHistoryTab() {
+  const { MaintenanceHistoryTab } = await import("../MaintenanceHistoryTab");
+  return render(<MaintenanceHistoryTab ownUserId={OWN_USER_ID} />);
+}
 
 function row(overrides: Record<string, unknown> = {}) {
   return {
@@ -33,6 +50,7 @@ function row(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  vi.resetModules();
   vi.stubEnv("VITE_MAINTENANCE_ENV", "preview");
   readMaintenanceHistory.mockReset();
 });
@@ -50,14 +68,14 @@ describe("MaintenanceHistoryTab", () => {
       page: 1,
       pageSize: 20,
     });
-    render(<MaintenanceHistoryTab ownUserId={OWN_USER_ID} />);
+    await renderHistoryTab();
     expect(await screen.findByText("Total maintenances")).toBeInTheDocument();
     await waitFor(() => expect(screen.getAllByText("1").length).toBeGreaterThan(0));
   });
 
   it("shows an empty state when there is no history yet", async () => {
     readMaintenanceHistory.mockResolvedValue({ ok: true, rows: [], totalCount: 0, page: 1, pageSize: 20 });
-    render(<MaintenanceHistoryTab ownUserId={OWN_USER_ID} />);
+    await renderHistoryTab();
     // Rendered once in the desktop table and once in the mobile empty state
     // (CSS hides one via responsive classes jsdom does not evaluate).
     await waitFor(() =>
@@ -76,7 +94,7 @@ describe("MaintenanceHistoryTab", () => {
       page: 1,
       pageSize: 20,
     });
-    render(<MaintenanceHistoryTab ownUserId={OWN_USER_ID} />);
+    await renderHistoryTab();
     await waitFor(() => expect(screen.getAllByText("Mine").length).toBeGreaterThan(0));
     expect(screen.getAllByText("You").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Maintenance admin").length).toBeGreaterThan(0);
@@ -90,7 +108,7 @@ describe("MaintenanceHistoryTab", () => {
       page: 1,
       pageSize: 20,
     });
-    render(<MaintenanceHistoryTab ownUserId={OWN_USER_ID} />);
+    await renderHistoryTab();
     await waitFor(() => expect(screen.getAllByText("QA schedule").length).toBeGreaterThan(0));
     expect(screen.queryByText("some-other-admin-uuid-1234")).not.toBeInTheDocument();
   });
@@ -104,7 +122,7 @@ describe("MaintenanceHistoryTab", () => {
       page: 1,
       pageSize: 20,
     });
-    render(<MaintenanceHistoryTab ownUserId={OWN_USER_ID} />);
+    await renderHistoryTab();
     const cells = await screen.findAllByText("Detail test row");
     await user.click(cells[0]);
     expect(await screen.findByText("Scheduled start")).toBeInTheDocument();
@@ -114,7 +132,7 @@ describe("MaintenanceHistoryTab", () => {
   it("clear filters resets to the default (all) filter set", async () => {
     const user = userEvent.setup();
     readMaintenanceHistory.mockResolvedValue({ ok: true, rows: [row()], totalCount: 1, page: 1, pageSize: 20 });
-    render(<MaintenanceHistoryTab ownUserId={OWN_USER_ID} />);
+    await renderHistoryTab();
     await screen.findByText("Total maintenances");
     await user.click(screen.getByRole("button", { name: /clear filters/i }));
     // No throw / crash — filters reset silently, verified via a fresh fetch call.
@@ -123,7 +141,7 @@ describe("MaintenanceHistoryTab", () => {
 
   it("surfaces a load error without crashing", async () => {
     readMaintenanceHistory.mockResolvedValue({ ok: false, error: "RLS denied" });
-    render(<MaintenanceHistoryTab ownUserId={OWN_USER_ID} />);
+    await renderHistoryTab();
     expect(await screen.findByText(/could not load history/i)).toBeInTheDocument();
   });
 });

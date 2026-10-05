@@ -46,6 +46,13 @@ export function hasTeamsEnabled(ctx: SessionFeatureContext): boolean {
   return isOrganizationFeatureActive(ORGANIZATION_FEATURE_KEYS.teams_enabled, ctx);
 }
 
+/** Flag-level availability only. Combine with useBalanceHistoricalV2Capability's
+ *  `ready` before exposing any Historical Balance action -- this flag alone
+ *  does not prove the backend migrations are installed. */
+export function hasHistoricalBalanceV2(ctx: SessionFeatureContext): boolean {
+  return isOrganizationFeatureActive(ORGANIZATION_FEATURE_KEYS.historical_balance_v2, ctx);
+}
+
 export function hasHierarchyTeamLeader(ctx: SessionFeatureContext): boolean {
   return isHierarchyTierEnabled(getHierarchyFlagsFromContext(ctx), "team_leader");
 }

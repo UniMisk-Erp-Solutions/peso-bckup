@@ -231,9 +231,12 @@ Deno.serve(async (req) => {
     // someone else's expense folder. An org admin may also finalize receipts
     // for an expense they didn't submit themselves, mirroring the same
     // admin-bypass pattern already used for the attachments table INSERT
-    // policy and the receipts storage bucket's own INSERT policy — the
-    // admin submit-for-employee page's optional receipt upload (DOC-110)
-    // needs this, since the caller there is never expense.user_id.
+    // policy: the admin-submit-for-employee feature's optional receipt
+    // upload needs this, since the caller there is never expense.user_id.
+    // Ported from Preet-Patel/feature/admin-submit-expense-for-employee
+    // commit 225a3142, the exact same defect class (a strict owner-only
+    // check silently swallowed by invokeFinalizeExpenseReceipts's designed-in
+    // fallback into a per-file "failed" result with no visible error).
     const { data: expense, error: expenseError } = await serviceClient
       .from("expenses")
       .select("id, user_id, organization_id")

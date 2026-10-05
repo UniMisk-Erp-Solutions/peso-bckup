@@ -17,7 +17,7 @@ const rpc = supabase.rpc.bind(supabase) as unknown as (
 ) => Promise<{ data: unknown; error: { message: string } | null }>;
 
 export type PaymentMode = "cash" | "bank_transfer";
-export type ImportMode = "historical_opening" | "balance_update" | "allocation";
+export type ImportMode = "historical_opening" | "balance_update" | "allocation" | "opening_credit" | "balance_credit";
 export type ImportRowValidationStatus =
   | "valid"
   | "unknown"
@@ -149,6 +149,8 @@ export interface ImportValidateResult {
   batch_id: string;
   row_count: number;
   valid_row_count: number;
+  /** Zero-amount rows -- not an error, no balance change. Only set by V3 (additive credit) batches. */
+  no_op_row_count?: number;
   invalid_row_count: number;
   total_delta: number;
   apply_disabled: boolean;
@@ -182,6 +184,9 @@ export interface ImportReverseResult {
   batch_id: string;
   reversed_count: number;
   blocked: Array<{ employee_id: string; employee_name: string; reason: string }>;
+  /** Only present from balance_reverse_import_v2 (historical_opening/balance_update path). */
+  mode?: ImportMode;
+  net_change_total?: number;
 }
 
 export interface LedgerEntry {
@@ -262,12 +267,33 @@ export async function applyImportBatch(batchId: string): Promise<ImportApplyResu
   return unwrap<ImportApplyResult>(data, error);
 }
 
-/** Compensating-entry reversal of an applied import batch. Admin only. */
+/** Compensating-entry reversal of an applied import batch. Admin only.
+ *  V1 -- kept only as a direct wrapper for balance_reverse_import_v1 itself
+ *  (still the engine allocation reversal ultimately runs on); no UI code
+ *  calls this directly anymore -- see reverseImportBatchV2. */
 export async function reverseImportBatch(
   batchId: string,
   reason: string,
 ): Promise<ImportReverseResult> {
   const { data, error } = await rpc("balance_reverse_import_v1", {
+    p_batch_id: batchId,
+    p_reason: reason,
+  });
+  return unwrap<ImportReverseResult>(data, error);
+}
+
+/** Historical Balance Anchors V2 -- mode-aware, all-or-nothing import
+ *  reversal. Allocation delegates internally to the same v1 engine
+ *  (byte-identical accounting); historical_opening/balance_update (and
+ *  Tally, which stages as one of those two modes) reverse through the
+ *  canonical balance_reverse_historical_anchor_v1 engine per anchor,
+ *  never a flat balance-ledger compensating entry. This is the ONLY
+ *  reversal RPC the wizard UI calls -- see balance_reverse_import_v2. */
+export async function reverseImportBatchV2(
+  batchId: string,
+  reason: string,
+): Promise<ImportReverseResult> {
+  const { data, error } = await rpc("balance_reverse_import_v2", {
     p_batch_id: batchId,
     p_reason: reason,
   });
@@ -489,4 +515,166 @@ export async function applyImportBatchV2(
     p_row_resolutions: rowResolutions,
   });
   return unwrap<ImportApplyResult>(data, error);
+}
+
+// ---------------------------------------------------------------------------
+// Additive Credit V3 (2026-09-01). RETIRES target-anchor math for opening_credit
+// / balance_credit -- an imported/entered amount is ALWAYS a delta added to the
+// current balance, never a target the server adjusts toward. The old V2 anchor
+// engine above is left completely unmodified and dormant; nothing here calls it.
+// See Documentations MD/additive-credit-accounting-v3.md for the full design.
+// ---------------------------------------------------------------------------
+
+export type CreditKind = "opening_credit" | "balance_credit";
+
+export interface ApplyCreditV3Result {
+  ok: true;
+  already_applied: boolean;
+  ledger_entry_id: string;
+  balance_before?: number;
+  balance_after: number;
+  amount_delta?: number;
+}
+
+/** A single admin-entered additive credit (Opening Credit or Balance Credit) for one employee. */
+export async function applyCreditV3(params: {
+  organizationId: string;
+  targetUserId: string;
+  amount: number;
+  creditKind: CreditKind;
+  effectiveDate: string;
+  note?: string | null;
+  idempotencyKey?: string | null;
+}): Promise<ApplyCreditV3Result> {
+  const { data, error } = await rpc("balance_apply_credit_v3", {
+    p_organization_id: params.organizationId,
+    p_target_user_id: params.targetUserId,
+    p_amount: params.amount,
+    p_credit_kind: params.creditKind,
+    p_effective_date: params.effectiveDate,
+    p_note: params.note ?? null,
+    p_idempotency_key: params.idempotencyKey ?? null,
+  });
+  return unwrap<ApplyCreditV3Result>(data, error);
+}
+
+export interface ReverseCreditV3Result {
+  ok: true;
+  already_reversed: boolean;
+  reversal_ledger_id: string;
+  balance_before?: number;
+  balance_after: number;
+}
+
+/** Reverses EXACTLY the original credit amount. Never recomputes a target. */
+export async function reverseCreditV3(ledgerId: string, reason: string): Promise<ReverseCreditV3Result> {
+  const { data, error } = await rpc("balance_reverse_credit_v3", { p_ledger_id: ledgerId, p_reason: reason });
+  return unwrap<ReverseCreditV3Result>(data, error);
+}
+
+export interface ImportValidateResultV3 {
+  ok: true;
+  batch_id: string;
+  row_count: number;
+  valid_row_count: number;
+  /** Zero-amount rows -- not an error, no balance change, excluded from apply. */
+  no_op_row_count: number;
+  invalid_row_count: number;
+  total_delta: number;
+}
+
+/** Additive V3 batch validate (opening_credit/balance_credit modes only). */
+export async function validateImportBatchV3(batchId: string): Promise<ImportValidateResultV3> {
+  const { data, error } = await rpc("balance_validate_import_v3", { p_batch_id: batchId });
+  return unwrap<ImportValidateResultV3>(data, error);
+}
+
+export interface ImportApplyResultV3 {
+  ok: true;
+  already_applied: boolean;
+  batch_id: string;
+  applied_count?: number;
+  rows?: Array<{ row_number: number; user_id: string; amount: number; balance_after: number }>;
+}
+
+/** Additive V3 batch apply -- every row is a straight additive credit, never a target. */
+export async function applyImportBatchV3(batchId: string): Promise<ImportApplyResultV3> {
+  const { data, error } = await rpc("balance_apply_import_v3", { p_batch_id: batchId });
+  return unwrap<ImportApplyResultV3>(data, error);
+}
+
+/** Additive V3 batch reverse -- subtracts each row's exact original credit. */
+export async function reverseImportBatchV3(batchId: string, reason: string): Promise<ImportReverseResult> {
+  const { data, error } = await rpc("balance_reverse_import_v3", { p_batch_id: batchId, p_reason: reason });
+  const result = unwrap<Omit<ImportReverseResult, "blocked">>(data, error);
+  // The additive V3 engine has no conflict-based blocking concept -- every
+  // row with a ledger entry is always reversible -- so `blocked` is always
+  // empty. Filled in here rather than by the RPC to keep its response
+  // minimal and match ImportReverseResult's shape for existing UI code.
+  return { ...result, blocked: [] };
+}
+
+export interface BalanceAdditiveV3Capability {
+  ready: boolean;
+  functions: Record<string, boolean>;
+}
+
+/** Fail-closed capability probe for the additive V3 engine (independent of the old anchor probe). */
+export async function fetchBalanceAdditiveV3Capability(): Promise<BalanceAdditiveV3Capability> {
+  const { data, error } = await rpc("balance_additive_v3_capabilities_v1", {});
+  if (error) return { ready: false, functions: {} };
+  const rec = data as { contract?: string; ready?: boolean; functions?: Record<string, boolean> } | null;
+  if (!rec || rec.contract !== "balance-additive-v3") return { ready: false, functions: {} };
+  return { ready: rec.ready === true, functions: rec.functions ?? {} };
+}
+
+export interface BalanceTimelineEventV3 {
+  event_id: string;
+  event_type: string;
+  amount_delta: number;
+  effective_at: string;
+  day_position: number;
+  source_type: string;
+  source_id: string | null;
+  note: string | null;
+  actor_name: string | null;
+  expense_id: string | null;
+  transaction_number: string | null;
+  calculated_balance_after: number;
+  total_count: number;
+}
+
+/**
+ * The caller's own chronologically-reconstructed balance timeline. Running
+ * balance is computed server-side over the FULL event set before pagination
+ * -- never trust a stored `balance_after`-style column for this. Reversed
+ * credit pairs (and reversed old-engine anchor pairs) are excluded server-side.
+ */
+export async function getMyUnifiedBalanceTimelineV3(params: {
+  organizationId: string;
+  limit?: number;
+  offset?: number;
+}): Promise<BalanceTimelineEventV3[]> {
+  const { data, error } = await rpc("get_my_unified_balance_timeline_v3", {
+    p_organization_id: params.organizationId,
+    p_limit: params.limit ?? 25,
+    p_offset: params.offset ?? 0,
+  });
+  return unwrap<BalanceTimelineEventV3[]>(data, error);
+}
+
+/** Admin view of one employee's reconstructed timeline. See getMyUnifiedBalanceTimelineV3. */
+export async function getOrgBalanceTimelineV3(params: {
+  organizationId: string;
+  userId: string;
+  limit?: number;
+  offset?: number;
+}): Promise<BalanceTimelineEventV3[]> {
+  const { data, error } = await rpc("get_org_balance_timeline_v3", {
+    p_organization_id: params.organizationId,
+    p_user_id: params.userId,
+    p_limit: params.limit ?? 25,
+    p_offset: params.offset ?? 0,
+  });
+  return unwrap<BalanceTimelineEventV3[]>(data, error);
 }

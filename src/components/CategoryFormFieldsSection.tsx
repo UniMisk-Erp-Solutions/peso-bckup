@@ -9,10 +9,13 @@ import {
   isBranchUnderTemplate,
 } from "@/lib/conditionalFormFields";
 import type { OptionBranchDefinition } from "@/lib/conditionalFormFieldTypes";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useRecommendedFieldOptions, fieldRecKey } from "@/hooks/useRecommendedFieldOptions";
 import type { FormFieldKind } from "@/lib/recommendedFormFieldOptions";
+import { RecentValueTextInput } from "@/components/RecentValueTextInput";
+import { useRecentExpenseFieldValues } from "@/hooks/useRecentExpenseFieldValues";
+import { isEligibleCustomFieldType, memoryFieldKey } from "@/lib/expenseFieldMemory";
 
 type CategoryFormFieldsSectionProps = {
   categoryFormFields: Array<{
@@ -49,6 +52,25 @@ type CategoryFormFieldsSectionProps = {
    *  breaking label/input association. Single-instance callers (the single
    *  expense form, one shared-field renderer per template) can omit it. */
   instanceId?: string;
+  /**
+   * INCIDENT hotfix (2026-09) — precise (templateId, value) resolution
+   * status from useOnDemandOptionBranches. When provided:
+   *   - branch-value reconciliation (see the effect below) only runs once
+   *     EVERY currently-selected select template's config is `ready` for its
+   *     current value, so a config that's still loading (or errored) can
+   *     never be mistaken for "nothing required" and wipe an existing answer;
+   *   - a loading/error hint renders under a select field whose own value's
+   *     config isn't resolved yet, instead of the field silently doing
+   *     nothing.
+   * Optional so this component still works standalone/in tests without it —
+   * omitting it restores the previous best-effort (unsafe) behavior.
+   */
+  isOptionResolved?: (templateId: string, optionValue: string) => boolean;
+  isOptionLoading?: (templateId: string, optionValue: string) => boolean;
+  isOptionErrored?: (templateId: string, optionValue: string) => boolean;
+  /** DOC-130: org feature flag for free-text recent-value suggestions on
+   *  custom/branch text+textarea fields. Defaults to false (no visible change). */
+  memoryEnabled?: boolean;
 };
 
 export function CategoryFormFieldsSection({
@@ -63,9 +85,35 @@ export function CategoryFormFieldsSection({
   userId,
   onSelectOptionValue,
   instanceId,
+  isOptionResolved,
+  isOptionLoading,
+  isOptionErrored,
+  memoryEnabled = false,
 }: CategoryFormFieldsSectionProps) {
   const { t } = useTranslation("expenses");
   const idScope = instanceId ? `${instanceId}-` : "";
+
+  const memoryIdentities = useMemo(() => {
+    const ids: string[] = [];
+    for (const field of categoryFormFields) {
+      if (isEligibleCustomFieldType(field.template.field_type)) {
+        ids.push(memoryFieldKey("custom", field.template.id));
+      }
+    }
+    for (const branch of optionBranches) {
+      if (isEligibleCustomFieldType(branch.field_type)) {
+        ids.push(memoryFieldKey("branch", branch.id));
+      }
+    }
+    return ids;
+  }, [categoryFormFields, optionBranches]);
+
+  const recentTextByKey = useRecentExpenseFieldValues(
+    organizationId,
+    userId,
+    memoryIdentities,
+    memoryEnabled,
+  );
 
   const selectFieldRefs = useMemo(() => {
     const refs: Array<{ fieldKey: string; fieldKind: FormFieldKind; options: string[] }> = [];
@@ -93,24 +141,55 @@ export function CategoryFormFieldsSection({
 
   const recommendedByKey = useRecommendedFieldOptions(organizationId, userId, selectFieldRefs);
 
+  // Reconcile branchValues once every currently-selected select template's
+  // branch config is fully resolved for its CURRENT value — never inferred
+  // from an empty/stale optionBranches array. If even one relevant selection
+  // is still loading or errored, this is a deliberate no-op: an in-flight or
+  // failed fetch must never be treated as "this template has no conditional
+  // fields", which would otherwise silently wipe a still-valid existing
+  // answer for a DIFFERENT template whose fetch just hasn't resolved yet.
+  // Declared before the categoryFormFields.length === 0 early return below so
+  // hook call order stays stable across renders (Rules of Hooks).
+  useEffect(() => {
+    if (categoryFormFields.length === 0) return;
+    const selectedTemplates = categoryFormFields
+      .filter((f) => f.template.field_type === "select")
+      .map((f) => ({ id: f.template.id, value: formFieldValues[f.template.id] }))
+      .filter((s): s is { id: string; value: string } => !!s.value);
+
+    if (selectedTemplates.length === 0) return;
+    if (isOptionResolved && !selectedTemplates.every((s) => isOptionResolved(s.id, s.value))) {
+      return;
+    }
+
+    const next = buildInitialBranchValues(optionBranches, formFieldValues, allowNested, branchValues);
+    const nextKeys = Object.keys(next);
+    const currentKeys = Object.keys(branchValues);
+    const changed =
+      nextKeys.length !== currentKeys.length || nextKeys.some((k) => branchValues[k] !== next[k]);
+    if (changed) {
+      onBranchValuesChange(next);
+    }
+    // Re-run only when the resolved config or the relevant selections change —
+    // not on every branchValues edit (which would fight the user's typing).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryFormFields, optionBranches, formFieldValues, allowNested, isOptionResolved]);
+
   if (categoryFormFields.length === 0) return null;
 
   const handleTemplateSelectChange = (templateId: string, val: string) => {
     const nextTemplate = { ...formFieldValues, [templateId]: val };
     onFormFieldValuesChange(nextTemplate);
-    // DOC-097 hotfix pt.3: this option's own branches may not be loaded yet
-    // (they're now fetched on-demand, not eagerly for every option) --
-    // buildInitialBranchValues below only clears/derives from whatever is
-    // ALREADY in optionBranches, so it correctly no-ops until the caller's
-    // fetch resolves and a re-render supplies the real branches.
+    // INCIDENT hotfix (2026-09): this option's own branch DEFINITIONS are not
+    // known synchronously — they're fetched on demand by onSelectOptionValue
+    // and can only be trusted once resolved. Recomputing branch values here
+    // against whatever `optionBranches` happens to hold right now (which may
+    // still belong to a DIFFERENT, previously-selected value, or simply be
+    // empty because the fetch hasn't started) is exactly the bug that let a
+    // pending/stale fetch look identical to "nothing required" and silently
+    // drop already-entered values. Reconciliation happens ONLY in the effect
+    // above, and only once the config for THIS value is actually `ready`.
     onSelectOptionValue?.(templateId, val);
-    const nextBranch = buildInitialBranchValues(
-      optionBranches,
-      nextTemplate,
-      allowNested,
-      branchValues,
-    );
-    onBranchValuesChange(nextBranch);
   };
 
   const handleBranchChange = (branchId: string, val: string) => {
@@ -149,15 +228,16 @@ export function CategoryFormFieldsSection({
             </Label>
 
             {template.field_type === "text" && (
-              <Input
+              <RecentValueTextInput
                 id={fieldId}
                 value={value}
-                onChange={(e) =>
+                onChange={(v) =>
                   onFormFieldValuesChange({
                     ...formFieldValues,
-                    [template.id]: e.target.value,
+                    [template.id]: v,
                   })
                 }
+                recentValues={recentTextByKey[memoryFieldKey("custom", template.id)] ?? []}
                 placeholder={template.placeholder || ""}
                 required={isRequired}
               />
@@ -197,17 +277,19 @@ export function CategoryFormFieldsSection({
             )}
 
             {template.field_type === "textarea" && (
-              <Textarea
+              <RecentValueTextInput
                 id={fieldId}
                 value={value}
-                onChange={(e) =>
+                onChange={(v) =>
                   onFormFieldValuesChange({
                     ...formFieldValues,
-                    [template.id]: e.target.value,
+                    [template.id]: v,
                   })
                 }
+                recentValues={recentTextByKey[memoryFieldKey("custom", template.id)] ?? []}
                 placeholder={template.placeholder || ""}
                 required={isRequired}
+                multiline
                 rows={3}
               />
             )}
@@ -222,6 +304,19 @@ export function CategoryFormFieldsSection({
                   recentOptions={recommendedByKey[fieldRecKey("template", template.id)] ?? []}
                   placeholder={template.placeholder || t("form.customFields.selectOption")}
                 />
+                {value && isOptionLoading?.(template.id, value) && (
+                  <p className="text-xs text-muted-foreground" role="status">
+                    {t("form.customFields.loadingAdditionalFields", "Loading project information…")}
+                  </p>
+                )}
+                {value && isOptionErrored?.(template.id, value) && (
+                  <p className="text-xs text-destructive" role="alert">
+                    {t(
+                      "form.customFields.loadAdditionalFieldsError",
+                      "Could not load additional field configuration for this selection. Please retry before submitting.",
+                    )}
+                  </p>
+                )}
                 {optionBranches.some((b) => b.parent_template_id === template.id) && (
                   <BranchFieldInputs
                     visibleBranches={visibleBranches.filter((v) =>
@@ -231,6 +326,7 @@ export function CategoryFormFieldsSection({
                     onBranchChange={handleBranchChange}
                     idPrefix={`tpl-${idScope}${template.id}`}
                     recommendedByKey={recommendedByKey}
+                    recentTextByKey={recentTextByKey}
                   />
                 )}
               </>

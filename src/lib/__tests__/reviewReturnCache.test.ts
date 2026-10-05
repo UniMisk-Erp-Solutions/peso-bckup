@@ -96,4 +96,20 @@ describe("reviewQueryKey", () => {
       reviewQueryKey({ ...base, employeeUserId: null, generalSearch: "cctv" }),
     );
   });
+
+  it("distinct expense months never share identity, and an omitted month defaults to 'all' (§14)", () => {
+    const base = {
+      mode: "filtered" as const,
+      employeeUserId: null,
+      generalSearch: null,
+      statusFilter: "all",
+      timePeriod: "all",
+      sortBy: "created_at",
+      sortOrder: "desc",
+    };
+    expect(reviewQueryKey({ ...base, expenseMonth: "2026-08" })).not.toBe(
+      reviewQueryKey({ ...base, expenseMonth: "2026-09" }),
+    );
+    expect(reviewQueryKey({ ...base, expenseMonth: "all" })).toBe(reviewQueryKey(base));
+  });
 });

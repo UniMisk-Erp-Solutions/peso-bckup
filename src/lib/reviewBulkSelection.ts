@@ -74,6 +74,43 @@ export function splitSelectedKeys(
 }
 
 /**
+ * Remove only selections whose concrete rows are now terminal. A batch key is
+ * cleared only when every freshly-resolved child behind that selection settled;
+ * partial failures remain selected and retryable.
+ */
+export function retainUnsettledSelectionKeys(
+  selectedKeys: ReadonlySet<string>,
+  targets: Array<{ id: string; batch_id?: string | null }>,
+  settledExpenseIds: ReadonlySet<string>,
+): Set<string> {
+  const next = new Set(selectedKeys);
+  const batchTargets = new Map<string, string[]>();
+
+  for (const target of targets) {
+    if (target.batch_id) {
+      const ids = batchTargets.get(target.batch_id) ?? [];
+      ids.push(target.id);
+      batchTargets.set(target.batch_id, ids);
+    } else if (settledExpenseIds.has(target.id)) {
+      next.delete(`expense:${target.id}`);
+    }
+  }
+
+  for (const [batchId, ids] of batchTargets) {
+    if (ids.length > 0 && ids.every((id) => settledExpenseIds.has(id))) {
+      next.delete(`batch:${batchId}`);
+    }
+  }
+  return next;
+}
+
+/** A replay after a successful approval is terminal reconciliation, not failure. */
+export function isAlreadyApprovedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /\balready approved\b/i.test(message);
+}
+
+/**
  * Expand selected keys to the concrete expense ids to act on, over all held
  * rows (a batch key expands to every one of its non-terminal children). Terminal
  * rows are never included even if their key were somehow selected.
@@ -141,6 +178,24 @@ export function classifyForApproval(rows: ApprovalRow[], approvalLimit: number):
     }
   }
   return { readyNow, overLimit, waiting, terminal };
+}
+
+/**
+ * The server queue RPCs (get_debug_review_queue_page_v1,
+ * review_preview_approval_targets_v1) already compute per-row
+ * `available_actions` canonically — this is the single source of truth for
+ * "can a normal Approve act on this row right now", never a second
+ * hierarchy-state-machine reconstructed from status/approval_tier/role in
+ * React (REVIEW-VERIFIED-READY-CLASSIFICATION hotfix, §6/§12). A terminal
+ * row fails closed even if a stale `available_actions` somehow still lists
+ * "approve".
+ */
+export function isNormallyApprovable(row: {
+  available_actions?: string[] | null;
+  isTerminal?: boolean;
+}): boolean {
+  if (row.isTerminal) return false;
+  return Array.isArray(row.available_actions) && row.available_actions.includes("approve");
 }
 
 /** A confirmation warning is required when the selection is not all immediately approvable. */

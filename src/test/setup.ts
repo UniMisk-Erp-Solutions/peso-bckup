@@ -80,9 +80,20 @@ vi.mock('@/integrations/supabase/client', () => ({
       update: vi.fn().mockReturnThis(),
       delete: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      not: vi.fn().mockReturnThis(),
+      is: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
-      single: vi.fn(),
-      maybeSingle: vi.fn(),
+      // Sensible default so a test that doesn't care about backup/restore
+      // panel content (or any other query ending in single/maybeSingle)
+      // doesn't have to locally stub these just to avoid an unhandled
+      // rejection when an unrelated child component's own data-fetch
+      // effect happens to run during that test -- same convention as
+      // `functions.invoke`'s own default below. A test that DOES care
+      // about the resolved value still overrides it locally, as before.
+      single: vi.fn().mockResolvedValue({ data: null, error: null }),
+      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
     })),
     channel: vi.fn().mockReturnValue({
       on: vi.fn().mockReturnThis(),

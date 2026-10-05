@@ -2,6 +2,7 @@
   "dashboard": "ડેશબોર્ડ",
   "myExpenses": "મારા ખર્ચ",
   "allExpenses": "બધા ખર્ચ",
+  "submitForEmployee": "કર્મચારી માટે સબમિટ કરો",
   "reviewExpenses": "ખર્ચ સમીક્ષા",
   "debugReviewExpenses": "ડીબગ ખર્ચ સમીક્ષા",
   "balances": "બેલેન્સ",
@@ -68,6 +69,5 @@
   "sectionWorkspace": "કાર્યક્ષેત્ર",
   "sectionAdministration": "વ્યવસ્થાપન",
   "sectionAccount": "ખાતું",
-  "balanceHistory": "બેલેન્સ ઇતિહાસ",
-  "submitForEmployee": "કર્મચારી માટે ખર્ચ સબમિટ કરો"
+  "balanceHistory": "બેલેન્સ ઇતિહાસ"
 }

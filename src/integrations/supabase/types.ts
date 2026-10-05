@@ -349,6 +349,7 @@ export type Database = {
           id: string
           balance: number | null
           is_active: boolean | null
+          deactivated_at: string | null
           name: string
           updated_at: string | null
           user_id: string
@@ -367,6 +368,7 @@ export type Database = {
           id?: string
           balance?: number | null
           is_active?: boolean | null
+          deactivated_at?: string | null
           name: string
           updated_at?: string | null
           user_id: string
@@ -385,6 +387,7 @@ export type Database = {
           id?: string
           balance?: number | null
           is_active?: boolean | null
+          deactivated_at?: string | null
           name?: string
           updated_at?: string | null
           user_id?: string
@@ -441,6 +444,39 @@ export type Database = {
           feature_key?: string
           enabled?: boolean
           updated_at?: string
+        }
+        Relationships: []
+      }
+      account_audit_events: {
+        Row: {
+          id: string
+          organization_id: string
+          target_user_id: string
+          actor_user_id: string | null
+          event_type: string
+          reason: string | null
+          details: Json | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          target_user_id: string
+          actor_user_id?: string | null
+          event_type: string
+          reason?: string | null
+          details?: Json | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          target_user_id?: string
+          actor_user_id?: string | null
+          event_type?: string
+          reason?: string | null
+          details?: Json | null
+          created_at?: string
         }
         Relationships: []
       }
@@ -1028,6 +1064,18 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_user_deactivation_impact_v1: {
+        Args: { p_organization_id: string; p_user_id: string }
+        Returns: Json
+      }
+      deactivate_organization_member_v2: {
+        Args: { p_organization_id: string; p_user_id: string; p_reason?: string | null }
+        Returns: Json
+      }
+      reactivate_organization_member_v1: {
+        Args: { p_organization_id: string; p_user_id: string }
+        Returns: Json
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]

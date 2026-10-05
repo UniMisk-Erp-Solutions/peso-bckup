@@ -18,6 +18,9 @@
     "cashierAccountantMode": "Cashier accountant mode (read-only reports for designated cashiers)",
     "baseFieldInputCustomization": "Customizable base field inputs (change text/number/dropdown in form builder)",
     "userActivityInsights": "User Activity Insights (track visible app activity, last seen, inactivity trends)",
-    "employeeTransferHistory": "Employee Balance History (employees can view balance credits recorded to their account)"
+    "employeeTransferHistory": "Employee Balance History (employees can view balance credits recorded to their account)",
+    "historicalBalanceV2": "Historical Balance (Opening Balance, Balance Update, Tally import) -- requires backend update",
+    "expenseFieldMemory": "Expense Field Memory (recently-used title/destination/purpose suggestions per employee)",
+    "expenseDateLocking": "Expense Date Locking (admins can block submissions for selected dates/months/ranges)"
   }
 }

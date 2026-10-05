@@ -7,12 +7,16 @@
  * filtering in the browser. Employee 6174 → ~30 rows, never ~9,244.
  *
  * The server rows are mapped onto the legacy `Expense` shape so they flow through
- * EngineerReview's existing render / selection / approval pipeline unchanged. The
- * server's actionability fields (is_actionable / view_only / available_actions)
- * are DELIBERATELY IGNORED here — this module is a search/visibility TRANSPORT
- * only; EngineerReview remains the authority for ready/waiting/completed and for
- * what a Manager may do (§4). Employee identity comes on the row, so filtered
- * rows never flash "—" (§39).
+ * EngineerReview's existing render / selection / approval pipeline unchanged.
+ * The server's `is_actionable`/`available_actions` ARE carried onto the mapped
+ * row (as `manager_queue_ready`/`available_actions`) so display/row-coloring
+ * stays consistent with the normal-mode fetch path, which already sets
+ * `manager_queue_ready` via computeManagerQueueReady() — but this is DISPLAY
+ * ONLY. The actual approval decision (Bulk/Single Approve) never trusts any
+ * field on this row: it always re-fetches fresh, by id, via
+ * classifySelectionServerAuthoritative (REVIEW-VERIFIED-READY-CLASSIFICATION
+ * hotfix). Employee identity comes on the row, so filtered rows never flash
+ * "—" (§39).
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -65,6 +69,8 @@ export function reviewQueueItemToExpense(item: ReviewQueueItem): Expense {
     wasReviewerCorrected: Boolean(item.was_reviewer_corrected),
     batch_id: item.batch_id ?? null,
     custom_fields: custom,
+    manager_queue_ready: item.is_actionable,
+    available_actions: item.available_actions,
     // Extra fields the render pipeline reads via casts (not on the interface).
     transaction_number: item.transaction_number ?? undefined,
     isResubmitted: Boolean(item.is_resubmitted),

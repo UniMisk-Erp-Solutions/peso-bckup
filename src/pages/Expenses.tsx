@@ -7,10 +7,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Filter, Download, ArrowLeft, MoreVertical, Edit, Trash2 } from "lucide-react";
+import { Plus, Search, Filter, Download, ArrowLeft, MoreVertical, Edit, Trash2, Undo2 } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { ExpenseStatusWithCorrectionBadge } from "@/components/ExpenseStatusWithCorrectionBadge";
-import { canOwnerEditExpenseStatus } from "@/lib/expenseEditRules";
+import { canOwnerEditExpenseStatus, canOwnerTrashExpenseStatus, canOwnerWithdrawExpenseStatus } from "@/lib/expenseEditRules";
+import { withdrawSubmittedExpense } from "@/lib/expenseWithdrawAndDelete";
+import { trashExpense } from "@/lib/expenseRecycleBin";
+import { ExpenseRecycleBinPanel } from "@/components/ExpenseRecycleBinPanel";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -51,6 +54,18 @@ import { MobileExpenseListView } from "@/components/mobile/MobileExpenseListView
 import type { MobileExpenseItem } from "@/components/mobile/MobileExpenseCard";
 import { useOperationProgress } from "@/hooks/useOperationProgress";
 import { AsyncOperationProgress } from "@/components/AsyncOperationProgress";
+import {
+  ALL_MONTHS,
+  buildExpenseMonthOptions,
+  expenseMonthBounds,
+  expenseMonthOfDateString,
+  formatExpenseMonthLabel,
+  type ExpenseMonthOption,
+  type ExpenseMonthValue,
+} from "@/lib/expenseMonthFilter";
+import { CUSTOM_FIELD_FILTER_ALL } from "@/lib/expenseCustomFieldFilters";
+import { validateMyExpensesPageResponse } from "@/lib/myExpensesPageSchema";
+import { createMonthFetchGuardState, invalidateMonthFetch, runMonthFetch } from "@/lib/monthFetchGuard";
 
 interface Expense {
   id: string;
@@ -128,6 +143,47 @@ export default function Expenses() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("trip_start");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  /**
+   * Exact MONTH+YEAR filter on trip_start. Applies immediately (this page has
+   * no draft/apply split at all -- every other filter here already applies on
+   * every keystroke/change), and switches the list from the existing bounded-
+   * fetch-then-client-filter model to TRUE server-paged browsing via
+   * get_my_expenses_page_v1 -- required because a month can hold far more
+   * rows than this page's default 150-row initial fetch (or even the full
+   * "Load all" set for a heavy account).
+   */
+  const [expenseMonth, setExpenseMonth] = useState<ExpenseMonthValue>(ALL_MONTHS);
+  const [monthOptions, setMonthOptions] = useState<ExpenseMonthOption[]>([
+    { value: ALL_MONTHS, label: "All months" },
+  ]);
+  const [monthModePage, setMonthModePage] = useState(1);
+  const [monthModeTotal, setMonthModeTotal] = useState(0);
+  const [monthModeTotalPages, setMonthModeTotalPages] = useState(0);
+  const [monthModeLoading, setMonthModeLoading] = useState(false);
+  const [monthModeError, setMonthModeError] = useState<string | null>(null);
+  const isExactMonthMode = expenseMonth !== ALL_MONTHS;
+  const MY_EXPENSES_MONTH_PAGE_SIZE = 25;
+  // Race-condition hardening (§1-4): the guard's generation token is bumped
+  // the INSTANT the user leaves/changes exact-month mode (in
+  // handleExpenseMonthChange), not just inside fetchMyExpensesMonthPage --
+  // otherwise a switch back to "All months" before an in-flight request
+  // resolves never invalidates it, and the stale response can land later and
+  // overwrite the correct list. See src/lib/monthFetchGuard.ts for the
+  // extracted, unit-tested invalidation logic. `isExactMonthModeRef` backs
+  // the guard's commit-time mode check: an exact-month response has zero
+  // authority once back in All-months mode, independent of sequence numbers.
+  const monthFetchGuardRef = useRef(createMonthFetchGuardState());
+  const isExactMonthModeRef = useRef(isExactMonthMode);
+  useEffect(() => {
+    isExactMonthModeRef.current = isExactMonthMode;
+  }, [isExactMonthMode]);
+  // Invalidate and cancel any in-flight month fetch on unmount so a late
+  // response never calls setState on an unmounted page.
+  useEffect(() => {
+    return () => {
+      invalidateMonthFetch(monthFetchGuardRef.current);
+    };
+  }, []);
   const [returnMoneyDialogOpen, setReturnMoneyDialogOpen] = useState(false);
   const [returnAmount, setReturnAmount] = useState("");
   const [returnNote, setReturnNote] = useState("");
@@ -135,15 +191,20 @@ export default function Expenses() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [expensesTab, setExpensesTab] = useState<"all" | "drafts">("all");
+  const [withdrawDialogOpen, setWithdrawDialogOpen] = useState(false);
+  const [expenseToWithdraw, setExpenseToWithdraw] = useState<Expense | null>(null);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [expensesTab, setExpensesTab] = useState<"all" | "drafts" | "trash">("all");
   const [savedDraftsCount, setSavedDraftsCount] = useState(0);
+  const [trashedCount, setTrashedCount] = useState(0);
+  const [trashRefreshToken, setTrashRefreshToken] = useState(0);
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
-    const tab = (location.state as { expensesTab?: "all" | "drafts" } | null)?.expensesTab;
-    if (tab === "drafts") {
-      setExpensesTab("drafts");
+    const tab = (location.state as { expensesTab?: "all" | "drafts" | "trash" } | null)?.expensesTab;
+    if (tab === "drafts" || tab === "trash") {
+      setExpensesTab(tab);
       window.history.replaceState({}, document.title);
     }
   }, [location.state]);
@@ -155,8 +216,186 @@ export default function Expenses() {
   }, [user?.id]);
 
   useEffect(() => {
+    // Exact-month mode owns filteredExpenses via the server-paged fetch below;
+    // the client-side filter must not overwrite it with a filtered slice of
+    // (possibly stale/incomplete) `expenses`. Returning to "All months" must
+    // still re-run this immediately, hence expenseMonth is a dependency.
+    if (isExactMonthMode) return;
     filterAndSortExpenses();
-  }, [expenses, searchTerm, statusFilter, sortBy, sortOrder, customFieldFilters]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expenses, searchTerm, statusFilter, sortBy, sortOrder, customFieldFilters, isExactMonthMode]);
+
+  /**
+   * Discover the Month dropdown's calendar range from THIS employee's own
+   * accessible history -- two 1-row queries (earliest/latest trip_start),
+   * never a full scan. Runs once per user/org.
+   */
+  useEffect(() => {
+    if (!user?.id || !organizationId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // No draft exclusion here (§10-11): the All-months list (fetchExpenses
+        // + filterAndSortExpenses) never excludes status='draft' either, so
+        // the Month dropdown's range must cover the same population -- a
+        // draft-only earliest/latest month must still appear as an option,
+        // or selecting it would show a truthful empty state instead of
+        // silently omitting a month that has real rows in All-months mode.
+        const [{ data: earliestRow }, { data: latestRow }] = await Promise.all([
+          supabase
+            .from("expenses")
+            .select("trip_start")
+            .eq("user_id", user.id)
+            .eq("organization_id", organizationId)
+            .is("deleted_at", null) // DOC-129: a trashed expense's month shouldn't appear as a selectable range
+            .order("trip_start", { ascending: true })
+            .limit(1)
+            .maybeSingle(),
+          supabase
+            .from("expenses")
+            .select("trip_start")
+            .eq("user_id", user.id)
+            .eq("organization_id", organizationId)
+            .is("deleted_at", null) // DOC-129
+            .order("trip_start", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+        ]);
+        if (cancelled) return;
+        setMonthOptions(
+          buildExpenseMonthOptions({
+            earliest: earliestRow?.trip_start ? expenseMonthOfDateString(earliestRow.trip_start) : null,
+            now: new Date(),
+            latestExpenseMonth: latestRow?.trip_start ? expenseMonthOfDateString(latestRow.trip_start) : null,
+          }),
+        );
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Could not resolve the My Expenses month range:", error);
+        setMonthOptions([{ value: ALL_MONTHS, label: "All months" }]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, organizationId]);
+
+  /** Server-paged, server-filtered fetch for exact-month mode (§26/§29). */
+  const fetchMyExpensesMonthPage = async (page: number) => {
+    if (!user?.id || !organizationId) return;
+    const bounds = expenseMonthBounds(expenseMonth);
+    if (!bounds) return;
+    setMonthModeLoading(true);
+    setMonthModeError(null);
+    const outcome = await runMonthFetch(
+      monthFetchGuardRef.current,
+      () => isExactMonthModeRef.current,
+      async (signal) => {
+        const customFiltersArr = Object.entries(customFieldFilters)
+          .filter(([, v]) => v && v !== CUSTOM_FIELD_FILTER_ALL && String(v).trim() !== "")
+          .map(([label, value]) => ({ label, value }));
+        const client = supabase as unknown as {
+          rpc: (
+            n: string,
+            p: Record<string, unknown>,
+          ) => Promise<{ data: unknown; error: { message?: string } | null }> & {
+            abortSignal: (
+              s: AbortSignal,
+            ) => Promise<{ data: unknown; error: { message?: string } | null }>;
+          };
+        };
+        const rpcCall = client.rpc("get_my_expenses_page_v1", {
+          p_organization_id: organizationId,
+          p_page: page,
+          p_page_size: MY_EXPENSES_MONTH_PAGE_SIZE,
+          p_status: statusFilter === "all" ? null : statusFilter,
+          p_search: searchTerm.trim() || null,
+          p_sort_by: sortBy,
+          p_sort_order: sortOrder,
+          p_date_from: bounds.from,
+          p_date_to_exclusive: bounds.toExclusive,
+          p_custom_filters: customFiltersArr,
+        });
+        const { data, error } = await (signal ? rpcCall.abortSignal(signal) : rpcCall);
+        if (error) throw new Error(error.message ?? "Failed to load expenses for this month.");
+        return validateMyExpensesPageResponse(data);
+      },
+    );
+
+    // A superseded/aborted request must never touch filteredExpenses/monthMode*
+    // state (§1-4) -- the newer request (or the mode change itself) already
+    // owns that state.
+    if (outcome.kind === "stale" || outcome.kind === "aborted") return;
+
+    if (outcome.kind === "success") {
+      setFilteredExpenses(outcome.data.items as unknown as Expense[]);
+      setMonthModeTotal(outcome.data.filtered_total);
+      setMonthModeTotalPages(outcome.data.total_pages);
+      setMonthModePage(outcome.data.page || page);
+    } else {
+      console.error("Could not load expenses for the selected month:", outcome.error);
+      setMonthModeError(
+        outcome.error instanceof Error
+          ? outcome.error.message
+          : "Failed to load expenses for this month.",
+      );
+      setFilteredExpenses([]);
+      setMonthModeTotal(0);
+      setMonthModeTotalPages(0);
+    }
+    setMonthModeLoading(false);
+  };
+
+  // Debounced so typing in Search doesn't fire a request per keystroke; every
+  // other month-mode filter change (status/sort/custom fields/page) is a
+  // single discrete action and fetches immediately.
+  useEffect(() => {
+    if (!isExactMonthMode) return;
+    const t = setTimeout(() => {
+      void fetchMyExpensesMonthPage(monthModePage);
+    }, searchTerm ? 300 : 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isExactMonthMode,
+    expenseMonth,
+    statusFilter,
+    searchTerm,
+    sortBy,
+    sortOrder,
+    customFieldFilters,
+    monthModePage,
+    organizationId,
+    user?.id,
+  ]);
+
+  /**
+   * Month is applied immediately and always resets to page 1 (§28).
+   *
+   * Race fix (§1-4): invalidate the current generation token and abort any
+   * in-flight month request IMMEDIATELY, synchronously, before the mode/
+   * month state itself changes. This is what closes the gap that let a
+   * switch back to "All months" (which never calls fetchMyExpensesMonthPage
+   * again) leave a prior in-flight response able to land later and overwrite
+   * the correct list -- the token bump no longer waits for a new fetch to
+   * happen at all.
+   */
+  const handleExpenseMonthChange = (value: string) => {
+    invalidateMonthFetch(monthFetchGuardRef.current);
+    setExpenseMonth(value as ExpenseMonthValue);
+    setMonthModePage(1);
+    setMonthModeLoading(false);
+    setMonthModeError(null);
+  };
+
+  // Any OTHER filter change while a month is selected must also land back on
+  // page 1 -- otherwise changing Status while on page 4 could request a page
+  // that no longer exists for the new, narrower filtered population (§61).
+  useEffect(() => {
+    if (!isExactMonthMode) return;
+    setMonthModePage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, searchTerm, sortBy, sortOrder, customFieldFilters]);
 
   const EXPENSE_INITIAL_FETCH_LIMIT = 150;
   const EXPENSE_FETCH_PAGE_SIZE = 1000;
@@ -221,7 +460,8 @@ export default function Expenses() {
       const { count, error: countError } = await supabase
         .from("expenses")
         .select("id", { count: "exact", head: true })
-        .eq("user_id", user.id);
+        .eq("user_id", user.id)
+        .is("deleted_at", null); // DOC-129: a trashed expense is in the Recycle Bin, not "My Expenses"
       if (countError) throw countError;
       const totalCount = count ?? 0;
       setTotalExpenseCount(totalCount);
@@ -239,6 +479,7 @@ export default function Expenses() {
             .from("expenses")
             .select("*")
             .eq("user_id", user.id)
+            .is("deleted_at", null) // DOC-129
             .order("updated_at", { ascending: false })
             .range(offset, pageEnd);
 
@@ -478,12 +719,6 @@ export default function Expenses() {
           throw new Error("You don't have a manager assigned. Please contact an administrator.");
         }
 
-        // 1) Explicit profile assignment first
-        const assignedCashierId = (requesterProfile as any)?.assigned_cashier_id || null;
-        if (assignedCashierId) {
-          targetUserId = assignedCashierId;
-        }
-
         const pickActiveCashier = async (candidateIds: string[]): Promise<string | null> => {
           if (!candidateIds.length) return null;
           let membershipQuery = supabase
@@ -504,6 +739,37 @@ export default function Expenses() {
           }
           return memberships?.[0]?.user_id || null;
         };
+
+        // 1) Explicit profile assignment first -- but only trust it if that
+        // cashier/admin is still an active member of the requester's
+        // organization. assigned_cashier_id is NOT cleared when a cashier is
+        // deactivated (confirmed by the read-only deactivation-impact
+        // preflight in 20261009000000_user_lifecycle_reactivation_and_impact.sql,
+        // which only *reports* orphaned assigned_cashier_id references, never
+        // clears them), so a stale pointer here used to short-circuit the
+        // entire resolution chain and hard-fail every return request for any
+        // employee whose assigned cashier had since left/been deactivated or
+        // moved orgs -- even though the robust fallbacks below (2-4) could
+        // have found a valid active cashier.
+        const assignedCashierId = (requesterProfile as any)?.assigned_cashier_id || null;
+        if (assignedCashierId) {
+          let assignedMembershipQuery = supabase
+            .from("organization_memberships")
+            .select("user_id")
+            .eq("user_id", assignedCashierId)
+            .in("role", ["cashier", "admin"])
+            .eq("is_active", true);
+          if (requesterOrgId) {
+            assignedMembershipQuery = assignedMembershipQuery.eq("organization_id", requesterOrgId);
+          }
+          const { data: assignedMembership, error: assignedMembershipError } = await assignedMembershipQuery.maybeSingle();
+          if (assignedMembershipError) {
+            console.error("Error validating assigned cashier membership:", assignedMembershipError);
+          } else if (assignedMembership?.user_id) {
+            targetUserId = assignedMembership.user_id;
+          }
+          // else: stale/invalid assignment -- fall through to steps 2-4.
+        }
 
         // 2) Existing RPC
         if (!targetUserId && managerId) {
@@ -695,108 +961,87 @@ export default function Expenses() {
   const handleDeleteExpense = async () => {
     if (!expenseToDelete || !user) return;
 
+    // Defense in depth: the menu item is already hidden for anything but a
+    // draft (canOwnerTrashExpenseStatus), but never trust client state alone
+    // for a destructive action — trash_expense_v1 re-checks ownership,
+    // organization membership and status itself, atomically. This no longer
+    // permanently erases anything (DOC-129): it moves the expense to the
+    // 30-day Recycle Bin, so a previously-submitted-and-withdrawn draft that
+    // DOC-128's delete_draft_expense_v1 used to refuse outright can now be
+    // deleted like any other draft — its audit history is preserved by the
+    // soft delete itself, not by refusing the action.
+    if (!canOwnerTrashExpenseStatus(expenseToDelete.status)) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Only draft expenses can be deleted. A submitted expense can be withdrawn instead.",
+      });
+      return;
+    }
+
     try {
       setDeleting(true);
 
-      // Verify expense belongs to user and is submitted
-      const { data: expenseData, error: fetchError } = await supabase
-        .from("expenses")
-        .select("id, status, user_id, batch_id, organization_id")
-        .eq("id", expenseToDelete.id)
-        .single();
-
-      if (fetchError) throw fetchError;
-
-      // Verify ownership
-      if (expenseData.user_id !== user.id) {
-        throw new Error("You don't have permission to delete this expense");
-      }
-
-      // Verify status is submitted
-      if (expenseData.status !== "submitted") {
-        throw new Error("Only submitted expenses can be deleted");
-      }
-
-      // Delete attachments from storage
-      const { data: attachments } = await supabase
-        .from("attachments")
-        .select("file_url")
-        .eq("expense_id", expenseToDelete.id);
-
-      if (attachments && attachments.length > 0) {
-        // Extract file paths from URLs and delete from storage
-        for (const attachment of attachments) {
-          try {
-            // Extract path from URL (format: /storage/v1/object/public/receipts/{path})
-            const url = attachment.file_url;
-            if (url) {
-              const urlMatch = url.match(/\/storage\/v1\/object\/public\/receipts\/(.+)$/);
-              if (urlMatch) {
-                const filePath = urlMatch[1];
-                await supabase.storage
-                  .from("receipts")
-                  .remove([filePath]);
-              }
-            }
-          } catch (error) {
-            console.error("Error deleting attachment file:", error);
-            // Continue even if file deletion fails
-          }
-        }
-      }
-
-      // Delete attachment records
-      await supabase
-        .from("attachments")
-        .delete()
-        .eq("expense_id", expenseToDelete.id);
-
-      // Delete expense logs (table is named audit_logs in the database)
-      await supabase
-        .from("audit_logs")
-        .delete()
-        .eq("expense_id", expenseToDelete.id);
-
-      // Delete the expense itself
-      const { error: deleteError } = await supabase
-        .from("expenses")
-        .delete()
-        .eq("id", expenseToDelete.id);
-
-      if (deleteError) {
-        console.error("Delete error details:", deleteError);
-        // Check if it's an RLS policy error
-        if (deleteError.message?.includes("policy") || deleteError.message?.includes("permission")) {
-          throw new Error("You don't have permission to delete this expense. Please ensure the expense is in 'submitted' status and belongs to you. If the issue persists, you may need to apply the database migration: 20250119000000_allow_users_delete_submitted_expenses.sql");
-        }
-        throw deleteError;
-      }
-
-      if (expenseData.batch_id && expenseData.organization_id) {
-        await ExpenseService.syncExpenseBatchAggregates(
-          expenseData.batch_id,
-          expenseData.organization_id,
-        );
-      }
+      await trashExpense(expenseToDelete.id);
 
       toast({
-        title: "Expense Deleted",
-        description: `Expense "${expenseToDelete.title}" has been deleted successfully`,
+        title: "Expense Moved to Recycle Bin",
+        description: `"${expenseToDelete.title}" can be restored for 30 days from the Recycle Bin tab.`,
+      });
+
+      // Refresh expenses list (removes it from the active view immediately)
+      // and nudge the Recycle Bin tab to refetch next time it's opened.
+      await fetchExpenses();
+      setTrashRefreshToken((n) => n + 1);
+      setDeleteDialogOpen(false);
+      setExpenseToDelete(null);
+    } catch (error: unknown) {
+      console.error("Error moving expense to Recycle Bin:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete expense",
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleWithdrawExpense = async () => {
+    if (!expenseToWithdraw || !user) return;
+
+    if (!canOwnerWithdrawExpenseStatus(expenseToWithdraw.status)) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Only a submitted expense that has not yet been reviewed can be withdrawn.",
+      });
+      return;
+    }
+
+    try {
+      setWithdrawing(true);
+
+      await withdrawSubmittedExpense(expenseToWithdraw.id);
+
+      toast({
+        title: "Expense Withdrawn",
+        description: `Expense "${expenseToWithdraw.title}" has been returned to Drafts. You can edit and resubmit it, or delete it.`,
       });
 
       // Refresh expenses list
       await fetchExpenses();
-      setDeleteDialogOpen(false);
-      setExpenseToDelete(null);
-    } catch (error: any) {
-      console.error("Error deleting expense:", error);
+      setWithdrawDialogOpen(false);
+      setExpenseToWithdraw(null);
+    } catch (error: unknown) {
+      console.error("Error withdrawing expense:", error);
       toast({
         variant: "destructive",
         title: "Error",
-        description: error.message || "Failed to delete expense",
+        description: error instanceof Error ? error.message : "Failed to withdraw expense",
       });
     } finally {
-      setDeleting(false);
+      setWithdrawing(false);
     }
   };
 
@@ -817,6 +1062,15 @@ export default function Expenses() {
         loadAllProgressStatus={loadAllProgress.status}
         loadAllProgressTitle={loadAllProgress.phase || undefined}
         loadAllProgressDescription={loadAllProgress.description}
+        expenseMonth={expenseMonth}
+        monthOptions={monthOptions}
+        onExpenseMonthChange={handleExpenseMonthChange}
+        monthModeTotal={monthModeTotal}
+        monthModePage={monthModePage}
+        monthModeTotalPages={monthModeTotalPages}
+        monthModeLoading={monthModeLoading}
+        monthModeError={monthModeError}
+        onMonthPageChange={setMonthModePage}
       />
     );
   }
@@ -830,7 +1084,16 @@ export default function Expenses() {
         </div>
         <div className="flex gap-2 flex-wrap">
           {userRole === "admin" && (
-            <Button variant="outline" onClick={exportExpenses}>
+            <Button
+              variant="outline"
+              onClick={exportExpenses}
+              disabled={isExactMonthMode}
+              title={
+                isExactMonthMode
+                  ? "Export is unavailable while an exact Month is selected (it would only export the current page, not the full month). Switch to All months to export."
+                  : undefined
+              }
+            >
               <Download className="mr-2 h-4 w-4" />
               {t("exportCsv")}
             </Button>
@@ -903,7 +1166,7 @@ export default function Expenses() {
         </div>
       </div>
 
-      <Tabs value={expensesTab} onValueChange={(v) => setExpensesTab(v as "all" | "drafts")} className="space-y-6">
+      <Tabs value={expensesTab} onValueChange={(v) => setExpensesTab(v as "all" | "drafts" | "trash")} className="space-y-6">
         <TabsList>
           <TabsTrigger value="all">{t("expenses:allExpensesTab")}</TabsTrigger>
           <TabsTrigger value="drafts" className="gap-2">
@@ -911,6 +1174,14 @@ export default function Expenses() {
             {savedDraftsCount > 0 ? (
               <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-xs">
                 {savedDraftsCount}
+              </Badge>
+            ) : null}
+          </TabsTrigger>
+          <TabsTrigger value="trash" className="gap-2">
+            Recycle Bin
+            {trashedCount > 0 ? (
+              <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-xs">
+                {trashedCount}
               </Badge>
             ) : null}
           </TabsTrigger>
@@ -922,6 +1193,14 @@ export default function Expenses() {
             organizationId={organizationId}
             knownExpenseIds={new Set(expenses.map((e) => e.id))}
             onCountChange={setSavedDraftsCount}
+          />
+        </TabsContent>
+
+        <TabsContent value="trash" className="mt-0">
+          <ExpenseRecycleBinPanel
+            organizationId={organizationId}
+            onCountChange={setTrashedCount}
+            refreshToken={trashRefreshToken}
           />
         </TabsContent>
 
@@ -973,6 +1252,19 @@ export default function Expenses() {
               >
                 {sortOrder === "asc" ? "↑" : "↓"}
               </Button>
+              {/* Month — exact calendar month on trip_start; applies immediately. */}
+              <Select value={expenseMonth} onValueChange={handleExpenseMonthChange}>
+                <SelectTrigger className="w-40" aria-label="Month">
+                  <SelectValue placeholder="Month" />
+                </SelectTrigger>
+                <SelectContent>
+                  {monthOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <ExpenseCustomFieldFilters
@@ -990,7 +1282,27 @@ export default function Expenses() {
           <CardDescription>View and manage your expense claims</CardDescription>
         </CardHeader>
         <CardContent>
-          {loading ? (
+          {isExactMonthMode && monthModeLoading && filteredExpenses.length === 0 ? (
+            <div className="min-h-[400px] flex items-center justify-center">
+              <p className="text-muted-foreground">{t("common:loading")}</p>
+            </div>
+          ) : isExactMonthMode && monthModeError ? (
+            <div className="space-y-3">
+              <p className="text-destructive">{monthModeError}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void fetchMyExpensesMonthPage(monthModePage)}
+              >
+                Retry
+              </Button>
+            </div>
+          ) : isExactMonthMode && filteredExpenses.length === 0 ? (
+            <p className="text-muted-foreground">
+              No expenses found for {formatExpenseMonthLabel(expenseMonth)}.
+            </p>
+          ) : loading ? (
             <div className="min-h-[400px] flex items-center justify-center">
               <p className="text-muted-foreground">{t("common:loading")}</p>
             </div>
@@ -1023,36 +1335,48 @@ export default function Expenses() {
             <p className="text-muted-foreground">{t("noFilterMatch")}</p>
           ) : (
             <>
-              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-sm text-muted-foreground">
-                <span>
-                  Showing {filteredExpenses.length} of {expenses.length} loaded expenses
-                  {enrichingExpenses ? " (updating details…)" : ""}
-                </span>
-                <span>
-                  Loaded {expenses.length.toLocaleString()} of{" "}
-                  {Math.max(totalExpenseCount, expenses.length).toLocaleString()} total
-                </span>
-              </div>
-              {(loadAllProgress.status !== "idle" || (!allExpensesLoaded && expenses.length < Math.max(totalExpenseCount, expenses.length))) && (
-                <div className="mb-4 space-y-2">
-                  <AsyncOperationProgress
-                    status={loadAllProgress.status}
-                    title={loadAllProgress.phase}
-                    description={loadAllProgress.description}
-                    showSuccess={loadAllProgress.status === "success"}
-                  />
-                  {!allExpensesLoaded && expenses.length < Math.max(totalExpenseCount, expenses.length) && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleLoadAllExpenses}
-                      disabled={loadingAllExpenses}
-                    >
-                      {loadingAllExpenses ? t("progress.loadAll") : t("loadAll")}
-                    </Button>
-                  )}
+              {isExactMonthMode ? (
+                <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-sm text-muted-foreground">
+                  <span>
+                    {monthModeTotal.toLocaleString()} expense{monthModeTotal === 1 ? "" : "s"} in{" "}
+                    {formatExpenseMonthLabel(expenseMonth)}
+                    {monthModeLoading ? " (updating…)" : ""}
+                  </span>
                 </div>
+              ) : (
+                <>
+                  <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-sm text-muted-foreground">
+                    <span>
+                      Showing {filteredExpenses.length} of {expenses.length} loaded expenses
+                      {enrichingExpenses ? " (updating details…)" : ""}
+                    </span>
+                    <span>
+                      Loaded {expenses.length.toLocaleString()} of{" "}
+                      {Math.max(totalExpenseCount, expenses.length).toLocaleString()} total
+                    </span>
+                  </div>
+                  {(loadAllProgress.status !== "idle" || (!allExpensesLoaded && expenses.length < Math.max(totalExpenseCount, expenses.length))) && (
+                    <div className="mb-4 space-y-2">
+                      <AsyncOperationProgress
+                        status={loadAllProgress.status}
+                        title={loadAllProgress.phase}
+                        description={loadAllProgress.description}
+                        showSuccess={loadAllProgress.status === "success"}
+                      />
+                      {!allExpensesLoaded && expenses.length < Math.max(totalExpenseCount, expenses.length) && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleLoadAllExpenses}
+                          disabled={loadingAllExpenses}
+                        >
+                          {loadingAllExpenses ? t("progress.loadAll") : t("loadAll")}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
               <div className="overflow-x-auto -mx-4 sm:mx-0">
                 <div className="inline-block min-w-full align-middle">
@@ -1143,8 +1467,19 @@ export default function Expenses() {
                                   <Edit className="mr-2 h-4 w-4" />
                                   {expense.status === "rejected" ? "Edit & Resubmit" : "Edit"}
                                 </DropdownMenuItem>
-                                {expense.status === "submitted" && (
-                                  <DropdownMenuItem 
+                                {canOwnerWithdrawExpenseStatus(expense.status) && (
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      setExpenseToWithdraw(expense);
+                                      setWithdrawDialogOpen(true);
+                                    }}
+                                  >
+                                    <Undo2 className="mr-2 h-4 w-4" />
+                                    Withdraw
+                                  </DropdownMenuItem>
+                                )}
+                                {canOwnerTrashExpenseStatus(expense.status) && (
+                                  <DropdownMenuItem
                                     onClick={() => {
                                       setExpenseToDelete(expense);
                                       setDeleteDialogOpen(true);
@@ -1167,6 +1502,29 @@ export default function Expenses() {
               </Table>
               </div>
               </div>
+              {isExactMonthMode && monthModeTotalPages > 1 && (
+                <div className="mt-4 flex items-center justify-between text-sm">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setMonthModePage((p) => Math.max(1, p - 1))}
+                    disabled={monthModePage <= 1 || monthModeLoading}
+                  >
+                    Previous
+                  </Button>
+                  <span className="text-muted-foreground">
+                    Page {monthModePage} of {monthModeTotalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setMonthModePage((p) => Math.min(monthModeTotalPages, p + 1))}
+                    disabled={monthModePage >= monthModeTotalPages || monthModeLoading}
+                  >
+                    Next
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </CardContent>
@@ -1178,11 +1536,11 @@ export default function Expenses() {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Expense</AlertDialogTitle>
+            <AlertDialogTitle>Move to Recycle Bin?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete the expense "{expenseToDelete?.title}"?
+              Move the expense "{expenseToDelete?.title}" to the Recycle Bin?
               <br /><br />
-              This action cannot be undone. All attachments and related data will be permanently removed.
+              You can restore it for 30 days from the Recycle Bin tab. Items are automatically deleted for good after 30 days.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1197,7 +1555,35 @@ export default function Expenses() {
               className="bg-red-600 hover:bg-red-700"
               disabled={deleting}
             >
-              {deleting ? "Deleting..." : "Delete"}
+              {deleting ? "Moving..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Withdraw Expense Confirmation Dialog */}
+      <AlertDialog open={withdrawDialogOpen} onOpenChange={setWithdrawDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Withdraw Expense</AlertDialogTitle>
+            <AlertDialogDescription>
+              Withdraw the expense "{expenseToWithdraw?.title}"? It has not been reviewed yet.
+              <br /><br />
+              It will move back to Drafts — nothing is deleted, and your balance is not affected. You can edit and resubmit it whenever you're ready, or delete it from Drafts.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              setWithdrawDialogOpen(false);
+              setExpenseToWithdraw(null);
+            }}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleWithdrawExpense}
+              disabled={withdrawing}
+            >
+              {withdrawing ? "Withdrawing..." : "Withdraw"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

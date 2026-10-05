@@ -7,38 +7,20 @@ import StaggerContainer, { StaggerItem } from "@/components/marketing/StaggerCon
 import { FAQAccordion } from "@/components/marketing/sections";
 import { PricingIllustration, MockCompareTable } from "@/components/marketing/pricing";
 import { Button } from "@/components/ui/button";
-import { Check, Star, ArrowRight } from "lucide-react";
-import type { FAQItem } from "@/components/marketing/sections";
-import { PRICING_META_DESCRIPTION, PRICING_PLANS } from "@/lib/marketingCopy";
+import { Check, Star, ArrowRight, Layers, Settings2, Wrench } from "lucide-react";
+import {
+  CTA_PRICING,
+  PRICING_FACTORS,
+  PRICING_HERO,
+  PRICING_META_DESCRIPTION,
+  PRICING_PLANS,
+  PRICING_REQUIREMENTS_PROMPT,
+  PRICING_TIERS,
+  pricingFaqItems,
+} from "@/lib/marketingCopy";
 
 const plans = [...PRICING_PLANS];
-const pricingFaqItems: FAQItem[] = [
-  {
-    question: "How does pricing work?",
-    answer:
-      "We offer flexible pricing based on your organization's size and needs. Contact our sales team for a customized quote that fits your requirements.",
-  },
-  {
-    question: "Can I change plans later?",
-    answer:
-      "Yes, you can upgrade or adjust your plan at any time. Our team will help you transition smoothly as your organization grows.",
-  },
-  {
-    question: "Is there a free trial?",
-    answer:
-      "We offer a guided demo and pilot program for organizations to experience PesoWise before committing. Contact us to get started.",
-  },
-  {
-    question: "What payment methods do you accept?",
-    answer:
-      "We accept bank transfers, credit cards, and can accommodate various payment arrangements for enterprise clients.",
-  },
-  {
-    question: "Do you offer discounts for annual billing?",
-    answer:
-      "Yes, we offer discounts for annual commitments. Contact our sales team to discuss the best option for your organization.",
-  },
-];
+const tierIcons = [Layers, Settings2, Wrench];
 
 export default function PricingPage() {
   return (
@@ -60,13 +42,45 @@ export default function PricingPage() {
       <FullBleedBand variant="hero" className="py-20">
         <ScrollReveal className="text-center">
           <h1 className="mb-6 text-4xl font-bold leading-tight text-foreground md:text-5xl">
-            Pricing that scales with your organization
+            {PRICING_HERO.heading}
           </h1>
-          <p className="mx-auto max-w-2xl text-lg text-muted-foreground mb-8">
-            Choose the plan that fits your team. All plans include core expense management features with options to grow.
-          </p>
+          <p className="mx-auto max-w-2xl text-lg text-muted-foreground mb-8">{PRICING_HERO.body}</p>
           <div className="flex justify-center">
             <PricingIllustration className="h-24 w-auto" />
+          </div>
+        </ScrollReveal>
+      </FullBleedBand>
+
+      {/* Platform / Organization Setup / Additional Requirements */}
+      <FullBleedBand className="py-16">
+        <StaggerContainer className="mx-auto grid max-w-4xl gap-6 sm:grid-cols-3">
+          {PRICING_TIERS.map((tier, i) => {
+            const Icon = tierIcons[i] ?? Layers;
+            return (
+              <StaggerItem key={tier.id}>
+                <div className="h-full rounded-xl border border-border bg-card p-6 shadow-soft">
+                  <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
+                    <Icon className="h-5 w-5 text-primary" aria-hidden />
+                  </div>
+                  <h3 className="mb-2 text-base font-semibold text-foreground">{tier.title}</h3>
+                  <p className="text-sm text-muted-foreground">{tier.description}</p>
+                </div>
+              </StaggerItem>
+            );
+          })}
+        </StaggerContainer>
+        <ScrollReveal>
+          <div className="mx-auto mt-8 max-w-2xl rounded-xl border border-primary/30 bg-primary/5 p-6 text-center">
+            <p className="text-sm text-foreground">{PRICING_REQUIREMENTS_PROMPT}</p>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Pricing factors may include: {PRICING_FACTORS.join(", ").toLowerCase()}.
+            </p>
+            <Button asChild className="mt-4 btn-glow">
+              <Link to="/contact">
+                {CTA_PRICING}
+                <ArrowRight className="ml-2 h-4 w-4" aria-hidden />
+              </Link>
+            </Button>
           </div>
         </ScrollReveal>
       </FullBleedBand>
@@ -130,7 +144,7 @@ export default function PricingPage() {
           <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">
             Compare Plans
           </h2>
-          <p className="text-muted-foreground">See all features side by side</p>
+          <p className="text-muted-foreground">See all features side by side. Plan details are confirmed in your quote.</p>
         </ScrollReveal>
         <ScrollReveal delay={0.1}>
           <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0" style={{ WebkitOverflowScrolling: "touch" }}>
@@ -165,7 +179,7 @@ export default function PricingPage() {
             </div>
             <Button asChild>
               <Link to="/contact">
-                Contact Sales
+                {CTA_PRICING}
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
             </Button>

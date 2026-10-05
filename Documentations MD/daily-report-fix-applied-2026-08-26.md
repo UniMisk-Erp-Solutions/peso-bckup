@@ -1,6 +1,6 @@
 # Daily Project Report — fix applied — 2026-08-26
 
-**Doc ID:** DOC-113 follow-up (applied)
+**Doc ID:** DOC-140 follow-up (applied) (formerly DOC-113 follow-up) (renumbered on the 2026-10-05 upstream sync — see DOC-143; the pre-sync `peso-bckup` index gave this a different ID than upstream's independently-numbered catalog)
 **Status:** deployed to backup instance. NOT applied to Production.
 **Scope:** MicroLink organization, approved expenses only (10,457 of 12,946 total — the exact population the Daily Project Report itself shows; this is narrower than the original analysis doc, which covered all statuses — see correction note below).
 **Supersedes:** `daily-report-gap-analysis-2026-08-26.md` for the two categories the user asked to be applied; that file's other categories (ambiguous, flagged, medium-confidence) still stand as-is.

@@ -84,5 +84,27 @@
     "expenseFallback": "ખર્ચ",
     "noRecentActivity": "કોઈ તાજેતરની પ્રવૃત્તિ નથી.",
     "memberFallback": "સભ્ય"
+  },
+  "monthFilter": {
+    "period": "ડેશબોર્ડ સમયગાળો",
+    "label": "મહિનો",
+    "aria": "ડેશબોર્ડ મહિનો",
+    "allTime": "સંપૂર્ણ સમય",
+    "showing": "{{month}} બતાવે છે",
+    "showingAll": "સંપૂર્ણ સમય બતાવે છે",
+    "updating": "અપડેટ થઈ રહ્યું છે…",
+    "scopeNote": "ખર્ચ કાર્ડ ખર્ચની તારીખ પર આધારિત છે. બાકી આઇટમ હાલની સ્થિતિ બતાવે છે. બેલેન્સ મહિનાના અંત સુધીનું છે.",
+    "loadFailedTitle": "તે મહિનો લોડ થઈ શક્યો નહીં",
+    "loadFailedBody": "અગાઉનો સમયગાળો બતાવે છે."
+  },
+  "monthCards": {
+    "balanceAsOf": "{{date}} સુધીનું બેલેન્સ",
+    "balanceToday": "આજ સુધીનું બેલેન્સ",
+    "amountIn": "ખર્ચ રકમ · {{month}}",
+    "expensesIn": "ખર્ચ · {{month}}",
+    "expenseDateTip": "જે ખર્ચની તારીખ {{month}} માં છે",
+    "pendingIn": "{{month}} માં બાકી",
+    "pendingTip": "{{month}} ની તારીખવાળા ખર્ચ જે હાલ બાકી છે (હાલની સ્થિતિ, મહિનાના છેલ્લા દિવસની નહીં)",
+    "asOf": "{{date}} સુધી"
   }
 }

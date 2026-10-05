@@ -103,6 +103,7 @@ export default function AccountantApprovedExpenses() {
         .select("*")
         .eq("organization_id", organizationId)
         .eq("status", "approved")
+        .is("deleted_at", null) // DOC-129: defense in depth — approved expenses can't be trashed today, but never show one if that ever changes
         .order("created_at", { ascending: false });
 
       if (error) throw error;

@@ -1,105 +1,112 @@
-# Daily Project Report — populate the Remarks column
+# Daily Project Report — Remarks Column
 
-**Doc ID:** DOC-115
-**Status:** deployed to peso-bckup and verified end-to-end against a real generated CSV. NOT applied to Production. Merged to `main` from `feature/daily-report-remarks-column`.
+**Doc ID:** DOC-107
+**Status:** in progress
 **Last updated:** 2026-08-27
-**Owner / area:** Daily Project Report export, `report_daily_project_rows_v1` + the `run-report-export-job` worker (the path that builds the download), `get_daily_project_report_page_v1` + `buildDailyProjectExpenseReport.ts` (the browser preview path)
+**Owner / area:** Reports (`/reports`, Daily Project Report tab)
 
 ---
 
 ## 1) Summary
 
-The Daily Project Report's exported CSV/Excel has always had a "Remarks" column header, but it was never wired to any data source — every row shipped with it hardcoded to `""`. Each individual expense already carries its own free-text remark (the base `purpose` column, commonly relabeled "Remark" per organization — confirmed live in Batch Review, `BatchExpenseReviewPanel.tsx`). Since a Daily Project Report row is not one expense but a *group* of every expense sharing the same (track date, employee, project) — e.g. every line of one multi-line batch — this fix comma-joins each grouped row's underlying expenses' own remarks into that one row's "Remarks" cell.
+Populates the Daily Project Report's `Remarks` export column, which has had a header since the report was first built but was never wired to any data source (every row shipped with it hardcoded to `""`). Each underlying expense's own free-text remark (the base `purpose` column, commonly relabeled "Remark" per organization) is now comma-joined across every expense in a grouped report row, in the group's own natural order, with duplicates preserved and blanks skipped. This is a repo-only integration of previously unmerged work, built on top of `integration/preet-server-side-report-generation` (DOC-106) — nothing here has been applied to any database or deployed anywhere.
 
 ## 2) Problem / requirement
 
-User request, verbatim scenario: a 5-line batch (Auto / Doormatory / Private lucjury / Personal auto / Auto) submitted for one trip/project collapses into a single Daily Project Report row (confirmed grouping key: `track_date, user_id, project_id`). The report's Remarks cell for that one row should read `"Auto, Doormatory, Private lucjury, Personal auto, Auto"` — every line's own remark, comma-separated, in the batch's natural order, duplicates preserved (not deduplicated — five real expenses can legitimately share the same remark text).
-
-Scope check performed before implementing: the other 3 reports (Claim Verification, Approval, Detailed Expense) do **not** group multiple expenses into one row at all — their backing RPC (`report_expense_rows_v1`) has no `GROUP BY`, one row per expense — and none of them define a "Remark"/"Remarks" header in the first place. So there is nothing to build for those three; this fix is scoped to the Daily Project Report only.
+A Daily Project Report row is not one expense — it's a group of every expense sharing `(track date, employee, project)`, e.g. every line of one multi-line batch. Each line has its own free-text remark, but the report's `Remarks` column was never populated. The fix needed to comma-join each group's own lines' remarks, in order, without deduplicating (five real expenses can legitimately share the same remark text) and without inventing a value when a line has none.
 
 ## 3) Solution
 
-- `source_expenses` (the jsonb array `get_daily_project_report_page_v1` already builds, one entry per underlying expense in a grouped row) now also carries `purpose`.
-- `finalizeDailyReportGroups` (`src/lib/buildDailyProjectExpenseReport.ts`, shared by both the live server-paged pipeline and the legacy client-side one so they can never drift) computes the group's sorted source-expense list once, and sets `row["Remarks"]` by joining every non-empty `purpose` from that list with `", "` — same order the array is already emitted in (`trip_start`, then `category`), blank remarks skipped so they never leave a stray comma, duplicates kept.
-- No new `fieldMappings` config key was needed — `purpose` is always a fixed base column, unlike `projectId`/`projectName`/`location` which are genuinely org-configurable.
-- "Other Remarks" (the other header in `DAILY_PROJECT_REPORT_HEADERS`) has no backing field anywhere in the schema and was left untouched, staying blank as it always has — inventing a source for it was out of scope of this request.
+`purpose` is threaded through the single shared SQL core (`report_daily_project_rows_v1`) and both of its downstream consumers:
 
-## 4) Key files
+- **Foreground/browser path**: `get_daily_project_report_page_v1` → `dailyProjectReportPaging.ts` (`serverRowToGroup`) → `buildDailyProjectExpenseReport.ts` (`finalizeDailyReportGroups`), which now computes `row["Remarks"]` as `sourceExpenses.map(e => e.purpose?.trim()).filter(p => p !== "").join(", ")`, using the group's own already-sorted source-expense list (no new sort, no dedupe).
+- **Background/worker path**: `supabase/functions/run-report-export-job/index.ts`'s own independent row-shaping (`toGroup`/`finalize`) gains the byte-identical logic — `Group.remarks: string[]`, extracted from `source_expenses[].purpose` in the RPC's own order, joined the same way into `row["Remarks"]`.
+
+Both paths read `purpose` from the same `report_daily_project_rows_v1` query, so they cannot drift on WHERE the data comes from — only the two hand-maintained row-shaping implementations could still drift on HOW it's joined, which is why both were updated together and tested for output parity (§9).
+
+## 4) The final source bug that required fixing BOTH report paths
+
+The source branch (`Preet-Patel/feature/daily-report-remarks-column`) shipped this in two commits, and the first one was an incomplete fix that looked complete:
+
+1. **`e2a4cab`** (first pass) — added `purpose` to `source_expenses` in the *old, monolithic* `get_daily_project_report_page_v1` (before that project had a shared server core) and updated `finalizeDailyReportGroups` in `buildDailyProjectExpenseReport.ts`. Verified repeatedly. Shipped.
+2. **`b6385b8`** (the actual fix, same day, ~1.5 hours later) — the downloaded CSV was *still blank*. Root cause, quoted from that commit's own message: *"the download is not built by the browser at all... it is produced by the run-report-export-job Deno worker, which calls a DIFFERENT rpc (report_daily_project_rows_v1) and re-implements the row shaping itself. Every 'verified' claim I made was testing a code path the download never runs. The user pushed back three times before I checked the right thing."*
+
+**In this integration's own architecture** (already merged as part of DOC-106, one commit before this fix was even needed on the source branch), `get_daily_project_report_page_v1` and the worker both already call the *same* `report_daily_project_rows_v1` for their row data — the source branch's bug about two different RPCs does not reproduce here. But the second half of the source bug reproduces exactly: the worker's `toGroup`/`finalize` functions are their own independent implementation of the row-shaping, separate from `finalizeDailyReportGroups`, and would have silently dropped `purpose` the same way if only the SQL and the foreground TypeScript had been updated. Both were changed together in this integration for exactly that reason — see §9 for the test that specifically guards against this recurring.
+
+## 5) Files changed
 
 ```
-# Browser path (first pass -- correct, but NOT what produces the download)
-supabase/migrations/20260827100000_daily_report_source_expense_purpose.sql
-supabase/rollbacks/20260827100000_daily_report_source_expense_purpose_rollback.sql
-src/lib/buildDailyProjectExpenseReport.ts (DailyReportSourceExpense.purpose, finalizeDailyReportGroups)
-src/lib/dailyProjectReportPaging.ts (ServerSourceExpense.purpose, serverRowToGroup)
-src/lib/__tests__/buildDailyProjectExpenseReport.test.ts (2 new tests)
-
-# Server worker path (second pass -- THIS is what actually builds the CSV)
-supabase/migrations/20260827110000_daily_report_worker_rows_purpose.sql
-supabase/functions/run-report-export-job/index.ts (Group.remarks, toGroup, finalize)
+supabase/migrations/20260827160000_daily_project_report_shared_core.sql   (amended, not a new file — see §6)
+src/lib/buildDailyProjectExpenseReport.ts
+src/lib/dailyProjectReportPaging.ts
+supabase/functions/run-report-export-job/index.ts
 ```
 
-### The path that actually matters (found only after the first fix shipped)
+Test files (new/extended):
 
-The first pass fixed `get_daily_project_report_page_v1` — the RPC the **browser**
-calls — and it was verified working. The exported file was still blank, because
-since DOC-104/105 the download is **not built by the browser at all**. The Deno
-worker in `supabase/functions/run-report-export-job/` builds it, and that worker:
+```
+src/lib/__tests__/buildDailyProjectExpenseReport.test.ts   (extended)
+src/lib/__tests__/dailyProjectReportPaging.test.ts         (extended)
+src/lib/__tests__/reportExportWorker.test.ts               (extended)
+src/lib/__tests__/serverSideReportGeneration.test.ts       (extended)
+src/lib/__tests__/dailyReportRemarksWorkerLogic.test.ts    (new)
+```
 
-- calls a **different** RPC, `report_daily_project_rows_v1`, not the one the
-  first migration fixed;
-- **re-implements** the row shaping itself (its own `Group` type, `toGroup`,
-  `finalize`) rather than importing the shared `finalizeDailyReportGroups`.
+## 6) Migration strategy: amended, not new
 
-So three separate things all had to change for the CSV to show Remarks:
+`20260827160000_daily_project_report_shared_core.sql` has never been applied to any database. The Remarks change is two lines inside the exact same function (`report_daily_project_rows_v1`) this migration already defines and modifies via `CREATE OR REPLACE` — carrying `f.purpose` forward through the `enriched` CTE (it was already selected by `filtered`, for base-field project/location resolution, but `enriched`'s explicit column list was dropping it) and adding `'purpose', g.purpose` to the `source_expenses` JSON build in `grouped`. Layering a second, immediately-following `CREATE OR REPLACE` on an unapplied migration would only obscure that this is one coherent change to one function; the amendment is documented in-place in the migration's own header comment and in the central register (`Documentations MD/PENDING_MIGRATIONS_PREET_INTEGRATION.md`, Migration 2). The response contract change is additive only — one new key in `source_expenses`, nothing removed or renamed — verified field-by-field before writing the amendment.
 
-1. `report_daily_project_rows_v1`'s `enriched` CTE selects an explicit column
-   list and was **dropping `purpose` entirely**, even though `filtered` already
-   had it — so it had to be carried forward there first (`resolved` selects
-   `en.*`, so it propagates from that point automatically).
-2. That same function's `source_expenses` payload had to emit `'purpose'`,
-   matching what the browser-side RPC already emits.
-3. The worker's `Group` gained a `remarks: string[]`, `toGroup` now reads
-   `source_expenses[].purpose` (already ordered by the RPC), and `finalize`
-   sets `row["Remarks"]`.
+## 7) Pending DB changes
 
-**The standing hazard this exposes:** two independent implementations of the
-same report shaping exist, and a change to one silently does nothing to the
-other. The worker's own header comment already asserts "OUTPUT PARITY ... a
-direct port of `finalizeDailyReportGroups`" — that parity is maintained by hand
-and is exactly what broke here. Any future column added to the Daily Project
-Report must be added in **both** places, or it will appear in the UI preview and
-be missing from the downloaded file.
+None beyond what DOC-106 already documents. No new migration file. The amendment does not change migration count, order, or any other migration's content.
 
-## 5) Database / migrations
+## 8) Worker changes
 
-Two additive migrations, both `CREATE OR REPLACE` with unchanged signatures, so every existing caller keeps working:
+`supabase/functions/run-report-export-job/index.ts`:
 
-1. `20260827100000_daily_report_source_expense_purpose.sql` — adds `'purpose', g.purpose` to `get_daily_project_report_page_v1`'s `source_expenses` (browser preview path). Otherwise byte-identical to `20260826100000_daily_report_dynamic_project_name.sql`.
-2. `20260827110000_daily_report_worker_rows_purpose.sql` — the same two-part change to `report_daily_project_rows_v1` (worker/download path): carry `f.purpose` through the `enriched` CTE, and emit `'purpose'` in `source_expenses`. Generated from the live `pg_get_functiondef` output so nothing else in that function drifts.
+- `Group` type gains `remarks: string[]`.
+- `toGroup()` reads `row.source_expenses[].purpose` (guarded with `Array.isArray` and optional chaining — a malformed or missing `source_expenses` degrades to `[]`, never throws), trims each value, and filters out genuinely blank ones. No sort, no dedupe.
+- `finalize()` writes `row["Remarks"] = g.remarks.join(", ")` before the `percent` calculation, after the `HEADERS`-driven blank-fill, so it is not overwritten.
 
-Both applied to the backup database. The worker's `index.ts` was deployed into the running edge-functions container and the container restarted (this instance has no `supabase functions deploy`; the established method is `docker cp` + restart).
+**Not deployed.** No `supabase functions deploy`, no container restart, no PostgREST schema reload was performed or is possible without a target database — this integration is source-code only, per instruction.
 
-## 6) Test plan
+## 9) Tests
 
-- [x] `finalizeDailyReportGroups` joins 5 batch lines' purposes into one Remarks cell, in order, keeping duplicates (`"Auto, Doormatory, Private lucjury, Personal auto, Auto"`)
-- [x] Blank/null purposes are skipped, no stray comma
-- [x] Existing 51 tests across `buildDailyProjectExpenseReport.test.ts`, `dailyProjectReportPaging.test.ts`, `exportDailyProjectExpenseReport.test.ts` all still pass (53 total after the 2 new ones)
-- [x] `tsc --noEmit -p tsconfig.app.json`: 16 pre-existing errors in touched files, identical set to baseline, zero new
-- [x] Clean production build
-- [x] Both migrations applied to the live backup database; worker deployed to the edge container and restarted (`Remarks` assignment confirmed present in the running file)
-- [x] `deno check` clean on the modified worker
-- [x] Browser-path migration verified directly: the deployed `get_daily_project_report_page_v1` body contains the `purpose` addition, and calling it under a real authenticated session returns the expected join for the Virendrasinh Mahida batch
-- [x] **End-to-end against a real generated file** — enqueued a genuine export job through `create_daily_project_report_export_job_v1`, ran the worker, downloaded the produced CSV from Storage and parsed it: 4,261 rows, **3,340 with non-empty Remarks**, and the reference row (Virendrasinh Mahida, 03-07-2026) reads exactly `Doormatory, Private lucjury, Auto, Personal auto`. This is the check that should have been done the first time — every earlier "verified" claim tested the browser path, which does not produce the download.
+95 tests already existed for the server-side report generation module (DOC-106); this pass adds/extends 41 across 5 files, specifically targeting the exact failure mode the source branch hit:
 
-Backup instance only. NOT applied to Production.
+- **Foreground** (`buildDailyProjectExpenseReport.test.ts`): one expense → its own purpose; multiple expenses → comma-joined in source order; duplicates preserved (`["Auto","Private vehicle","","Auto"]` → `"Auto, Private vehicle, Auto"`, matching the task's own example exactly); blanks skipped without a stray comma; all-blank → `""`; order preservation verified by deliberately feeding expenses in reverse-alphabetical category order; no substitution of `title`/`destination`/`category` when `purpose` is absent; a full regression test confirming Track Date/project id/project name/Employee/Employee Code/Location/Presence/percent/cost columns are unchanged by the Remarks addition.
+- **Worker** (`dailyReportRemarksWorkerLogic.test.ts`): the worker's `index.ts` exports nothing and calls `Deno.serve(...)` at module scope, so it cannot be imported into a Node/Vitest test process — attempting to would throw `Deno is not defined` on load. This file mirrors the exact `toGroup`/`finalize` Remarks logic byte-for-byte (kept honest by `reportExportWorker.test.ts`'s source-content assertions on the real file, extended in this pass) and executes the mirror directly against the same fixtures as the foreground tests, including the exact reference string from the source incident's own live verification: `"Doormatory, Private lucjury, Auto, Personal auto"`.
+- **Output parity** (`dailyReportRemarksWorkerLogic.test.ts` + `dailyProjectReportPaging.test.ts`): given identical `source_expenses` input, the foreground's `finalizeDailyReportGroups` and the worker-mirror produce byte-identical `Remarks` strings across 5 parameterized cases (single, multiple, duplicates, all-blank, mixed real-shaped data). A second parity test extends the pre-existing foreground-vs-server-paged-pipeline fixture with matching `purpose` values on both sides and asserts the full row (including `Remarks`) is identical, and separately spot-checks three distinct groups' exact `Remarks` values.
+- **Regression**: covered inline in the foreground test (see above) and implicitly by the fact that all 67 pre-existing Daily Project Report tests still pass unchanged.
+- **Large report / page boundaries** (`dailyProjectReportPaging.test.ts`): 1, 250, 251, 1000, 1001 and 5000 rows, each with a unique per-row remark, asserting every row keeps exactly its own remark with no loss, duplication, reordering, or cross-row merging — plus a dedicated test placing a multi-source-expense group exactly on a 250-row page-cursor boundary to prove the client-side page-assembly loop does not touch a row's already-complete internal join.
+- **CSV escaping** (`dailyReportRemarksWorkerLogic.test.ts`): a Remarks value that itself contains a comma (from the join, e.g. `"Taxi, Auto"`) is quoted as one field; embedded double quotes are doubled per RFC 4180, not backslash-escaped; embedded newlines force quoting; a plain remark is left unquoted; Hindi/Gujarati Unicode remarks pass through untouched when they contain no special characters and are correctly quoted when comma-joined, with a round-trip un-escape check.
+- **Graceful degradation** (`dailyProjectReportPaging.test.ts`): a `source_expenses` entry with no `purpose` key at all — exactly what the currently-installed, unmigrated `report_daily_project_rows_v1` returns today — does not throw anywhere in `serverRowToGroup` or `finalizeDailyReportGroups`, and produces an empty `Remarks` cell rather than crashing the report page.
+
+**Result:** 3745 passed / 0 failed across 212 test files, two consecutive full-suite runs. Typecheck 615 errors (baseline, unchanged). Lint: 0 new errors/warnings on every touched file. Build clean.
+
+## 10) Known limitations
+
+- No live database or Deno runtime was available this session. The SQL amendment and the worker change are verified by static review, direct schema cross-reference against the migration's own existing CTEs, and the executed-mirror tests described above — not by running the actual function or the actual worker.
+- "Other Remarks" (a second header with no backing field anywhere in the schema) is deliberately left untouched, matching the source branch's own explicit scope decision — inventing a source for it was out of scope there and remains out of scope here.
+- The standing hazard this whole incident exposed is not fixed, only guarded against with a test: the foreground and worker row-shaping are two hand-maintained implementations of the same computation. Any future Daily Project Report column must be added in both places, and the output-parity test in this doc's §9 should be extended for it — the SQL contract tests in `serverSideReportGeneration.test.ts` do not by themselves catch a drift purely between the two TypeScript row-shapers.
+
+## 11) Migration status
+
+**NOT APPLIED to any database.** See `Documentations MD/PENDING_MIGRATIONS_PREET_INTEGRATION.md` §2 (Migration 2) and §5a for the authoritative, cumulative record.
+
+## 12) Deployment status
+
+**NOT DEPLOYED.** `run-report-export-job` remains undeployed. No PostgREST schema reload performed. No Production, backup, or preview database touched.
+
+## 13) Related docs
+
+- [`Documentations MD/server-side-report-generation.md`](./server-side-report-generation.md) (DOC-106) — the parent module this Remarks work builds on.
+- [`Documentations MD/PENDING_MIGRATIONS_PREET_INTEGRATION.md`](./PENDING_MIGRATIONS_PREET_INTEGRATION.md) — the authoritative cumulative migration register.
 
 ---
 
 ## Revision log
 
-| Date | Notes |
-|---|---|
-| 2026-08-27 | Initial implementation. Code, tests, typecheck, and build all verified clean. Migration authored but not yet applied — SSH host to the backup database was unreachable at commit time. Pushed to a feature branch, not merged to `main`, specifically so the deployed app and the database schema never drift out of sync; will apply the migration and verify live before merging. |
-| 2026-08-27 (second pass) | SSH connectivity restored. The browser-path migration was applied to the backup database and verified: deployed function body confirmed to contain the `purpose` addition, and the joined Remarks value for the real Virendrasinh Mahida batch matched `"Doormatory, Private lucjury, Auto, Personal auto"` computed independently via SQL. Merged to `main`, 53/53 tests re-verified, pushed. **This verification was real but insufficient — it tested the browser path, and the download does not use it.** |
-| 2026-08-27 (third pass) | **The exported CSV was still blank after the first fix, and the user was right to keep pushing.** Root cause: the download is produced by the `run-report-export-job` Deno worker, not by the browser code the first pass fixed — a separate re-implementation calling a different RPC (`report_daily_project_rows_v1`). Three changes were needed: carry `purpose` through that RPC's `enriched` CTE (it was being dropped there), emit `'purpose'` in its `source_expenses`, and teach the worker's own `Group`/`toGroup`/`finalize` to collect and join remarks. Verified by generating a real export job end-to-end and reading the produced file: 3,340 of 4,261 rows now carry Remarks, and the user's reference row (Virendrasinh Mahida, 03-07-2026) reads exactly `"Doormatory, Private lucjury, Auto, Personal auto"`. Lesson recorded in §4: the UI preview path and the download path are two separate implementations, and a column added to only one will silently be missing from the other. |
+| Date | Revision | Author | Notes |
+|------|----------|--------|-------|
+| 2026-08-27 | 1.0 | Claude Code | Initial integration on `integration/preet-daily-report-remarks-column`, branched from `integration/preet-server-side-report-generation` @ `5a76739`. Ported the FINAL (worker-inclusive) fix from `Preet-Patel/feature/daily-report-remarks-column` (commits `e2a4cab`, `b6385b8`), not the first incomplete attempt. Amended the pending `20260827160000_daily_project_report_shared_core.sql` migration in place (never applied anywhere) rather than adding a new migration file. Updated both the foreground row builder and the worker's independent row-shaping together, specifically to prevent the exact foreground/worker drift that made the source branch's first fix silently insufficient. 41 new/updated tests across 5 files, including an executed mirror of the un-importable Deno worker's logic and an explicit output-parity test between it and the real foreground implementation. Zero new TS/lint errors, zero new test failures against the `integration/preet-server-side-report-generation` baseline. Not merged, not applied to any database, worker not deployed. |

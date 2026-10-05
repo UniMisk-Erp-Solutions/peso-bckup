@@ -60,8 +60,8 @@ export function MarketingFooter({ className }: MarketingFooterProps) {
               <span className="text-xl font-bold text-foreground">PesoWise</span>
             </Link>
             <p className="mt-4 max-w-md text-sm text-muted-foreground">
-              {BUSINESS.displayName} — expense management that works with your ERP: clarity, control,
-              and audit-ready records for finance-led teams.
+              {BUSINESS.displayName} — expense management, petty-cash control and operational expense workflow
+              software, configured around how your organization already works.
             </p>
             <address className="mt-6 not-italic text-sm text-muted-foreground space-y-2">
               <span className="sr-only">Postal address</span>

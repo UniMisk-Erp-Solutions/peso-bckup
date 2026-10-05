@@ -62,6 +62,7 @@ import { ExpenseFormFieldsDisplay } from "@/components/ExpenseFormFieldsDisplay"
 import { ExpenseBaseFieldsDisplay } from "@/components/ExpenseBaseFieldsDisplay";
 import { useOrganizationExpenseFormConfig } from "@/hooks/useOrganizationExpenseFormConfig";
 import { AttachmentPreviewDialog } from "@/components/AttachmentPreviewDialog";
+import { ReviewApprovalWarningPanel } from "@/components/ReviewApprovalWarningPanel";
 import { ExpenseCustomFieldFilters } from "@/components/ExpenseCustomFieldFilters";
 import {
   fetchExpenseCustomFieldsMap,
@@ -92,10 +93,19 @@ import {
   customFilterRecordToServer,
   defaultAppliedReviewQuery,
   deriveDateRange,
+  deriveExpenseMonthDateRange,
   isServerQueryActive,
   statusToServerStatuses,
   type CustomFieldResolver,
 } from "@/lib/reviewAppliedQuery";
+import {
+  ALL_MONTHS,
+  buildExpenseMonthOptions,
+  expenseMonthOfDateString,
+  formatExpenseMonthLabel,
+  type ExpenseMonthOption,
+  type ExpenseMonthValue,
+} from "@/lib/expenseMonthFilter";
 import {
   SERVER_QUERY_PAGE_SIZE,
   SERVER_QUERY_TIMEOUT_MS,
@@ -131,11 +141,14 @@ import {
   type SelectableRow,
   classifyForApproval,
   expandSelectionToExpenseIds,
+  isAlreadyApprovedError,
+  isNormallyApprovable,
   isRowSelectable,
   needsApprovalWarning,
   pageSelectableKeys,
   selectAllState,
   selectionKey,
+  retainUnsettledSelectionKeys,
   splitSelectedKeys as splitSelectedKeysBySelection,
 } from "@/lib/reviewBulkSelection";
 import {
@@ -207,6 +220,8 @@ export interface Expense {
   batch_id?: string | null;
   custom_fields?: Record<string, string>;
   manager_queue_ready?: boolean;
+  /** Server-computed actions this row's fetch-time caller could take (approve/verify/reject/correct). Display-only — the actual approval decision always re-fetches fresh via classifySelectionServerAuthoritative, never trusts this cached array. */
+  available_actions?: string[];
 }
 
 // Local state for image preview
@@ -243,7 +258,14 @@ const REVIEW_INITIAL_PAGE_COUNT = 2;
 // v4: cached rows now carry hydrated employee identity (name/employee ID/balance).
 // v3 and earlier snapshots stored identity-less rows and would flash "—" on
 // restore, so the bump abandons them and forces one identity-hydrated fetch.
-const REVIEW_CACHE_VERSION = "pesowise-review-v4";
+// v5: manager_queue_ready/available_actions semantics changed (an assigned
+// final-tier reviewer whose org role differs from the canonical role is now
+// recognized) — REVIEW-VERIFIED-READY-CLASSIFICATION hotfix. Old cached rows
+// computed manager_queue_ready under the previous, narrower rule and must not
+// be trusted for display after this change; the actual approval decision was
+// never cache-derived (it always re-fetches fresh), but the bump keeps row
+// display/selectability consistent with the new rule on the next load.
+const REVIEW_CACHE_VERSION = "pesowise-review-v5";
 /** Bumped whenever the server-side visibility scope changes shape. */
 const REVIEW_SCOPE_VERSION = "reviewer-visible-v1";
 
@@ -326,6 +348,20 @@ function persistReviewCache(entry: ReviewListCacheEntry): void {
   }
 }
 
+/** Mutation completion must never repaint pre-mutation rows from either cache. */
+function invalidateReviewerListCaches(userId: string, organizationId: string): void {
+  for (const [key, entry] of reviewListCache) {
+    if (entry.userId === userId && entry.organizationId === organizationId) {
+      reviewListCache.delete(key);
+    }
+  }
+  try {
+    localStorage.removeItem(buildReviewStorageKey(userId, organizationId));
+  } catch {
+    /* storage unavailable — the in-memory eviction still protects this session */
+  }
+}
+
 /**
  * Map a raw expense row to the UI shape WITHOUT waiting for any enrichment.
  * Optional fields get safe placeholders and are filled in later, in place.
@@ -352,6 +388,8 @@ function buildReviewListCacheKey(input: {
   organizationId: string;
   userRole: string | null;
   timePeriod: string;
+  /** Exact expense month (normal mode only ever sees "all" -- a non-"all" month always activates server mode instead — included for identity parity, §15). */
+  expenseMonth?: string;
   isHierarchyReviewer: boolean;
   hierarchyEnabled: boolean;
   includeTeamLeaderReports: boolean;
@@ -362,6 +400,7 @@ function buildReviewListCacheKey(input: {
     input.organizationId,
     input.userRole ?? "",
     input.timePeriod,
+    input.expenseMonth ?? "all",
     input.isHierarchyReviewer ? "hr" : "eng",
     input.hierarchyEnabled ? "1" : "0",
     input.includeTeamLeaderReports ? "1" : "0",
@@ -437,6 +476,22 @@ export default function ManagerReview() {
   /** Server capability: whether Manager-override support is installed (fail closed). */
   const { ready: managerOverrideReady } = useManagerOverrideCapability();
   const [timePeriod, setTimePeriod] = useState<string>("all");
+  /**
+   * Exact MONTH+YEAR filter on expenses.trip_start. Unlike every other filter
+   * on this page, this is APPLIED IMMEDIATELY on selection -- it has no draft
+   * twin and never goes through the Search-submit gate, so switching months
+   * can never accidentally commit an unrelated unsaved draft (status, sort,
+   * etc.). Mutual exclusion with the relative Time Period is handled at the
+   * two points where either one changes deliberately (see the Month
+   * selector's onValueChange and commitDraftFilters below) -- never via a
+   * shared "mirror applied to draft" effect, which would silently clobber
+   * whatever the OTHER draft controls were mid-edit.
+   */
+  const [expenseMonth, setExpenseMonth] = useState<ExpenseMonthValue>(ALL_MONTHS);
+  /** Every calendar month across this reviewer's accessible scope, newest first; "All months" always first. */
+  const [monthOptions, setMonthOptions] = useState<ExpenseMonthOption[]>([
+    { value: ALL_MONTHS, label: "All months" },
+  ]);
   const [searchTerm, setSearchTerm] = useState<string>(
     () => sessionStorage.getItem("engineerReview:searchTerm") ?? "",
   );
@@ -707,19 +762,33 @@ export default function ManagerReview() {
     }, 2500);
   };
 
+  // Two column kinds, both driven by the same useResizableColumns state:
+  //   FIXED   (txn/amount/balance/status/dates) -- rendered with width===
+  //           minWidth, so they never grow past their number regardless of
+  //           extra table width.
+  //   FLEXIBLE (employee/title/category/destination) -- rendered with ONLY
+  //           minWidth (see the TableHead JSX below), so table-layout:auto
+  //           hands them any leftover width once the fixed columns and the
+  //           compact, non-resizable Actions column are satisfied. This is
+  //           what makes a wide monitor show more of the actual expense
+  //           text instead of leaving dead space before Actions.
+  // date_created must fit formatCreatedDateTime's full
+  // "Aug 27, 2026 at 12:26 PM" -- 88px silently let the browser stretch it
+  // past its declared minimum, stealing width the flexible columns should
+  // have gotten instead.
   const { colWidth: reviewColWidth, startResize: reviewStartResize } = useResizableColumns(
     "pw_engineer_review_cols",
     {
-      txn: 90,
-      employee: 220,
+      txn: 64,
+      employee: 150,
       title: 130,
-      category: 120,
-      destination: 140,
-      amount: 110,
-      balance: 110,
-      status: 120,
-      expense_date: 130,
-      date_created: 130,
+      category: 90,
+      destination: 100,
+      amount: 85,
+      balance: 95,
+      status: 90,
+      expense_date: 95,
+      date_created: 165,
     },
   );
 
@@ -772,6 +841,7 @@ export default function ManagerReview() {
       sortBy,
       sortOrder: sortOrder === "asc" ? "asc" : "desc",
       timePeriod,
+      expenseMonth,
       customFilters: customFieldFilters,
       showOnlyActionable,
       includeTeamLeaderReports,
@@ -786,6 +856,7 @@ export default function ManagerReview() {
       sortBy,
       sortOrder,
       timePeriod,
+      expenseMonth,
       customFieldFilters,
       showOnlyActionable,
       includeTeamLeaderReports,
@@ -844,31 +915,47 @@ export default function ManagerReview() {
   appliedQueryRef.current = appliedQuery;
 
   /**
-   * Mirror the draft twins to the applied query whenever the applied query
-   * changes through a NON-draft path: mount, hierarchy auto-enable, workspace
-   * restore, or a Search commit. Draft edits never change these applied values,
-   * so this can never clobber an in-progress edit — it only resets the controls'
-   * baseline so the "unsaved filters" indicator (§33) is accurate.
+   * Mirror each draft twin to its OWN matching applied field whenever THAT
+   * field changes through a NON-draft path: mount, hierarchy auto-enable,
+   * workspace restore, a Search commit, or the Month handler forcing
+   * `timePeriod` to "all" (§14-18). Draft edits never change these applied
+   * values, so this can never clobber an in-progress edit — it only resets
+   * each control's own baseline so the "unsaved filters" indicator (§33) is
+   * accurate.
+   *
+   * These are DELIBERATELY eight separate effects, not one effect mirroring
+   * all eight fields together. A single combined effect re-runs (and
+   * overwrites EVERY draft field) whenever ANY ONE of the eight applied
+   * values changes — which is exactly why the Month handler used to avoid
+   * calling `setTimePeriod` directly: doing so would have silently clobbered
+   * an unrelated unsaved Status/Sort/custom-filter draft. Splitting the sync
+   * per field removes that coupling entirely: forcing `timePeriod` to "all"
+   * now only ever touches `draftTimePeriod`.
    */
   useEffect(() => {
     setDraftStatus(statusFilter);
+  }, [statusFilter]);
+  useEffect(() => {
     setDraftSortBy(sortBy);
+  }, [sortBy]);
+  useEffect(() => {
     setDraftSortOrder(sortOrder);
+  }, [sortOrder]);
+  useEffect(() => {
     setDraftTimePeriod(timePeriod);
+  }, [timePeriod]);
+  useEffect(() => {
     setDraftShowOnlyActionable(showOnlyActionable);
+  }, [showOnlyActionable]);
+  useEffect(() => {
     setDraftIncludeTeamLeaderReports(includeTeamLeaderReports);
+  }, [includeTeamLeaderReports]);
+  useEffect(() => {
     setDraftIncludeExecutiveReports(includeExecutiveReports);
+  }, [includeExecutiveReports]);
+  useEffect(() => {
     setDraftCustomFieldFilters(customFieldFilters);
-  }, [
-    statusFilter,
-    sortBy,
-    sortOrder,
-    timePeriod,
-    showOnlyActionable,
-    includeTeamLeaderReports,
-    includeExecutiveReports,
-    customFieldFilters,
-  ]);
+  }, [customFieldFilters]);
 
   /**
    * Build the custom-field resolver from the server's own filter-options so an
@@ -1107,6 +1194,7 @@ export default function ManagerReview() {
     setSortBy(snap.query.sortBy);
     setSortOrder(snap.query.sortOrder === "asc" ? "asc" : "desc");
     setTimePeriod(snap.query.timePeriod);
+    setExpenseMonth(snap.query.expenseMonth);
     setShowOnlyActionable(snap.query.showOnlyActionable);
     setIncludeTeamLeaderReports(snap.query.includeTeamLeaderReports);
     setIncludeExecutiveReports(snap.query.includeExecutiveReports);
@@ -1138,6 +1226,7 @@ export default function ManagerReview() {
       sortBy: snap.query.sortBy,
       sortOrder: snap.query.sortOrder === "asc" ? "asc" : "desc",
       timePeriod: snap.query.timePeriod,
+      expenseMonth: snap.query.expenseMonth,
       customFilters: restoredCustomFilters,
       showOnlyActionable: snap.query.showOnlyActionable,
       includeTeamLeaderReports: snap.query.includeTeamLeaderReports,
@@ -1254,6 +1343,106 @@ export default function ManagerReview() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [organizationId]);
 
+  /**
+   * Discover the Month dropdown's calendar range from this reviewer's OWN
+   * accessible scope, via the canonical Review queue RPC itself -- one row
+   * sorted expense_date_asc, one sorted expense_date_desc, no other filters
+   * (never a client-side scan of already-loaded rows, and never a broadened
+   * query that could leak organization history outside this reviewer's
+   * authorization). Runs once per org/reviewer; a fetch failure degrades to
+   * "All months" only, never crashes the page.
+   */
+  useEffect(() => {
+    if (!organizationId || !user?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [earliest, latest] = await Promise.all([
+          fetchServerQueryPage(
+            { organizationId, sort: "expense_date_asc" },
+            { pageSize: 1 },
+          ),
+          fetchServerQueryPage(
+            { organizationId, sort: "expense_date_desc" },
+            { pageSize: 1 },
+          ),
+        ]);
+        if (cancelled) return;
+        const earliestTripStart = earliest.rows[0]?.trip_start ?? null;
+        const latestTripStart = latest.rows[0]?.trip_start ?? null;
+        setMonthOptions(
+          buildExpenseMonthOptions({
+            earliest: earliestTripStart ? expenseMonthOfDateString(earliestTripStart) : null,
+            now: new Date(),
+            latestExpenseMonth: latestTripStart ? expenseMonthOfDateString(latestTripStart) : null,
+          }),
+        );
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Could not resolve the Review month range:", error);
+        setMonthOptions([{ value: ALL_MONTHS, label: "All months" }]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [organizationId, user?.id]);
+
+  /**
+   * Month is applied immediately (§10) -- never routed through the draft
+   * model, so it can never clobber an unrelated unsaved draft. Resets
+   * pagination the same way commitDraftFilters does for every other filter
+   * change (§17), and its own state change already flows into
+   * `appliedQuery`/`appliedQueryKey`, which is what re-triggers the
+   * server-query effect -- no manual fetch call needed here.
+   *
+   * Mutual exclusion with relative Time Period (§14-18): Month and Time
+   * Period are mutually exclusive date-scope modes, so touching Month (either
+   * selecting an exact month, or explicitly resetting to "All months") always
+   * forces the EFFECTIVE relative period back to "all" -- in APPLIED state
+   * directly here, and in the visible draft control via its own narrow mirror
+   * effect above (`useEffect(() => setDraftTimePeriod(timePeriod), [timePeriod])`).
+   * That per-field mirror is what makes this safe: it touches ONLY
+   * draftTimePeriod, never any other unsaved draft (status/sort/custom
+   * fields). This is also what fixes the real bug this section addresses --
+   * previously, selecting a Month left the stale `draftTimePeriod` from an
+   * earlier relative-period selection unresolved, so the NEXT unrelated
+   * Search commit (e.g. just changing Status) would silently see that stale
+   * non-"all" draft value and wrongly reset Month back to "All months" via
+   * commitDraftFilters' existing (and still correct) "deliberate relative-
+   * period commit resets Month" rule below.
+   */
+  const handleExpenseMonthChange = (value: string) => {
+    setExpenseMonth(value as ExpenseMonthValue);
+    setTimePeriod("all");
+    serverPageRef.current = 1;
+    setServerPage(1);
+    setCurrentPage(1);
+    setSelectedKeys(new Set());
+  };
+
+  /**
+   * Mobile's Time Period control applies immediately -- there is no draft/
+   * apply gate on mobile at all, unlike desktop's Search-commit model. A
+   * relative period selected there must therefore enforce the SAME Month/
+   * Time-Period mutual exclusion desktop enforces via commitDraftFilters and
+   * handleExpenseMonthChange (§19-21): choosing a non-"all" relative period
+   * always resets Month back to "All months", and any applied change resets
+   * pagination back to page 1. This replaces passing the raw `setTimePeriod`
+   * setter into MobileReviewQueueView, which could not enforce that contract
+   * on its own.
+   */
+  const handleReviewTimePeriodChange = (value: string) => {
+    setTimePeriod(value);
+    if (value !== "all") {
+      setExpenseMonth(ALL_MONTHS);
+    }
+    serverPageRef.current = 1;
+    setServerPage(1);
+    setCurrentPage(1);
+    setSelectedKeys(new Set());
+  };
+
   const fetchAssignedExpenses = async (options?: { background?: boolean; loadAll?: boolean }) => {
     const fetchSeq = ++fetchSeqRef.current;
     const isStale = () => fetchSeq !== fetchSeqRef.current;
@@ -1286,6 +1475,7 @@ export default function ManagerReview() {
         organizationId,
         userRole,
         timePeriod,
+        expenseMonth,
         isHierarchyReviewer,
         hierarchyEnabled,
         includeTeamLeaderReports,
@@ -1652,7 +1842,14 @@ export default function ManagerReview() {
   /** Map the APPLIED query to the server queue-RPC parameters (§16-§19). */
   const buildServerQueryParams = (): ServerQueryParams => {
     const applied = appliedQueryRef.current;
-    const { from, to } = deriveDateRange(applied.timePeriod, new Date());
+    // An exact expense month always wins over the relative Time Period for
+    // date scope (§11) -- never both at once, so there is no double-date
+    // filtering. `deriveExpenseMonthDateRange` already adapts the half-open
+    // month utility to this RPC's existing INCLUSIVE p_date_to contract.
+    const { from, to } =
+      applied.expenseMonth !== ALL_MONTHS
+        ? deriveExpenseMonthDateRange(applied.expenseMonth)
+        : deriveDateRange(applied.timePeriod, new Date());
     return {
       organizationId: organizationId as string,
       employeeUserId: applied.employeeUserId,
@@ -1746,6 +1943,22 @@ export default function ManagerReview() {
       if (result.nextCursor) recordCursor(history, page + 1, result.nextCursor);
       serverNextCursorRef.current = result.nextCursor;
 
+      // Approval can shrink a filtered queue while the reviewer is on its old
+      // last page. Never leave page 105 selected against a now-102-page result:
+      // relocate and fetch the new final page from the server immediately.
+      const resolvedTotalPages = Math.max(
+        1,
+        result.totalPages > 0
+          ? result.totalPages
+          : totalPagesFor(result.filteredTotal, SERVER_QUERY_PAGE_SIZE),
+      );
+      if (page > resolvedTotalPages) {
+        serverPageRef.current = resolvedTotalPages;
+        setServerPage(resolvedTotalPages);
+        setCurrentPage(resolvedTotalPages);
+        return fetchServerPageInternal(resolvedTotalPages, options);
+      }
+
       setPaginationMode("canonical");
       setUsedLegacyFallback(false);
       setLoadError(null);
@@ -1757,11 +1970,7 @@ export default function ManagerReview() {
       setAllExpensesLoaded(true);
       setTotalAvailable(result.filteredTotal);
       setFilteredResultCount(result.filteredTotal);
-      setServerTotalPages(
-        result.totalPages > 0
-          ? result.totalPages
-          : totalPagesFor(result.filteredTotal, SERVER_QUERY_PAGE_SIZE),
-      );
+      setServerTotalPages(resolvedTotalPages);
       setServerFilteredSummary(result.filteredSummary ?? null);
       setServerPage(page);
       serverPageRef.current = page;
@@ -1820,6 +2029,13 @@ export default function ManagerReview() {
     setSortBy(draftSortBy);
     setSortOrder(draftSortOrder);
     setTimePeriod(draftTimePeriod);
+    // Mutual exclusion (§11): deliberately committing a relative Time Period
+    // (week/month/year) resets the exact Month back to "All months" -- the
+    // two date-scope modes never combine. A committed "All" time period
+    // leaves whatever Month is already selected untouched.
+    if (draftTimePeriod !== "all") {
+      setExpenseMonth(ALL_MONTHS);
+    }
     setShowOnlyActionable(draftShowOnlyActionable);
     setIncludeTeamLeaderReports(draftIncludeTeamLeaderReports);
     setIncludeExecutiveReports(draftIncludeExecutiveReports);
@@ -1866,6 +2082,23 @@ export default function ManagerReview() {
     return fetchAssignedExpensesRef.current(options);
   };
   refreshCurrentReviewQueryRef.current = refreshCurrentReviewQuery;
+
+  /**
+   * Remove server-confirmed terminal rows immediately, then invalidate every
+   * instant-repaint cache. The awaited authoritative refresh that follows may
+   * add an approved row back only when the user's current filter deliberately
+   * includes approved expenses.
+   */
+  const evictSettledReviewRows = (settledExpenseIds: ReadonlySet<string>) => {
+    if (settledExpenseIds.size === 0) return;
+    const keep = (expense: Expense) => !settledExpenseIds.has(expense.id);
+    setAllExpenses((prev) => prev.filter(keep));
+    setExpenses((prev) => prev.filter(keep));
+    if (organizationId && user?.id) {
+      invalidateReviewerListCaches(user.id, organizationId);
+      clearReviewReturnCache(organizationId, user.id);
+    }
+  };
 
   /* ---------------------------------------------------------------------- *
    * Identity resolution (CORE row data — name / employee ID / balance)
@@ -2061,6 +2294,7 @@ export default function ManagerReview() {
       organizationId,
       userRole,
       timePeriod,
+      expenseMonth,
       isHierarchyReviewer,
       hierarchyEnabled,
       includeTeamLeaderReports,
@@ -2186,6 +2420,7 @@ export default function ManagerReview() {
         organizationId,
         userRole,
         timePeriod,
+        expenseMonth,
         isHierarchyReviewer,
         hierarchyEnabled,
         includeTeamLeaderReports,
@@ -2659,6 +2894,27 @@ export default function ManagerReview() {
     }
   };
 
+  /**
+   * Clears every piece of transient state tied to the currently-open singular
+   * Expense Review (desktop dialog / mobile detail view) -- and nothing else
+   * (filters, pagination, bulk selection, and review queue state are untouched).
+   * The desktop dialog's `open` is derived from `selectedExpense`, so clearing
+   * it here is what actually closes the dialog; this is the single place all
+   * terminal actions (Verify/Approve/Reject success), manual Cancel/X, and
+   * Escape/outside-click funnel through, so none of them can leave the dialog
+   * open with an empty shell or leave selectedExpense stale after a visual close.
+   */
+  const resetSelectedExpenseReview = () => {
+    setSelectedExpense(null);
+    setEngineerComment("");
+    setLineItems([]);
+    setAttachments([]);
+    setAuditLogs([]);
+    setCorrectionLogs([]);
+    setTimelineAssignees({});
+    setCorrectionDialogOpen(false);
+  };
+
   const verifyExpense = async () => {
     if (!selectedExpense || !user) return;
 
@@ -2695,12 +2951,8 @@ export default function ManagerReview() {
         }),
       });
 
-      setSelectedExpense(null);
-      setEngineerComment("");
-      setLineItems([]);
-      setAttachments([]);
-      setAuditLogs([]);
-      refreshCurrentReviewQuery();
+      resetSelectedExpenseReview();
+      await refreshCurrentReviewQuery();
     } catch (error: any) {
       console.error("Error verifying expense:", error);
       toast({
@@ -2753,12 +3005,9 @@ export default function ManagerReview() {
         title: "Expense Approved",
         description: `Expense approved and ${formatINR(exp.total_amount)} deducted from employee balance.`,
       });
-      setSelectedExpense(null);
-      setEngineerComment("");
-      setLineItems([]);
-      setAttachments([]);
-      setAuditLogs([]);
-      refreshCurrentReviewQuery();
+      resetSelectedExpenseReview();
+      evictSettledReviewRows(new Set([exp.id]));
+      await refreshCurrentReviewQuery();
     } catch (error: any) {
       console.error("Error approving expense:", error);
       toast({
@@ -2784,11 +3033,7 @@ export default function ManagerReview() {
         description: "Expense has been rejected successfully",
       });
 
-      setSelectedExpense(null);
-      setEngineerComment("");
-      setLineItems([]);
-      setAttachments([]);
-      setAuditLogs([]);
+      resetSelectedExpenseReview();
       refreshCurrentReviewQuery();
     } catch (error: any) {
       console.error("Error rejecting expense:", error);
@@ -2843,8 +3088,18 @@ export default function ManagerReview() {
   };
 
   const isPendingForCurrentReviewer = (exp: Expense) => {
+    // A caller can be assigned as an expense's terminal ("engineer" tier)
+    // reviewer even when their own organization role is not literally
+    // "engineer" -- e.g. an executive who is an employee's only manager,
+    // because no dedicated role="engineer" supervisor exists in that
+    // employee's reporting chain. isReadyForManagerReview() already contains
+    // no role check of its own (it only reads manager_queue_ready/status/
+    // approval_tier), so this must run for every role, not only "engineer" --
+    // rows this caller is already scoped/assigned to see must not be shown
+    // as "waiting" merely because the caller's role string differs from the
+    // canonical tier name (REVIEW-VERIFIED-READY-CLASSIFICATION hotfix).
+    if (isReadyForManagerReview(exp)) return true;
     if (userRole === "engineer") {
-      if (isReadyForManagerReview(exp)) return true;
       if (
         (exp.status === "submitted" || exp.status === "edited") &&
         !hierarchyEnabled
@@ -2900,6 +3155,7 @@ export default function ManagerReview() {
         generalSearch: singleBar.generalSearch,
         statusFilter,
         timePeriod,
+        expenseMonth,
         sortBy,
         sortOrder,
         customFilters: customFieldFilters,
@@ -3279,68 +3535,95 @@ export default function ManagerReview() {
     readyIds: string[],
     waitingIds: string[],
     skippedCount = 0,
-    options?: { closeDialog?: boolean },
+    options?: {
+      closeDialog?: boolean;
+      targetRows?: Expense[];
+      terminalIds?: string[];
+    },
   ) => {
     if (!user || (readyIds.length === 0 && waitingIds.length === 0)) {
       if (options?.closeDialog !== false) setApprovalWarning(null);
       return;
     }
+
+    // A confirmation is one-shot. Close it before the first network await so a
+    // successful click cannot be replayed against its stale pre-approval IDs.
+    if (options?.closeDialog !== false) {
+      setApprovalWarning(null);
+      setOverrideConfirmOpen(false);
+      setApprovalWarningShowWaiting(false);
+    }
     setBulkActionLoading(true);
     let approvedNormal = 0;
     let approvedOverride = 0;
     let failed = 0;
-    const processedExpenseIds = new Set<string>();
+    let alreadyCompleted = options?.terminalIds?.length ?? 0;
+    const settledExpenseIds = new Set<string>(options?.terminalIds ?? []);
     for (const id of readyIds) {
       try {
         await ExpenseService.approveExpense(id, user!.id, "Bulk approved");
         approvedNormal++;
-        processedExpenseIds.add(id);
-      } catch {
-        failed++;
+        settledExpenseIds.add(id);
+      } catch (error) {
+        // The row may have completed after preview (or from an earlier click).
+        // That is the desired terminal state, not a failed approval.
+        if (isAlreadyApprovedError(error)) {
+          alreadyCompleted++;
+          settledExpenseIds.add(id);
+        } else {
+          failed++;
+        }
       }
     }
     for (const id of waitingIds) {
       try {
         await ExpenseService.approveExpenseManagerOverride(id, "Bulk approved (Manager override)");
         approvedOverride++;
-        processedExpenseIds.add(id);
-      } catch {
-        failed++;
+        settledExpenseIds.add(id);
+      } catch (error) {
+        if (isAlreadyApprovedError(error)) {
+          alreadyCompleted++;
+          settledExpenseIds.add(id);
+        } else {
+          failed++;
+        }
       }
     }
-    setBulkActionLoading(false);
 
-    // Remove only the singular `expense:<id>` keys for rows that were
-    // actually processed this run. Batch keys are left as-is (Approve is
-    // per-expense, not batch-atomic — a batch key naturally clears once the
-    // page refresh shows none of its children remain selectable).
-    if (processedExpenseIds.size > 0) {
+    // Clear a batch key only when every freshly-resolved child is terminal;
+    // genuine partial failures stay selected and retryable.
+    if (settledExpenseIds.size > 0) {
       setSelectedKeys((prev) => {
-        const next = new Set(prev);
-        for (const id of processedExpenseIds) next.delete(`expense:${id}`);
-        return next;
+        return retainUnsettledSelectionKeys(
+          prev,
+          options?.targetRows ?? allExpenses,
+          settledExpenseIds,
+        );
       });
-    }
-    if (options?.closeDialog !== false) {
-      setApprovalWarning(null);
-      setOverrideConfirmOpen(false);
-      setApprovalWarningShowWaiting(false);
+      evictSettledReviewRows(settledExpenseIds);
     }
     // Close the detail modal if this ran from a single open expense (no-op for
     // the bulk bar, where nothing is open).
     setSelectedExpense(null);
-    refreshCurrentReviewQuery();
+    // Do not release the action state or report completion until the current
+    // filtered page/count has been authoritatively refreshed from the server.
+    try {
+      await refreshCurrentReviewQuery();
+    } finally {
+      setBulkActionLoading(false);
+    }
 
     const total = approvedNormal + approvedOverride;
     const parts: string[] = [];
     if (approvedOverride > 0) {
       parts.push(`${approvedNormal} approved normally, ${approvedOverride} approved with Manager override`);
-    } else {
+    } else if (total > 0) {
       parts.push(`${total} approved`);
     }
+    if (alreadyCompleted > 0) parts.push(`${alreadyCompleted} already completed`);
     if (skippedCount > 0) parts.push(`${skippedCount} skipped`);
     if (failed > 0) parts.push(`${failed} failed`);
-    toast({ title: parts.join(", ") });
+    toast({ title: parts.join(", ") || "Nothing to approve" });
   };
 
   const classifySelection = (targets: Expense[]) =>
@@ -3376,7 +3659,12 @@ export default function ManagerReview() {
         p_expense_ids: targets.map((e) => e.id),
       });
       if (error) return null;
-      const rows = (data ?? []) as Array<{ expense_id: string; is_actionable: boolean; is_terminal: boolean }>;
+      const rows = (data ?? []) as Array<{
+        expense_id: string;
+        is_actionable: boolean;
+        is_terminal: boolean;
+        available_actions?: string[] | null;
+      }>;
       if (rows.length !== targets.length) return null; // server didn't resolve every target — fail closed
       const byId = new Map(rows.map((r) => [r.expense_id, r]));
       const inputs = targets.map((e) => {
@@ -3384,7 +3672,15 @@ export default function ManagerReview() {
         if (!preview) return null;
         return {
           id: e.id,
-          isReadyNow: preview.is_actionable,
+          // available_actions is the canonical per-row authority (§6): fall back
+          // to the server's own is_actionable only if this specific response
+          // shape omits available_actions (older server, defensive only).
+          isReadyNow: Array.isArray(preview.available_actions)
+            ? isNormallyApprovable({
+                available_actions: preview.available_actions,
+                isTerminal: preview.is_terminal,
+              })
+            : preview.is_actionable,
           isTerminal: preview.is_terminal,
           amount: Number(e.total_amount),
         };
@@ -3436,7 +3732,10 @@ export default function ManagerReview() {
       setApprovalWarning({ classification, selectedTotal, mode: "bulk", targets });
       return;
     }
-    await runBulkApproval(classification.readyNow, [], 0);
+    await runBulkApproval(classification.readyNow, [], 0, {
+      targetRows: targets,
+      terminalIds: classification.terminal,
+    });
   };
 
   const handleBulkReject = async () => {
@@ -3574,15 +3873,21 @@ export default function ManagerReview() {
   const approveReadyOnly = () => {
     if (!approvalWarning) return;
     const c = approvalWarning.classification;
-    const skipped = c.overLimit.length + c.terminal.length + c.waiting.length;
+    const skipped = c.overLimit.length + c.waiting.length;
     // Ready-only: NEVER calls Manager Override, NEVER mutates a waiting row (§7C/§8).
-    void runBulkApproval(c.readyNow, [], skipped, { closeDialog: false });
+    void runBulkApproval(c.readyNow, [], skipped, {
+      targetRows: approvalWarning.targets,
+      terminalIds: c.terminal,
+    });
   };
 
   const confirmManagerOverride = () => {
     if (!approvalWarning) return;
     const c = approvalWarning.classification;
-    void runBulkApproval([], c.waiting, 0, { closeDialog: false });
+    void runBulkApproval([], c.waiting, 0, {
+      targetRows: approvalWarning.targets,
+      terminalIds: c.terminal,
+    });
     setOverrideConfirmOpen(false);
   };
 
@@ -3614,38 +3919,13 @@ export default function ManagerReview() {
           </AlertDialogDescription>
         </AlertDialogHeader>
         {approvalWarning && (
-          <div className="space-y-1 text-sm">
-            <div className="flex justify-between">
-              <span>{t("admin:review.approvalWarning.readyNow")}</span>
-              <span className="font-medium text-green-700" data-testid="approval-warning-ready">
-                {approvalWarning.classification.readyNow.length}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span>{t("admin:review.approvalWarning.waiting")}</span>
-              <span className="flex items-center gap-2">
-                <span className="font-medium text-amber-700" data-testid="approval-warning-waiting">
-                  {approvalWarning.classification.waiting.length}
-                </span>
-                {approvalWarning.classification.waiting.length > 0 && (
-                  <Button
-                    type="button"
-                    variant="link"
-                    size="sm"
-                    className="h-auto p-0 text-xs"
-                    onClick={() => setApprovalWarningShowWaiting((v) => !v)}
-                    data-testid="approval-warning-view-waiting"
-                  >
-                    {approvalWarningShowWaiting
-                      ? t("admin:review.approvalWarning.hideWaiting")
-                      : t("admin:review.approvalWarning.viewWaiting", {
-                          count: approvalWarning.classification.waiting.length,
-                        })}
-                  </Button>
-                )}
-              </span>
-            </div>
-            {approvalWarningShowWaiting && approvalWarningWaitingItems.length > 0 && (
+          <ReviewApprovalWarningPanel
+            classification={approvalWarning.classification}
+            formattedTotal={formatINR(approvalWarning.selectedTotal)}
+            overrideEffective={overrideEffective}
+            loading={bulkActionLoading}
+            waitingExpanded={approvalWarningShowWaiting}
+            waitingDetails={approvalWarningWaitingItems.length > 0 ? (
               <ScrollArea className="max-h-48 rounded border" data-testid="approval-warning-waiting-list">
                 <div className="divide-y">
                   {approvalWarningWaitingItems.map((item) => (
@@ -3669,73 +3949,29 @@ export default function ManagerReview() {
                   ))}
                 </div>
               </ScrollArea>
-            )}
-            <div className="flex justify-between">
-              <span>{t("admin:review.approvalWarning.overLimit")}</span>
-              <span className="font-medium text-red-700" data-testid="approval-warning-overlimit">
-                {approvalWarning.classification.overLimit.length}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span>{t("admin:review.approvalWarning.completed")}</span>
-              <span className="font-medium text-muted-foreground" data-testid="approval-warning-completed">
-                {approvalWarning.classification.terminal.length}
-              </span>
-            </div>
-            <div className="mt-2 flex justify-between border-t pt-2">
-              <span>{t("admin:review.approvalWarning.selectedTotal")}</span>
-              <span className="font-semibold">{formatINR(approvalWarning.selectedTotal)}</span>
-            </div>
-            {approvalWarning.classification.waiting.length > 0 && !overrideEffective && (
-              <p
-                className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"
-                data-testid="approval-warning-override-note"
-              >
-                {t("admin:review.approvalWarning.overrideUnavailable")}
-              </p>
-            )}
-          </div>
-        )}
-        <AlertDialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
-          <Button
-            variant="outline"
-            onClick={() => {
+            ) : undefined}
+            labels={{
+              readyNow: t("admin:review.approvalWarning.readyNow"),
+              waiting: t("admin:review.approvalWarning.waiting"),
+              viewWaiting: (count) => t("admin:review.approvalWarning.viewWaiting", { count }),
+              hideWaiting: t("admin:review.approvalWarning.hideWaiting"),
+              overLimit: t("admin:review.approvalWarning.overLimit"),
+              completed: t("admin:review.approvalWarning.completed"),
+              selectedTotal: t("admin:review.approvalWarning.selectedTotal"),
+              overrideUnavailable: t("admin:review.approvalWarning.overrideUnavailable"),
+              stop: t("admin:review.approvalWarning.stop"),
+              managerOverride: (count) => t("admin:review.approvalWarning.managerOverride", { count }),
+              approveReadyNow: (count) => t("admin:review.approvalWarning.approveReadyNow", { count }),
+            }}
+            onToggleWaiting={() => setApprovalWarningShowWaiting((v) => !v)}
+            onStop={() => {
               setApprovalWarning(null);
               setApprovalWarningShowWaiting(false);
             }}
-            disabled={bulkActionLoading}
-            data-testid="approval-warning-stop"
-          >
-            {t("admin:review.approvalWarning.stop")}
-          </Button>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            {overrideEffective && (approvalWarning?.classification.waiting.length ?? 0) > 0 && (
-              <Button
-                type="button"
-                variant="outline"
-                className="border-amber-400 text-amber-800 hover:bg-amber-50"
-                onClick={() => setOverrideConfirmOpen(true)}
-                disabled={bulkActionLoading}
-                data-testid="approval-warning-override-open"
-              >
-                {t("admin:review.approvalWarning.managerOverride", {
-                  count: approvalWarning?.classification.waiting.length ?? 0,
-                })}
-              </Button>
-            )}
-            <Button
-              onClick={approveReadyOnly}
-              disabled={
-                (approvalWarning?.classification.readyNow.length ?? 0) === 0 || bulkActionLoading
-              }
-              data-testid="approval-warning-proceed"
-            >
-              {t("admin:review.approvalWarning.approveReadyNow", {
-                count: approvalWarning?.classification.readyNow.length ?? 0,
-              })}
-            </Button>
-          </div>
-        </AlertDialogFooter>
+            onOverride={() => setOverrideConfirmOpen(true)}
+            onApproveReady={approveReadyOnly}
+          />
+        )}
       </AlertDialogContent>
     </AlertDialog>
   );
@@ -3886,16 +4122,7 @@ export default function ManagerReview() {
             corrFieldModel={corrFieldModel}
             onCorrFormFieldValuesChange={(vals) => setCorrFieldModel((prev) => ({ ...prev, formFieldValues: vals }))}
             onCorrBranchValuesChange={(vals) => setCorrFieldModel((prev) => ({ ...prev, branchValues: vals }))}
-            onBack={() => {
-              setSelectedExpense(null);
-              setEngineerComment("");
-              setLineItems([]);
-              setAttachments([]);
-              setAuditLogs([]);
-              setCorrectionLogs([]);
-              setTimelineAssignees({});
-              setCorrectionDialogOpen(false);
-            }}
+            onBack={resetSelectedExpenseReview}
             onVerify={() => void verifyExpense()}
             onApprove={() => void approveExpense()}
             onReject={() => void rejectExpense()}
@@ -3958,7 +4185,10 @@ export default function ManagerReview() {
           statusFilter={statusFilter}
           setStatusFilter={setStatusFilter}
           timePeriod={timePeriod}
-          setTimePeriod={setTimePeriod}
+          setTimePeriod={handleReviewTimePeriodChange}
+          expenseMonth={expenseMonth}
+          monthOptions={monthOptions}
+          onExpenseMonthChange={handleExpenseMonthChange}
           managerFetchWarning={managerFetchWarning}
           isPendingForCurrentReviewer={isPendingForCurrentReviewer}
           formatSubline={formatEmployeeSubline}
@@ -4150,6 +4380,23 @@ export default function ManagerReview() {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Month — exact calendar month on expenses.trip_start. Applies
+                IMMEDIATELY on selection (§10), unlike every filter above it. */}
+            <div className="w-full sm:w-44">
+              <Select value={expenseMonth} onValueChange={handleExpenseMonthChange}>
+                <SelectTrigger aria-label="Month">
+                  <SelectValue placeholder="Month" />
+                </SelectTrigger>
+                <SelectContent>
+                  {monthOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           {userRole === "engineer" && hierarchyEnabled && (teamLeaderTierEnabled || executiveTierEnabled) && (
             <div className="mb-4 space-y-3 rounded-lg border bg-muted/30 p-4">
@@ -4238,6 +4485,14 @@ export default function ManagerReview() {
             <div className="min-h-[400px] flex items-center justify-center">
               <AsyncOperationProgress status="running" title="Loading expenses…" />
             </div>
+          ) : expenses.length === 0 && expenseMonth !== ALL_MONTHS ? (
+            <div className="text-center py-8">
+              <Receipt className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+              <h3 className="text-lg font-medium">{t("admin:review.noAssignedTitle")}</h3>
+              <p className="text-muted-foreground max-w-md mx-auto">
+                No review expenses found for {formatExpenseMonthLabel(expenseMonth)}.
+              </p>
+            </div>
           ) : expenses.length === 0 ? (
             <div className="text-center py-8">
               <Receipt className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -4269,8 +4524,8 @@ export default function ManagerReview() {
               </p>
             </div>
           ) : (
-            <div data-testid="engineer-review-scroll-container" className="relative w-full overflow-x-auto -mx-4 sm:mx-0">
-              <Table noScrollWrapper className="min-w-max">
+            <div data-testid="engineer-review-scroll-container" className="relative w-full overflow-x-auto -mx-4 sm:mx-0 expense-table-dense">
+              <Table noScrollWrapper className="w-full">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-10 px-2">
@@ -4299,43 +4554,57 @@ export default function ManagerReview() {
                       Txn #
                       <div className={resizeHandleClass} onMouseDown={(e) => reviewStartResize("txn", e)} />
                     </TableHead>
-                    <TableHead className="relative group/th overflow-hidden" style={{ width: reviewColWidth("employee"), minWidth: reviewColWidth("employee") }}>
+                    {/* Flexible columns: minWidth only (no width) -- table-layout:auto
+                        hands these any leftover space beyond the fixed columns'
+                        total, so wide screens show more Employee/Title/Category/
+                        Destination text instead of an empty gap before Actions.
+                        A manual resize still raises the floor via minWidth; it is
+                        not clamped to an exact pixel value the way fixed columns
+                        are, so a widened column may end up wider still if extra
+                        room exists (this matches "manual overflow is acceptable"
+                        for the opposite, narrowing case, but never renders
+                        narrower than what the reviewer actually dragged to). */}
+                    <TableHead className="relative group/th overflow-hidden" style={{ minWidth: reviewColWidth("employee") }}>
                       Employee / Employee ID
                       <div className={resizeHandleClass} onMouseDown={(e) => reviewStartResize("employee", e)} />
                     </TableHead>
-                    <TableHead className="relative group/th overflow-hidden hidden sm:table-cell" style={{ width: reviewColWidth("title"), minWidth: reviewColWidth("title") }}>
+                    <TableHead className="relative group/th overflow-hidden" style={{ minWidth: reviewColWidth("title") }}>
                       Title
                       <div className={resizeHandleClass} onMouseDown={(e) => reviewStartResize("title", e)} />
                     </TableHead>
-                    <TableHead className="relative group/th overflow-hidden hidden md:table-cell" style={{ width: reviewColWidth("category"), minWidth: reviewColWidth("category") }}>
+                    <TableHead className="relative group/th overflow-hidden" style={{ minWidth: reviewColWidth("category") }}>
                       Category
                       <div className={resizeHandleClass} onMouseDown={(e) => reviewStartResize("category", e)} />
                     </TableHead>
-                    <TableHead className="relative group/th overflow-hidden hidden sm:table-cell" style={{ width: reviewColWidth("destination"), minWidth: reviewColWidth("destination") }}>
+                    <TableHead className="relative group/th overflow-hidden" style={{ minWidth: reviewColWidth("destination") }}>
                       Destination
                       <div className={resizeHandleClass} onMouseDown={(e) => reviewStartResize("destination", e)} />
                     </TableHead>
-                    <TableHead className="relative group/th overflow-hidden whitespace-nowrap" style={{ width: reviewColWidth("amount"), minWidth: reviewColWidth("amount") }}>
+                    <TableHead className="relative group/th overflow-hidden whitespace-nowrap text-right" style={{ width: reviewColWidth("amount"), minWidth: reviewColWidth("amount") }}>
                       Amount
                       <div className={resizeHandleClass} onMouseDown={(e) => reviewStartResize("amount", e)} />
                     </TableHead>
-                    <TableHead className="relative group/th overflow-hidden hidden md:table-cell" style={{ width: reviewColWidth("balance"), minWidth: reviewColWidth("balance") }}>
+                    <TableHead className="relative group/th overflow-hidden whitespace-nowrap text-right" style={{ width: reviewColWidth("balance"), minWidth: reviewColWidth("balance") }}>
                       {t("admin:review.employeeBalance")}
                       <div className={resizeHandleClass} onMouseDown={(e) => reviewStartResize("balance", e)} />
                     </TableHead>
-                    <TableHead className="relative group/th overflow-hidden hidden sm:table-cell" style={{ width: reviewColWidth("status"), minWidth: reviewColWidth("status") }}>
+                    <TableHead className="relative group/th overflow-hidden" style={{ width: reviewColWidth("status"), minWidth: reviewColWidth("status") }}>
                       Status
                       <div className={resizeHandleClass} onMouseDown={(e) => reviewStartResize("status", e)} />
                     </TableHead>
-                    <TableHead className="relative group/th overflow-hidden whitespace-nowrap text-right pr-2 sm:pr-4 hidden sm:table-cell" style={{ width: reviewColWidth("expense_date"), minWidth: reviewColWidth("expense_date") }}>
+                    <TableHead className="relative group/th overflow-hidden whitespace-nowrap text-right pr-2 sm:pr-4" style={{ width: reviewColWidth("expense_date"), minWidth: reviewColWidth("expense_date") }}>
                       Expense Date
                       <div className={resizeHandleClass} onMouseDown={(e) => reviewStartResize("expense_date", e)} />
                     </TableHead>
-                    <TableHead className="relative group/th overflow-hidden whitespace-nowrap text-right pr-2 sm:pr-4 hidden md:table-cell" style={{ width: reviewColWidth("date_created"), minWidth: reviewColWidth("date_created") }}>
+                    <TableHead className="relative group/th overflow-hidden whitespace-nowrap text-right pr-2 sm:pr-4" style={{ width: reviewColWidth("date_created"), minWidth: reviewColWidth("date_created") }}>
                       Date Created
                       <div className={resizeHandleClass} onMouseDown={(e) => reviewStartResize("date_created", e)} />
                     </TableHead>
-                    <TableHead data-testid="engineer-review-actions-header" className="sticky right-0 z-30 min-w-[150px] border-l bg-background shadow-[-4px_0_8px_-6px_rgba(0,0,0,0.25)] text-right">Status / Actions</TableHead>
+                    {/* Fixed, compact, non-resizable -- the root cause of the reported
+                        gap was this column having only a minimum (no explicit width),
+                        so table-layout:auto handed it 100% of any leftover table
+                        width instead of the flexible text columns above. */}
+                    <TableHead data-testid="engineer-review-actions-header" className="sticky right-0 z-30 w-[125px] min-w-[110px] max-w-[140px] border-l bg-background shadow-[-4px_0_8px_-6px_rgba(0,0,0,0.25)] text-right">Status / Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -4351,14 +4620,14 @@ export default function ManagerReview() {
                           />
                         )}
                       </TableCell>
-                      <TableCell className="text-xs sm:text-sm font-mono font-semibold text-blue-600 whitespace-nowrap">
+                      <TableCell className="font-mono font-semibold text-blue-600 whitespace-nowrap">
                         {(expense as any).transaction_number || '-'}
                       </TableCell>
-                      <TableCell className="text-xs sm:text-sm">
-                        <div>
+                      <TableCell className="min-w-0">
+                        <div className="min-w-0">
                           <div className="font-medium truncate">{expense.user_name}</div>
                           <div
-                            className={`text-xs truncate ${employeeIdLoginEnabled && expense.user_employee_id
+                            className={`etd-secondary truncate ${employeeIdLoginEnabled && expense.user_employee_id
                                 ? "font-mono font-medium text-foreground"
                                 : "text-muted-foreground"
                               }`}
@@ -4366,40 +4635,46 @@ export default function ManagerReview() {
                             {formatEmployeeSubline(expense)}
                           </div>
                           {!employeeIdLoginEnabled && (
-                            <div className="text-xs text-muted-foreground truncate sm:hidden">{expense.user_email}</div>
+                            <div className="etd-secondary text-muted-foreground truncate sm:hidden">{expense.user_email}</div>
                           )}
                           <div
-                            className={`text-xs sm:hidden mt-1 font-medium ${expense.user_balance >= expense.total_amount
+                            className={`etd-secondary sm:hidden mt-1 font-medium ${expense.user_balance >= expense.total_amount
                                 ? "text-green-600"
                                 : "text-red-600"
                               }`}
                           >
                             {t("admin:review.employeeBalance")}: {formatINR(expense.user_balance)}
                           </div>
-                          <div className="font-medium text-xs sm:text-sm mt-1 line-clamp-1 break-words sm:hidden">{expense.title}</div>
+                          <div className="font-medium etd-secondary mt-1 line-clamp-1 break-words sm:hidden">{expense.title}</div>
                           {expense.batch_id && (
-                            <Badge variant="outline" className="text-xs mt-1 bg-violet-50 text-violet-700 border-violet-200">
+                            <Badge variant="outline" className="etd-badge mt-1 bg-violet-50 text-violet-700 border-violet-200">
                               Batch
                             </Badge>
                           )}
-                          <div className="text-xs text-muted-foreground sm:hidden mt-1">{expense.destination}</div>
-                          <div className="text-xs text-muted-foreground sm:hidden mt-1">
+                          <div className="etd-secondary text-muted-foreground sm:hidden mt-1">{expense.destination}</div>
+                          <div className="etd-secondary text-muted-foreground sm:hidden mt-1">
                             Expense: {format(parseLocalDate(expense.trip_start) ?? new Date(expense.trip_start), "MMM d, yyyy")}
                           </div>
-                          <div className="text-xs text-muted-foreground sm:hidden">
+                          <div className="etd-secondary text-muted-foreground sm:hidden">
                             {t("admin:panel.searchFilter.dateCreated")}: {formatCreatedDateTime(expense.created_at)}
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="font-medium text-xs sm:text-sm hidden sm:table-cell">
-                        <div className="line-clamp-2 break-words">{expense.title}</div>
+                      <TableCell className="font-medium min-w-0" title={expense.title}>
+                        <div className="truncate">{expense.title}</div>
                       </TableCell>
-                      <TableCell className="text-xs sm:text-sm hidden md:table-cell capitalize">{expense.category ?? "—"}</TableCell>
-                      <TableCell className="text-xs sm:text-sm truncate hidden sm:table-cell max-w-[140px]" title={expense.destination}>{expense.destination}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs sm:text-sm font-medium">{formatINR(expense.total_amount)}</TableCell>
-                      <TableCell className="text-xs sm:text-sm hidden md:table-cell">
+                      {/* No max-w cap -- Category/Destination are flexible columns now
+                          (see the TableHead widths above); a fixed cap here would
+                          have fought the column's own, possibly much larger,
+                          computed width and defeated "show more text on wide
+                          screens". truncate still activates if content ever
+                          exceeds whatever width the column actually lands on. */}
+                      <TableCell className="capitalize truncate min-w-0" title={expense.category ?? undefined}>{expense.category ?? "—"}</TableCell>
+                      <TableCell className="truncate min-w-0" title={expense.destination}>{expense.destination}</TableCell>
+                      <TableCell className="etd-numeric whitespace-nowrap font-medium text-right">{formatINR(expense.total_amount)}</TableCell>
+                      <TableCell className="text-right">
                         <div
-                          className={`font-medium whitespace-nowrap ${expense.user_balance >= expense.total_amount
+                          className={`etd-numeric font-medium whitespace-nowrap ${expense.user_balance >= expense.total_amount
                               ? "text-green-600"
                               : "text-red-600"
                             }`}
@@ -4407,14 +4682,14 @@ export default function ManagerReview() {
                           {formatINR(expense.user_balance)}
                         </div>
                         {expense.user_balance < expense.total_amount && (
-                          <div className="text-xs text-red-500 whitespace-nowrap">
+                          <div className="etd-secondary text-red-500 whitespace-nowrap">
                             {t("admin:review.insufficientBalance")}
                           </div>
                         )}
                       </TableCell>
-                      <TableCell className="hidden sm:table-cell">
+                      <TableCell>
                         {(expense as any).isResubmitted && (expense.status === "submitted" || expense.status === "edited") ? (
-                          <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                          <Badge variant="outline" className="etd-badge bg-blue-50 text-blue-700 border-blue-200">
                             Resubmitted
                           </Badge>
                         ) : (
@@ -4425,24 +4700,30 @@ export default function ManagerReview() {
                               viewerContext="reviewer"
                             />
                             {getExpenseQueueHint(expense) ? (
-                              <p className="text-[10px] text-muted-foreground leading-tight">
+                              <p className="etd-secondary text-muted-foreground leading-tight">
                                 {getExpenseQueueHint(expense)}
                               </p>
                             ) : null}
                           </div>
                         )}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs sm:text-sm text-right pr-2 sm:pr-4 hidden sm:table-cell">
+                      <TableCell className="whitespace-nowrap text-right pr-2 sm:pr-4">
                         {format(parseLocalDate(expense.trip_start) ?? new Date(expense.trip_start), "MMM d, yyyy")}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs sm:text-sm text-right pr-2 sm:pr-4 hidden md:table-cell">
+                      <TableCell className="whitespace-nowrap text-right pr-2 sm:pr-4">
                         {formatCreatedDateTime(expense.created_at)}
                       </TableCell>
-                      <TableCell data-testid="engineer-review-actions-cell" className="sticky right-0 z-20 min-w-[150px] border-l bg-background group-hover:bg-muted text-right">
-                        <div className="flex flex-col sm:flex-row items-end gap-2 sm:gap-0">
+                      <TableCell data-testid="engineer-review-actions-cell" className="sticky right-0 z-20 w-[125px] min-w-[110px] max-w-[140px] border-l bg-background group-hover:bg-muted text-right">
+                        {/* sm:justify-end is the actual fix for the reported
+                            misalignment: this container previously had no
+                            horizontal justify-content at all on desktop, so its
+                            one visible child (the button) sat at flex-start
+                            regardless of how wide the cell was -- while the
+                            header text above was right-aligned. Both now agree. */}
+                        <div className="flex flex-col sm:flex-row sm:justify-end items-end gap-2 sm:gap-0">
                           <div className="sm:hidden mb-2">
                             {(expense as any).isResubmitted && (expense.status === "submitted" || expense.status === "edited") ? (
-                              <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                              <Badge variant="outline" className="etd-badge bg-blue-50 text-blue-700 border-blue-200">
                                 Resubmitted
                               </Badge>
                             ) : (
@@ -4463,6 +4744,7 @@ export default function ManagerReview() {
                                 }
                                 size="sm"
                                 className={
+                                  "etd-control " +
                                   reviewStatePresentation(
                                     batchActionState.get(expense.batch_id) ?? "waiting",
                                   ).className
@@ -4472,13 +4754,18 @@ export default function ManagerReview() {
                                 Review batch
                               </Button>
                             ) : (
-                              <Dialog>
+                              <Dialog
+                                open={selectedExpense?.id === expense.id}
+                                onOpenChange={(open) => {
+                                  if (!open) resetSelectedExpenseReview();
+                                }}
+                              >
                                 <DialogTrigger asChild>
                                   <Button
                                     variant={reviewStatePresentation(rowReviewState(expense)).variant}
                                     size="sm"
                                     className={
-                                      reviewStatePresentation(rowReviewState(expense)).className
+                                      "etd-control " + reviewStatePresentation(rowReviewState(expense)).className
                                     }
                                     onClick={async () => {
                                       setSelectedExpense(expense);
@@ -4772,15 +5059,7 @@ export default function ManagerReview() {
                                   <DialogFooter className="flex-col sm:flex-row gap-2 sm:gap-0">
                                     <Button
                                       variant="outline"
-                                      onClick={() => {
-                                        setSelectedExpense(null);
-                                        setEngineerComment("");
-                                        setLineItems([]);
-                                        setAttachments([]);
-                                        setAuditLogs([]);
-                                        setCorrectionLogs([]);
-                                        setTimelineAssignees({});
-                                      }}
+                                      onClick={resetSelectedExpenseReview}
                                       className="w-full sm:w-auto"
                                     >
                                       Cancel

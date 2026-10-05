@@ -374,6 +374,89 @@ describe("8 — MobileReviewQueueView loading / empty / filter states", () => {
     );
     expect(screen.getByText(/partial results/i)).toBeInTheDocument();
   });
+
+  it("§43: renders the Month selector, defaulting to 'All months' when the prop is omitted", () => {
+    render(
+      <MemoryRouter>
+        <MobileReviewQueueView
+          expenses={[]}
+          loading={false}
+          searchTerm=""
+          setSearchTerm={noop}
+          statusFilter="all"
+          setStatusFilter={noop}
+          timePeriod="all"
+          setTimePeriod={noop}
+          managerFetchWarning={null}
+          isPendingForCurrentReviewer={() => false}
+          formatSubline={formatSubline}
+          onSelectExpense={noopAsync}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByLabelText("Month")).toBeInTheDocument();
+    expect(screen.getByText("All months")).toBeInTheDocument();
+  });
+
+  it("§43: an exact month with zero rows shows the month-specific empty state, not the generic one", () => {
+    render(
+      <MemoryRouter>
+        <MobileReviewQueueView
+          expenses={[]}
+          loading={false}
+          searchTerm=""
+          setSearchTerm={noop}
+          statusFilter="all"
+          setStatusFilter={noop}
+          timePeriod="all"
+          setTimePeriod={noop}
+          expenseMonth="2026-08"
+          monthOptions={[
+            { value: "all", label: "All months" },
+            { value: "2026-08", label: "August 2026" },
+          ]}
+          onExpenseMonthChange={noop}
+          managerFetchWarning={null}
+          isPendingForCurrentReviewer={() => false}
+          formatSubline={formatSubline}
+          onSelectExpense={noopAsync}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("No review expenses found for August 2026.")).toBeInTheDocument();
+    expect(screen.queryByText("No expenses assigned to you.")).not.toBeInTheDocument();
+  });
+
+  it("§43: selecting a month calls onExpenseMonthChange with the machine value", () => {
+    const onExpenseMonthChange = vi.fn();
+    render(
+      <MemoryRouter>
+        <MobileReviewQueueView
+          expenses={[]}
+          loading={false}
+          searchTerm=""
+          setSearchTerm={noop}
+          statusFilter="all"
+          setStatusFilter={noop}
+          timePeriod="all"
+          setTimePeriod={noop}
+          expenseMonth="all"
+          monthOptions={[
+            { value: "all", label: "All months" },
+            { value: "2026-08", label: "August 2026" },
+          ]}
+          onExpenseMonthChange={onExpenseMonthChange}
+          managerFetchWarning={null}
+          isPendingForCurrentReviewer={() => false}
+          formatSubline={formatSubline}
+          onSelectExpense={noopAsync}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByLabelText("Month"));
+    fireEvent.click(screen.getByText("August 2026"));
+    expect(onExpenseMonthChange).toHaveBeenCalledWith("2026-08");
+  });
 });
 
 // ── Test 9: Mobile detail renders expense fields ──────────────────────────────

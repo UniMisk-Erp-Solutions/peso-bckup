@@ -396,6 +396,9 @@ BEGIN
     IF v_row.conflict_status = 'conflict' AND v_action = 'skip' THEN
       CONTINUE; -- skipped rows never touch identity resolution or locking
     END IF;
+    IF v_action IS NOT NULL AND v_action NOT IN ('create', 'add_new_update', 'replace', 'edit') THEN
+      RAISE EXCEPTION 'Row %: unrecognized resolution action %', v_row.row_number, v_action;
+    END IF;
 
     v_resolved_user_id := NULL;
     v_match_count := 0;
@@ -472,6 +475,18 @@ BEGIN
       WHERE id = v_row.id;
       v_skipped_count := v_skipped_count + 1;
       CONTINUE;
+    END IF;
+
+    -- Fail fast and loud on an unrecognized action rather than letting it
+    -- fall through the IN ('replace','edit') branch below into an implicit
+    -- 'create' -- a client bug/typo (e.g. "aply") would otherwise silently
+    -- create a brand-new anchor instead of the replace/edit the admin
+    -- actually chose. This also turns what would otherwise surface as a
+    -- late, confusing balance_import_rows_resolution_action_check violation
+    -- (after the anchor mutation already ran) into an immediate, row-scoped
+    -- error before any mutation happens.
+    IF v_action IS NOT NULL AND v_action NOT IN ('create', 'add_new_update', 'replace', 'edit') THEN
+      RAISE EXCEPTION 'Row %: unrecognized resolution action %', v_row.row_number, v_action;
     END IF;
 
     v_resolved_user_id := NULL;

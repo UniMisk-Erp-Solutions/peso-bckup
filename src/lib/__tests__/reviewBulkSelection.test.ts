@@ -4,11 +4,14 @@ import {
   canProceedWithApproval,
   classifyForApproval,
   expandSelectionToExpenseIds,
+  isNormallyApprovable,
+  isAlreadyApprovedError,
   isRowSelectable,
   needsApprovalWarning,
   pageSelectableKeys,
   selectAllState,
   selectionKey,
+  retainUnsettledSelectionKeys,
   splitSelectedKeys,
 } from "@/lib/reviewBulkSelection";
 
@@ -165,6 +168,82 @@ describe("splitSelectedKeys — DOC-098 batch vs singular routing", () => {
     expect(splitSelectedKeys(selected)).toEqual({
       batchIds: ["b1", "b2"],
       singularIds: ["e1"],
+    });
+  });
+});
+
+describe("post-approval selection reconciliation", () => {
+  const targets = [
+    { id: "a", batch_id: "batch-1" },
+    { id: "b", batch_id: "batch-1" },
+    { id: "single", batch_id: null },
+  ];
+
+  it("clears a batch and singular key once every concrete target is settled", () => {
+    const selected = new Set(["batch:batch-1", "expense:single"]);
+    expect(
+      retainUnsettledSelectionKeys(selected, targets, new Set(["a", "b", "single"])),
+    ).toEqual(new Set());
+  });
+
+  it("keeps a batch selected when one child genuinely failed", () => {
+    const selected = new Set(["batch:batch-1"]);
+    expect(retainUnsettledSelectionKeys(selected, targets, new Set(["a"]))).toEqual(
+      new Set(["batch:batch-1"]),
+    );
+  });
+
+  it("recognizes the server's already-approved replay as completed", () => {
+    expect(isAlreadyApprovedError(new Error("This expense is already approved"))).toBe(true);
+    expect(isAlreadyApprovedError(new Error("Approval limit exceeded"))).toBe(false);
+  });
+});
+
+// REVIEW-VERIFIED-READY-CLASSIFICATION hotfix (§6/§12): available_actions is
+// the canonical per-row authority for "can a normal Approve act on this row
+// right now" — never a second hierarchy state machine reconstructed from
+// status/approval_tier/role.
+describe("isNormallyApprovable — available_actions is the primary authority", () => {
+  it("approve present -> ready", () => {
+    expect(isNormallyApprovable({ available_actions: ["approve", "reject", "correct"] })).toBe(true);
+  });
+
+  it("only verify (no approve) -> not ready", () => {
+    expect(isNormallyApprovable({ available_actions: ["verify", "reject"] })).toBe(false);
+  });
+
+  it("empty available_actions -> not ready", () => {
+    expect(isNormallyApprovable({ available_actions: [] })).toBe(false);
+  });
+
+  it("missing available_actions -> not ready (fails closed, never assumes approve)", () => {
+    expect(isNormallyApprovable({})).toBe(false);
+  });
+
+  it("terminal status fails closed even if available_actions somehow still lists approve", () => {
+    expect(isNormallyApprovable({ available_actions: ["approve"], isTerminal: true })).toBe(false);
+  });
+
+  it("classifies the acceptance population 26 ready + 1 terminal exactly", () => {
+    const rows = [
+      ...Array.from({ length: 26 }, (_, index) => ({
+        id: `ready-${index}`,
+        amount: 100,
+        isTerminal: false,
+        isReadyNow: isNormallyApprovable({ available_actions: ["approve", "reject"] }),
+      })),
+      {
+        id: "terminal",
+        amount: 100,
+        isTerminal: true,
+        isReadyNow: isNormallyApprovable({ available_actions: [], isTerminal: true }),
+      },
+    ];
+    expect(classifyForApproval(rows, 500_000)).toEqual({
+      readyNow: rows.slice(0, 26).map((row) => row.id),
+      waiting: [],
+      overLimit: [],
+      terminal: ["terminal"],
     });
   });
 });

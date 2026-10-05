@@ -3,6 +3,7 @@
   "dashboard": "Dashboard",
   "myExpenses": "My Expenses",
   "allExpenses": "All Expenses",
+  "submitForEmployee": "Submit for Employee",
   "reviewExpenses": "Review Expenses",
   "debugReviewExpenses": "Debug Review Expenses",
   "balances": "Balances",
@@ -69,6 +70,5 @@
   "sectionWorkspace": "Workspace",
   "sectionAdministration": "Administration",
   "sectionAccount": "Account",
-  "balanceHistory": "Balance History",
-  "submitForEmployee": "Submit for Employee"
+  "balanceHistory": "Balance History"
 }
