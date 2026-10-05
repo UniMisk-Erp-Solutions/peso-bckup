@@ -225,6 +225,7 @@ export function BatchExpenseReviewPanel({
           .select("category, trip_start, user_id, total_amount")
           .eq("batch_id", batchId)
           .eq("organization_id", organizationId)
+          .is("deleted_at", null) // DOC-129: a trashed line item is no longer part of active batch review
           .order("created_at", { ascending: true });
 
         if (expFallback && expFallback.length > 0) {
@@ -265,6 +266,7 @@ export function BatchExpenseReviewPanel({
         )
         .eq("batch_id", batchId)
         .eq("organization_id", organizationId)
+        .is("deleted_at", null) // DOC-129
         .order("created_at", { ascending: true });
 
       if (expError) throw expError;

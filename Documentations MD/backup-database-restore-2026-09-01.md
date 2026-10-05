@@ -1,6 +1,6 @@
 # Backup instance — full database restore (2026-09-01)
 
-**Doc ID:** DOC-116
+**Doc ID:** DOC-142 (formerly DOC-116) (renumbered on the 2026-10-05 upstream sync — see DOC-143; the pre-sync `peso-bckup` index gave this a different ID than upstream's independently-numbered catalog)
 **Status:** deployed — restore applied to the BACKUP instance and verified live. Production untouched.
 **Last updated:** 2026-09-01
 **Owner / area:** peso-bckup Supabase instance (192.168.23.46), cluster restore, storage parity

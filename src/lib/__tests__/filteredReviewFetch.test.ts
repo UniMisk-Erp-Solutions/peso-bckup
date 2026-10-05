@@ -71,6 +71,26 @@ describe("reviewQueueItemToExpense", () => {
     expect(e.total_amount).toBe(3960);
     expect(e.custom_fields?.vehicle).toBe("Car");
   });
+
+  // REVIEW-VERIFIED-READY-CLASSIFICATION hotfix: the server's is_actionable/
+  // available_actions were previously dropped on the floor here ("DELIBERATELY
+  // IGNORED"), leaving filtered/searched rows unable to display as ready even
+  // when the server said they were. They must now flow onto the mapped row.
+  it("preserves the server's is_actionable/available_actions as manager_queue_ready/available_actions (§4)", () => {
+    const e = reviewQueueItemToExpense(
+      item({ is_actionable: true, available_actions: ["approve", "reject", "correct"] }) as never,
+    ) as { manager_queue_ready?: boolean; available_actions?: string[] };
+    expect(e.manager_queue_ready).toBe(true);
+    expect(e.available_actions).toEqual(["approve", "reject", "correct"]);
+  });
+
+  it("a not-actionable row maps to manager_queue_ready=false with an empty available_actions", () => {
+    const e = reviewQueueItemToExpense(
+      item({ is_actionable: false, available_actions: [] }) as never,
+    ) as { manager_queue_ready?: boolean; available_actions?: string[] };
+    expect(e.manager_queue_ready).toBe(false);
+    expect(e.available_actions).toEqual([]);
+  });
 });
 
 describe("engineerSortToServerSort", () => {

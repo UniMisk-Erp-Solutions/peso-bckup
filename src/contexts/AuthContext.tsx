@@ -1,3 +1,4 @@
+import { pickCurrentMembership } from "@/lib/currentMembership";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
@@ -353,6 +354,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           profileLoadedForUserIdRef.current = localSession.user.id;
           setLoading(false); // ← instant — no spinner
 
+          // Feature flags are dynamic control-plane state, not identity/profile
+          // data -- refresh them independently of the 5-minute cache-age check
+          // below, on EVERY fast-path hydration, so a flag toggled in Master
+          // Admin becomes visible on next page load rather than staying stuck
+          // behind the auth cache's own freshness window. Cheap (one query),
+          // fire-and-forget, never touches `loading`.
+          if (cache.organizationId) {
+            void refreshOrganizationFeatureFlags(cache.organizationId);
+          }
+
           // Validate token server-side and refresh DB data in background
           const { user: validUser, error: validError } = await getValidatedAuthUser();
           if (cancelled) return;
@@ -510,14 +521,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user?.id, userRole, refreshBalance]);
 
+  // Feature-flag propagation: when organization_features changes for the
+  // CURRENT organization (e.g. an admin flips a toggle in Master Admin while
+  // this tab is already open), refresh immediately rather than waiting for
+  // the next full page load / the 5-minute auth-cache refresh. Mirrors the
+  // existing profiles-balance realtime subscription above -- same pattern,
+  // same codebase convention, no polling/focus-listener request storm.
+  useEffect(() => {
+    if (!organizationId) return;
+
+    const channelName = `auth-org-features-${organizationId}`;
+    const existingChannel = supabase.getChannels().find(
+      (ch) => ch.topic === `realtime:${channelName}`,
+    );
+    if (existingChannel) {
+      supabase.removeChannel(existingChannel);
+    }
+
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "organization_features",
+          filter: `organization_id=eq.${organizationId}`,
+        },
+        () => {
+          void refreshOrganizationFeatureFlags(organizationId);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [organizationId]);
+
   const fetchUserRole = async (userId: string) => {
     try {
       // Master admins: check profile first
       const { data: profile } = await (supabase as any)
         .from("profiles")
-        .select("is_master_admin")
+        .select("is_master_admin, organization_id")
         .eq("user_id", userId)
-        .maybeSingle() as { data: { is_master_admin?: boolean } | null };
+        .maybeSingle() as { data: { is_master_admin?: boolean; organization_id?: string | null } | null };
 
       if (profile?.is_master_admin === true) {
         setUserRole("master_admin");
@@ -540,17 +589,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Get role from organization_memberships
-      const { data, error } = await (supabase as any)
+      // A user may hold several active memberships: select the one for the
+      // CURRENT organization rather than asking for "the" single row.
+      const { data: membershipRows, error } = await (supabase as any)
         .from("organization_memberships")
-        .select("role, is_accountant_cashier")
+        .select("organization_id, role, is_accountant_cashier")
         .eq("user_id", userId)
-        .eq("is_active", true)
-        .maybeSingle() as {
-        data: { role?: string; is_accountant_cashier?: boolean } | null;
+        .eq("is_active", true) as {
+        data: { organization_id?: string; role?: string; is_accountant_cashier?: boolean }[] | null;
         error: Error | null;
       };
 
       if (error) throw error;
+      const data = pickCurrentMembership(membershipRows, profile?.organization_id);
       setUserRole((data?.role as AppRole) || null);
       setMembershipIsAccountantCashier(data?.is_accountant_cashier === true);
     } catch (error) {
@@ -587,14 +638,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  /**
+   * Lightweight, independent refresh of JUST organization_features for a
+   * known organization id -- deliberately NOT the full fetchOrganization
+   * (which also re-derives membership/org identity via 2-3 sequential
+   * queries). Feature flags are dynamic control-plane state: a toggle in
+   * Master Admin must be visible without waiting on the 5-minute
+   * auth-context cache TTL that fast-path hydration otherwise trusts (see
+   * the fast-path branch below and the window-focus listener). One cheap
+   * query, no loading-state changes, never throws.
+   */
+  const refreshOrganizationFeatureFlags = async (organizationId: string) => {
+    try {
+      const { data: featRows, error } = await supabase
+        .from("organization_features")
+        .select("feature_key, enabled")
+        .eq("organization_id", organizationId);
+      if (error || !featRows) return;
+      const map: Record<string, boolean> = {};
+      for (const row of featRows as { feature_key: string; enabled: boolean }[]) {
+        map[row.feature_key] = row.enabled;
+      }
+      setOrganizationFeatureFlags(map);
+    } catch {
+      /* feature flags are additive UI gates -- a failed refresh just keeps the last-known value */
+    }
+  };
+
   const fetchOrganization = async (userId: string) => {
     try {
       // Master admins don't have an organization
       const { data: profile } = await (supabase as any)
         .from("profiles")
-        .select("is_master_admin")
+        .select("is_master_admin, organization_id")
         .eq("user_id", userId)
-        .maybeSingle() as { data: { is_master_admin?: boolean } | null };
+        .maybeSingle() as { data: { is_master_admin?: boolean; organization_id?: string | null } | null };
       if (profile?.is_master_admin === true) {
         setOrganization(null);
         setOrganizationId(null);
@@ -603,14 +681,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Get organization via organization_memberships
-      const { data: membership, error: membershipError } = await (supabase as any)
+      const { data: membershipRows, error: membershipError } = await (supabase as any)
         .from("organization_memberships")
         .select("organization_id")
         .eq("user_id", userId)
-        .eq("is_active", true)
-        .maybeSingle() as { data: { organization_id?: string } | null; error: Error | null };
+        .eq("is_active", true) as { data: { organization_id?: string }[] | null; error: Error | null };
 
       if (membershipError) throw membershipError;
+      const membership = pickCurrentMembership(membershipRows, profile?.organization_id);
       if (!membership?.organization_id) return;
 
       // Fetch organization details

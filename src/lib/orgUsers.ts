@@ -11,6 +11,8 @@ export interface OrganizationUserRow {
 }
 
 export type UserManagementListRow = OrganizationUserRow & {
+  is_active: boolean;
+  deactivated_at?: string | null;
   assigned_engineer_name?: string;
   cashier_assigned_engineer_name?: string;
   cashier_assigned_location_id?: string;
@@ -107,7 +109,7 @@ export async function fetchUserManagementList(
   const { data: profiles, error: profilesError } = await supabase
     .from("profiles")
     .select(
-      "user_id, name, email, employee_id, balance, reporting_engineer_id, cashier_assigned_engineer_id, cashier_assigned_location_id, assigned_cashier_id",
+      "user_id, name, email, employee_id, balance, is_active, deactivated_at, reporting_engineer_id, cashier_assigned_engineer_id, cashier_assigned_location_id, assigned_cashier_id",
     )
     .eq("organization_id", organizationId);
 
@@ -229,6 +231,8 @@ export async function fetchUserManagementList(
     email: p.email || "",
     employee_id: p.employee_id ?? null,
     balance: Number(p.balance ?? 0),
+    is_active: p.is_active !== false,
+    deactivated_at: p.deactivated_at ?? null,
     role: roleMap[p.user_id] || "employee",
     assigned_engineer_name: p.reporting_engineer_id
       ? supervisorNamesById[p.reporting_engineer_id] || "Unknown"

@@ -1,4 +1,6 @@
-# DOC-103 — Generated Report Server-Side Persistence
+# DOC-139 — Generated Report Server-Side Persistence
+
+**Doc ID:** DOC-139 (formerly DOC-103) (renumbered on the 2026-10-05 upstream sync — see DOC-143; the pre-sync `peso-bckup` index gave this a different ID than upstream's independently-numbered catalog)
 
 **Last updated:** 2026-08-21
 **Status:** draft — code complete, migration NOT applied

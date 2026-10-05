@@ -37,7 +37,8 @@ export function BatchSharedCategoryFields({
   // DOC-097 hotfix pt.3: no more eager whole-template branch fetch --
   // branches for the shared select field load on demand for whichever
   // option is actually picked (see onSelectOptionValue below).
-  const { optionBranches, selectOptionValue, reset, hasError } = useOnDemandOptionBranches(organizationId);
+  const { optionBranches, selectOptionValue, reset, hasError, isResolvedFor, isLoadingFor, hasErrorFor } =
+    useOnDemandOptionBranches(organizationId);
 
   useEffect(() => {
     onLoadErrorChange?.(hasError);
@@ -76,6 +77,9 @@ export function BatchSharedCategoryFields({
         organizationId={organizationId}
         userId={userId}
         onSelectOptionValue={allowConditionalDropdown ? selectOptionValue : undefined}
+        isOptionResolved={allowConditionalDropdown ? isResolvedFor : undefined}
+        isOptionLoading={allowConditionalDropdown ? isLoadingFor : undefined}
+        isOptionErrored={allowConditionalDropdown ? hasErrorFor : undefined}
       />
     </div>
   );

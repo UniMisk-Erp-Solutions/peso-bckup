@@ -510,3 +510,60 @@ Until both are observed, this doc stays **in progress**.
 | Date | Rev | Author | Notes |
 |------|-----|--------|-------|
 | 2026-07-31 | 1.0 | Agent | Initial — apex-fallback redirect removed (`tenantRedirect.ts`); explicit `tenantResolutionStatus`/`tenantFeatureStatus` + Retry so an RPC error is no longer reported as "feature disabled"; `appOrigin.ts`, `tenantSignInMode.ts`, `manifestVerification.ts`, `SessionExpiredNotice.tsx` added; manifest gains forwarded-host precedence, tenant-specific `id`, relative tenant `start_url`, `Vary` + no-store, `X-PesoWise-Manifest-Tenant`; SW v13 stops caching the manifest and drops the apex-branded fallback; one-shot session-expired recovery; Turnstile env-var hint removed from the login page; SELECT-only diagnostics added; 85 new tests (1711 total); **no SQL executed, no Production config changed** |
+
+---
+
+## PWA install was blocked on every host (found and fixed 2026-09-08)
+
+**Symptom.** Tapping Install showed *"Install unavailable right now — This page's app
+details did not match this address."* on `pesowise.unimisk.com`, and on every tenant host.
+
+**Cause.** `vercel.json` rewrites `/site.webmanifest` -> `/api/manifest`, and that API is
+what stamps `x-pesowise-manifest-tenant` and builds the per-tenant `name`/`start_url`. But a
+real file existed at `public/site.webmanifest`, and **on Vercel a static asset in `public/`
+is matched before any rewrite**. The request therefore never reached the function.
+
+Measured live, before the fix:
+
+| URL | tenant header | name | start_url |
+| --- | --- | --- | --- |
+| `pesowise.unimisk.com/site.webmanifest` | *absent* | `PesoWise` | `/` |
+| `ml.pesowise.unimisk.com/site.webmanifest` | *absent* | `PesoWise` | `/` |
+| `ml.pesowise.unimisk.com/manifest.webmanifest` | `ml` | `MicroLink · PesoWise` | `/auth?source=pwa&tenant=ml` |
+| `ml.pesowise.unimisk.com/api/manifest` | `ml` | `MicroLink · PesoWise` | `/auth?source=pwa&tenant=ml` |
+
+Both `/site.webmanifest` responses carried the **same `etag`** — literally one static file
+served to every host. `/manifest.webmanifest` was correct only because no static file
+shadows *that* path.
+
+With no header, `verifyManifestForCurrentHost()` read `marker = null`, `evaluateManifest()
+`returned `tenant_mismatch`, and `usePwaInstallFlow` refused the install. The guard worked
+exactly as designed; what it was guarding against was our own static file.
+
+The file's comment called it a *"Static fallback; production uses /api/manifest"*. It was
+not a fallback — being a real file, it always won.
+
+**Fix.**
+
+1. Deleted `public/site.webmanifest` so the rewrite reaches `/api/manifest`. `index.html`
+   still links `/site.webmanifest`; that path now returns the tenant-aware manifest.
+2. Added `src/lib/__tests__/manifestRewriteNotShadowed.test.ts`, which fails if a static
+   file is ever re-added at a rewritten manifest path, and also asserts the rewrite and the
+   `<link rel="manifest">` still agree. Verified it fails with the file restored.
+3. Wired the refusal into monitoring (`reportError`, area `pwa`, operation
+   `verify-manifest`, tagged with reason / marker / expected marker).
+
+**Why nothing showed up in GlitchTip.** It could not have. The blocked path only raised a
+toast; it reported nothing. GlitchTip's `pesowise-web` project held **zero** manifest,
+install, PWA or service-worker issues across 30 days while the outage was total. Point 3
+closes that hole. Neither did the origin server see anything — the manifest is served by
+Vercel, and Kong logged 0 manifest requests in 6 hours.
+
+**Not affected.** The service worker already bypasses the cache for `*.webmanifest` and
+`/api/manifest`, so no stale copy was involved. Dev is unaffected: `applyManifestLink()`
+uses a blob URL when `import.meta.env.PROD` is false.
+
+**Verification after deploy.** `curl -sI https://ml.pesowise.unimisk.com/site.webmanifest`
+must show `x-pesowise-manifest-tenant: ml`, and the body must have
+`name: "MicroLink · PesoWise"` and `start_url: "/auth?source=pwa&tenant=ml"`.
+

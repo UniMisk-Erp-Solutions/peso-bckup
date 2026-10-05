@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { ReportLiveRefreshBar } from "@/components/ReportLiveRefreshBar";
 import { reportKeys } from "@/lib/reportQueryKeys";
 import { useTranslation } from "react-i18next";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,7 +12,6 @@ import { useCashierCapabilities } from "@/hooks/useCashierCapabilities";
 import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
 import {
   DAILY_PROJECT_REPORT_HEADERS,
-  fetchDailyReportProjectNameAmbiguity,
   fetchOrganizationDailyReportConfig,
   isDailyReportConfigReady,
   isDailyReportRowNeedsReview,
@@ -25,9 +25,6 @@ import {
   type DailyReportExportProgress,
 } from "@/lib/dailyProjectReportPaging";
 import { downloadDailyProjectExpenseReportFile } from "@/lib/exportDailyProjectExpenseReport";
-import { saveGeneratedReport } from "@/lib/generatedReportStore";
-import { SavedReportsPanel } from "@/components/SavedReportsPanel";
-import { ServerReportExportPanel } from "@/components/ServerReportExportPanel";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -55,6 +52,7 @@ import {
 import { useExpenseCustomFieldFilters } from "@/hooks/useExpenseCustomFieldFilters";
 import { ExpenseCustomFieldFilters } from "@/components/ExpenseCustomFieldFilters";
 import { DailyReportSourceExpensesSheet } from "@/components/DailyReportSourceExpensesSheet";
+import { ServerReportExportPanel } from "@/components/ServerReportExportPanel";
 import { hasApprovalHierarchy, hasTeamsEnabled } from "@/lib/orgFeatureGates";
 import {
   fetchTeamMemberUserIds,
@@ -63,6 +61,10 @@ import {
 } from "@/lib/teamReportsScope";
 import { useViewportMode } from "@/hooks/useViewportMode";
 import { MobileDetailedExpenseReportView } from "@/components/mobile/MobileDetailedExpenseReportView";
+import {
+  computeDetailedExpenseDateRange,
+  activeCustomFieldFilters,
+} from "@/lib/detailedExpenseReportFilters";
 
 export type ReportsProps = {
   /** When true, only expenses for My Teams members are shown. */
@@ -624,6 +626,15 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
   const [selectedMonth, setSelectedMonth] = useState<string>("all");
   const [selectedWeek, setSelectedWeek] = useState<string>("all");
 
+  // The one canonical derivation of the actual requested date range (Week
+  // takes precedence over Month over a bare Year) -- used for the server
+  // report request, the filename, and the history parameter summary, so
+  // there is exactly one place this logic can go wrong.
+  const detailedExpenseDateRange = useMemo(
+    () => computeDetailedExpenseDateRange(selectedYear, selectedMonth, selectedWeek),
+    [selectedYear, selectedMonth, selectedWeek],
+  );
+
   const queryClient = useQueryClient();
   const dailyReportConfigRef = useRef<DailyExpenseReportConfig | null>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -639,8 +650,6 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
   const [dailyReportSourceOpen, setDailyReportSourceOpen] = useState(false);
   /** Live page progress for the server-paged Daily Project Report (DOC-101). */
   const [dailyProgress, setDailyProgress] = useState<DailyReportExportProgress | null>(null);
-  /** Id of the most recent server-stored snapshot (DOC-103), for the "saved" hint. */
-  const [lastSavedReportId, setLastSavedReportId] = useState<string | null>(null);
   const [selectedDailyReportResult, setSelectedDailyReportResult] =
     useState<DailyProjectExpenseReportBuildResult | null>(null);
   const [dailyReportConfig, setDailyReportConfig] = useState<DailyExpenseReportConfig | null>(null);
@@ -830,18 +839,13 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
   const dailyAllTime = dailyPeriodMode === "all_time";
 
   // ── Report queries ─────────────────────────────────────────────────────────
-  // Reports are the most expensive reads in the app — the Daily Project Report
-  // alone pages a whole organisation's approved expenses through a server RPC
-  // 250 rows at a time. `staleTime: 0` + `refetchOnMount: "always"` meant every
-  // switch between the four report tabs re-ran that entire pipeline, and
-  // `refetchOnWindowFocus` re-ran it again on every alt-tab. That is the same
-  // refetch storm App.tsx disables globally ("Don't re-hit the API just because
-  // the user switched tabs and came back") — this file was overriding it.
-  //
-  // Freshness is not lost: the realtime subscription below invalidates these
-  // queries whenever an `expenses` row actually changes, and each tab has an
-  // explicit refresh/Generate control. `keepPreviousData` is retained so a
-  // refresh triggered by either of those never blanks the table (DOC-054).
+  // Previously overrode the app-wide QueryClient defaults (App.tsx: staleTime
+  // 5min, refetchOnWindowFocus/Reconnect false) back to the most aggressive
+  // settings available -- every tab switch or window focus re-ran the whole
+  // pipeline. Now aligned with the global policy; freshness is preserved by
+  // the existing realtime invalidation on `expenses` (below) and each
+  // report's own explicit Generate action. keepPreviousData is retained so a
+  // refresh never blanks an already-rendered table.
   const QUERY_DEFAULTS = {
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
@@ -869,15 +873,13 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
         selectedCategory,
         engineerStatus,
       }),
-    // DOC-105 — the browser no longer generates this report; generation is a
-    // server job. The query stays defined so its code path and tests remain
-    // intact, but it never runs.
-    enabled:
-      false &&
-      activeTab === "verification" &&
-      Boolean(organizationId) &&
-      canViewReports &&
-      teamScopeReady,
+    // Generation moved server-side (ServerReportExportPanel below). The
+    // browser no longer pulls every matching expense into this tab merely to
+    // render a preview -- that path had no row cap at all on the org-wide
+    // query, silently truncating on a large organization. This query stays
+    // defined (queryFn, derived memos and their tests remain intact) but is
+    // permanently disabled -- it never runs.
+    enabled: false,
     ...QUERY_DEFAULTS,
   });
 
@@ -898,15 +900,11 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
         selectedCategory,
         engineerStatus,
       }),
-    // DOC-105 — the browser no longer generates this report; generation is a
-    // server job. The query stays defined so its code path and tests remain
-    // intact, but it never runs.
-    enabled:
-      false &&
-      activeTab === "approval" &&
-      Boolean(organizationId) &&
-      canViewReports &&
-      teamScopeReady,
+    // Generation moved server-side (ServerReportExportPanel below) -- same
+    // reasoning as verificationQuery above, and the same documented real bug
+    // this integration closes: this org-wide path could silently export
+    // ~10% of the data with no error shown on a large organization.
+    enabled: false,
     ...QUERY_DEFAULTS,
   });
 
@@ -930,15 +928,12 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
         selectedYear,
         selectedMonth,
       }),
-    // DOC-105 — the browser no longer generates this report; generation is a
-    // server job. The query stays defined so its code path and tests remain
-    // intact, but it never runs.
-    enabled:
-      false &&
-      activeTab === "detailed" &&
-      Boolean(organizationId) &&
-      canViewReports &&
-      teamScopeReady,
+    // Generation moved server-side (ServerReportExportPanel below) -- same
+    // reasoning as verificationQuery above. Detailed additionally ran a
+    // second, equally unbounded cash_transfer_history query for the
+    // single-employee ledger; the worker's report_expense_allocations_v1
+    // replaces both.
+    enabled: false,
     ...QUERY_DEFAULTS,
   });
 
@@ -958,7 +953,7 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
     queryFn: async ({ signal }) => {
       setDailyProgress({ received: 0, total: null, pages: 0 });
       try {
-        const results = await loadDailyReport({
+        return await loadDailyReport({
           organizationId: organizationId!,
           teamScoped,
           teamMemberUserIds,
@@ -969,44 +964,11 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
           signal,
           onProgress: setDailyProgress,
         });
-
-        // DOC-103 — persist the generation server-side. Deliberately not
-        // awaited into the render path and never allowed to throw: a storage
-        // failure must not discard a report the user is already looking at,
-        // and it must not make the report look like it failed. The RPC
-        // dedupes by content hash, so re-running the same filters over
-        // unchanged data records the run without rewriting the payload.
-        if (organizationId && !signal?.aborted) {
-          const snapshotRows = dailyReportResultsToRows(results);
-          void saveGeneratedReport({
-            organizationId,
-            reportType: "daily_project_expense",
-            filters: {
-              period: dailyPeriodMode,
-              date_from: dailyAllTime ? null : dailyDateFrom,
-              date_to: dailyAllTime ? null : dailyDateTo,
-              employee: selectedEmployee,
-              team_scoped: teamScoped,
-            },
-            payload: snapshotRows,
-            rowCount: snapshotRows.length,
-          }).then((saved) => {
-            if (saved) setLastSavedReportId(saved.report_id);
-          });
-        }
-
-        return results;
       } finally {
         setDailyProgress(null);
       }
     },
-    // DOC-104 — the browser no longer generates this report. Opening the tab
-    // used to page the whole organisation's approved expenses into memory here
-    // (~4,290 rows on Production) purely to render a preview table. Generation
-    // is now a server job; this query stays defined so the code path and its
-    // tests remain intact, but it never runs.
     enabled:
-      false &&
       activeTab === "daily" &&
       dailyProjectReportEnabled &&
       dailyConfigReady &&
@@ -1626,19 +1588,12 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
     }
   };
 
-  const exportDailyProjectReport = async (format: "xlsx" | "csv") => {
-    // DOC-113 follow-up: flag genuinely-ambiguous blank Project Name cells
-    // in the exported file itself rather than leaving them indistinguishable
-    // from an ordinary blank. Best-effort -- an empty set on failure just
-    // means ambiguous cells fall back to the plain "no data" marker, which
-    // is still correct, just less specific.
-    const ambiguousProjectIds = await fetchDailyReportProjectNameAmbiguity(organizationId ?? "");
+  const exportDailyProjectReport = (format: "xlsx" | "csv") => {
     downloadDailyProjectExpenseReportFile({
       rows: dailyReportRows,
       dateFrom: dailyAllTime ? null : dailyDateFrom,
       dateTo: dailyAllTime ? null : dailyDateTo,
       format,
-      ambiguousProjectIds,
     });
   };
 
@@ -1660,7 +1615,7 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
     else if (exportTab === "approval") exportApprovalList(format);
     else if (exportTab === "detailed") exportDetailedReport(format);
     else if (exportTab === "daily" && (format === "csv" || format === "xlsx")) {
-      void exportDailyProjectReport(format);
+      exportDailyProjectReport(format);
     }
     setExportDialogOpen(false);
   };
@@ -1869,22 +1824,6 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
 
   const showDetailedBalanceColumns = Boolean(selectedUser);
 
-  // DOC-105 — the year/month pickers become the export job's date window,
-  // computed the same way loadDetailedReport did before it moved server-side.
-  const [detailedDateFrom, detailedDateTo] = useMemo<[string | null, string | null]>(() => {
-    if (!selectedYear) return [null, null];
-    if (selectedMonth !== "all") {
-      const m = parseInt(selectedMonth, 10);
-      const from = new Date(parseInt(selectedYear, 10), m - 1, 1);
-      const to = new Date(parseInt(selectedYear, 10), m, 0);
-      return [
-        from.toISOString().split("T")[0],
-        to.toISOString().split("T")[0],
-      ];
-    }
-    return [`${selectedYear}-01-01`, `${selectedYear}-12-31`];
-  }, [selectedYear, selectedMonth]);
-
   const userBalancesByUserId = useMemo(
     () => Object.fromEntries(users.map((u) => [u.user_id, u.balance])),
     [users]
@@ -2033,23 +1972,8 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                     </Select>
                   </div>
                 </div>
-                {/* DOC-105 — generation moved off the browser. Enqueues a
-                    server job; the worker builds the whole CSV and the panel
-                    offers a download. The old Submit/Export pair paged every
-                    row into this tab and serialised the file here. */}
-                <div className="pt-2 space-y-2">
-                  <ServerReportExportPanel
-                    organizationId={organizationId}
-                    reportType="claim_verification"
-                    category={selectedCategory}
-                    engineerStatus={engineerStatus}
-                    dateFrom={null}
-                    dateTo={null}
-                    userId={selectedEmployee !== "all" ? selectedEmployee : null}
-                    userIds={teamScoped ? teamMemberUserIds : null}
-                    teamScoped={teamScoped}
-                  />
-                  <Button variant="outline" onClick={clearFilters}>Clear filters</Button>
+                <div className="flex gap-2 pt-2">
+                  <Button variant="outline" onClick={clearFilters}>Clear</Button>
                 </div>
                 <ExpenseCustomFieldFilters
                   fields={filterableCustomFields}
@@ -2059,113 +1983,26 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                 />
               </div>
 
-              {verificationQuery.isLoading ? null : filteredVerificationExpenses.length === 0 ? (
-                // DOC-105 — this tab no longer fetches rows (generation is a
-                // server job), so an empty result means "not fetched", not
-                // "none exist". Claiming the latter would be a lie.
-                null
-              ) : isMobile ? (
-                <div className="space-y-2" data-testid="verification-card-list">
-                  {filteredVerificationExpenses.map(exp => (
-                    <div key={exp.id} className="rounded-md border p-3 space-y-1" data-testid="verification-expense-card">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-sm">{exp.user_name}</span>
-                        <span className="text-sm font-medium">{formatINR(Number(exp.total_amount || 0))}</span>
-                      </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {exp.title || "-"}{exp.category ? ` · ${exp.category}` : ""}
-                      </div>
-                      {verificationCustomKeys.filter((k) => exp.custom_fields?.[k]).map((k) => (
-                        <div key={k} className="text-xs text-muted-foreground truncate">
-                          <span className="font-medium">{k}:</span> {exp.custom_fields![k]}
-                        </div>
-                      ))}
-                      <div className="flex items-center gap-2">
-                        <StatusBadge status="verified" />
-                        <Badge variant="secondary" className="text-xs">Pending HO</Badge>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-muted-foreground">{formatDateDDMMYYYY(exp.created_at)}</span>
-                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => navigate(`/expenses/${exp.id}`)}>
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="overflow-x-auto border rounded-lg">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-100 border-b">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Employee</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Employee ID</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Transaction #</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Title</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Purpose</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">{t("columns.destination")}</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">{t("columns.tripEnd")}</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">{t("columns.batch")}</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Expense Type</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">LPO Number</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Bill Date (DD-MM-YYYY)</th>
-                        <th className="px-4 py-3 text-right font-semibold text-slate-700">Bill Amount</th>
-                        {verificationCustomKeys.map((k) => (
-                          <th key={k} className="px-4 py-3 text-left font-semibold text-slate-700 whitespace-nowrap">{k}</th>
-                        ))}
-                        <th className="px-4 py-3 text-right font-semibold text-slate-700">Opening Balance</th>
-                        <th className="px-4 py-3 text-right font-semibold text-slate-700">Closing Balance</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Manager Approval</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">HO Approval</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Submitted On (DD-MM-YYYY)</th>
-                        <th className="px-4 py-3 text-center font-semibold text-slate-700">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {filteredVerificationExpenses.map(exp => (
-                        <tr key={exp.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-3">{exp.user_name}</td>
-                          <td className="px-4 py-3 text-slate-500 font-mono text-xs">{exp.employee_id || "-"}</td>
-                          <td className="px-4 py-3">{exp.transaction_number || "-"}</td>
-                          <td className="px-4 py-3 max-w-[140px] truncate" title={exp.title || ""}>{exp.title || "-"}</td>
-                          <td className="px-4 py-3 max-w-[160px] truncate" title={exp.purpose || ""}>{exp.purpose || "-"}</td>
-                          <td className="px-4 py-3 max-w-[120px] truncate" title={exp.destination || ""}>{exp.destination || "-"}</td>
-                          <td className="px-4 py-3">{formatDateDDMMYYYY(exp.trip_end)}</td>
-                          <td className="px-4 py-3 max-w-[120px] truncate" title={exp.batch_ref}>{exp.batch_ref}</td>
-                          <td className="px-4 py-3">{exp.category || "-"}</td>
-                          <td className="px-4 py-3">-</td>
-                          <td className="px-4 py-3">{formatDateDDMMYYYY(exp.trip_start)}</td>
-                          <td className="px-4 py-3 text-right font-medium">{formatINR(Number(exp.total_amount || 0))}</td>
-                          {verificationCustomKeys.map((k) => (
-                            <td key={k} className="px-4 py-3 max-w-[140px] truncate text-sm" title={exp.custom_fields?.[k] ?? ""}>
-                              {exp.custom_fields?.[k] ?? ""}
-                            </td>
-                          ))}
-                          <td className="px-4 py-3 text-right text-sm">{formatINR(verificationRowBalances.get(exp.id)?.opening ?? 0)}</td>
-                          <td className="px-4 py-3 text-right text-sm font-medium">{formatINR(verificationRowBalances.get(exp.id)?.closing ?? 0)}</td>
-                          <td className="px-4 py-3">
-                            <StatusBadge status="verified" />
-                          </td>
-                          <td className="px-4 py-3">
-                            <Badge variant="secondary">Pending</Badge>
-                          </td>
-                          <td className="px-4 py-3">{formatDateDDMMYYYY(exp.created_at)}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center justify-center gap-2">
-                              <Button variant="ghost" size="sm" onClick={() => navigate(`/expenses/${exp.id}`)}>
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                              <Button variant="ghost" size="sm" onClick={() => navigate(`/expenses/${exp.id}`)}>
-                                <FileText className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              {/*
+                Generation moved server-side: Claim Verification used to page
+                every matching expense into the browser with no row cap at
+                all, silently truncating at this deployment's PostgREST limit
+                on a large org. Generate now enqueues a report_export_jobs row;
+                the worker pages report_expense_rows_v1 (bounded, cursor-based,
+                fail-closed on a count mismatch) and produces the CSV.
+              */}
+              <ServerReportExportPanel
+                organizationId={organizationId}
+                dateFrom={null}
+                dateTo={null}
+                userId={selectedEmployee}
+                userIds={teamScoped ? teamMemberUserIds : null}
+                teamScoped={teamScoped}
+                disabled={!canViewReports}
+                reportType="claim_verification"
+                category={selectedCategory}
+                engineerStatus={engineerStatus}
+              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -2237,23 +2074,8 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                     </Select>
                   </div>
                 </div>
-                {/* DOC-105 — generation moved off the browser. Enqueues a
-                    server job; the worker builds the whole CSV and the panel
-                    offers a download. The old Submit/Export pair paged every
-                    row into this tab and serialised the file here. */}
-                <div className="pt-2 space-y-2">
-                  <ServerReportExportPanel
-                    organizationId={organizationId}
-                    reportType="claim_approval"
-                    category={selectedCategory}
-                    engineerStatus={null}
-                    dateFrom={null}
-                    dateTo={null}
-                    userId={selectedEmployee !== "all" ? selectedEmployee : null}
-                    userIds={teamScoped ? teamMemberUserIds : null}
-                    teamScoped={teamScoped}
-                  />
-                  <Button variant="outline" onClick={clearFilters}>Clear filters</Button>
+                <div className="flex gap-2 pt-2">
+                  <Button variant="outline" onClick={clearFilters}>Clear</Button>
                 </div>
                 <ExpenseCustomFieldFilters
                   fields={filterableCustomFields}
@@ -2263,113 +2085,24 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                 />
               </div>
 
-              {approvalQuery.isLoading ? null : filteredApprovalExpenses.length === 0 ? (
-                // DOC-105 — this tab no longer fetches rows (generation is a
-                // server job), so an empty result means "not fetched", not
-                // "none exist". Claiming the latter would be a lie.
-                null
-              ) : isMobile ? (
-                <div className="space-y-2" data-testid="approval-card-list">
-                  {filteredApprovalExpenses.map(exp => (
-                    <div key={exp.id} className="rounded-md border p-3 space-y-1" data-testid="approval-expense-card">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-sm">{exp.user_name}</span>
-                        <span className="text-sm font-medium">{formatINR(Number(exp.total_amount || 0))}</span>
-                      </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {exp.title || "-"}{exp.category ? ` · ${exp.category}` : ""}
-                      </div>
-                      {approvalCustomKeys.filter((k) => exp.custom_fields?.[k]).map((k) => (
-                        <div key={k} className="text-xs text-muted-foreground truncate">
-                          <span className="font-medium">{k}:</span> {exp.custom_fields![k]}
-                        </div>
-                      ))}
-                      <div className="flex items-center gap-2">
-                        <StatusBadge status="verified" />
-                        <StatusBadge status="approved" />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-muted-foreground">{formatDateDDMMYYYY(exp.created_at)}</span>
-                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => navigate(`/expenses/${exp.id}`)}>
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="overflow-x-auto border rounded-lg">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-100 border-b">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Employee</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Employee ID</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Transaction #</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Title</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Purpose</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">{t("columns.destination")}</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">{t("columns.tripEnd")}</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">{t("columns.batch")}</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Expense Type</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">LPO Number</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Bill Date (DD-MM-YYYY)</th>
-                        <th className="px-4 py-3 text-right font-semibold text-slate-700">Bill Amount</th>
-                        {approvalCustomKeys.map((k) => (
-                          <th key={k} className="px-4 py-3 text-left font-semibold text-slate-700 whitespace-nowrap">{k}</th>
-                        ))}
-                        <th className="px-4 py-3 text-right font-semibold text-slate-700">Opening Balance</th>
-                        <th className="px-4 py-3 text-right font-semibold text-slate-700">Closing Balance</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Manager Approval</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">HO Approval</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-700">Submitted On (DD-MM-YYYY)</th>
-                        <th className="px-4 py-3 text-center font-semibold text-slate-700">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {filteredApprovalExpenses.map(exp => (
-                        <tr key={exp.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-3">{exp.user_name}</td>
-                          <td className="px-4 py-3 text-slate-500 font-mono text-xs">{exp.employee_id || "-"}</td>
-                          <td className="px-4 py-3">{exp.transaction_number || "-"}</td>
-                          <td className="px-4 py-3 max-w-[140px] truncate" title={exp.title || ""}>{exp.title || "-"}</td>
-                          <td className="px-4 py-3 max-w-[160px] truncate" title={exp.purpose || ""}>{exp.purpose || "-"}</td>
-                          <td className="px-4 py-3 max-w-[120px] truncate" title={exp.destination || ""}>{exp.destination || "-"}</td>
-                          <td className="px-4 py-3">{formatDateDDMMYYYY(exp.trip_end)}</td>
-                          <td className="px-4 py-3 max-w-[120px] truncate" title={exp.batch_ref}>{exp.batch_ref}</td>
-                          <td className="px-4 py-3">{exp.category || "-"}</td>
-                          <td className="px-4 py-3">-</td>
-                          <td className="px-4 py-3">{formatDateDDMMYYYY(exp.trip_start)}</td>
-                          <td className="px-4 py-3 text-right font-medium">{formatINR(Number(exp.total_amount || 0))}</td>
-                          {approvalCustomKeys.map((k) => (
-                            <td key={k} className="px-4 py-3 max-w-[140px] truncate text-sm" title={exp.custom_fields?.[k] ?? ""}>
-                              {exp.custom_fields?.[k] ?? ""}
-                            </td>
-                          ))}
-                          <td className="px-4 py-3 text-right text-sm">{formatINR(approvalRowBalances.get(exp.id)?.opening ?? 0)}</td>
-                          <td className="px-4 py-3 text-right text-sm font-medium">{formatINR(approvalRowBalances.get(exp.id)?.closing ?? 0)}</td>
-                          <td className="px-4 py-3">
-                            <StatusBadge status="verified" />
-                          </td>
-                          <td className="px-4 py-3">
-                            <StatusBadge status="approved" />
-                          </td>
-                          <td className="px-4 py-3">{formatDateDDMMYYYY(exp.created_at)}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center justify-center gap-2">
-                              <Button variant="ghost" size="sm" onClick={() => navigate(`/expenses/${exp.id}`)}>
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                              <Button variant="ghost" size="sm" onClick={() => navigate(`/expenses/${exp.id}`)}>
-                                <FileText className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              {/*
+                Generation moved server-side: Claim Approval had the same
+                unbounded-fetch risk as Claim Verification, plus a documented
+                real bug (10% of a 10,457-row export silently truncated with
+                no error) on the org-wide path this replaces.
+              */}
+              <ServerReportExportPanel
+                organizationId={organizationId}
+                dateFrom={null}
+                dateTo={null}
+                userId={selectedEmployee}
+                userIds={teamScoped ? teamMemberUserIds : null}
+                teamScoped={teamScoped}
+                disabled={!canViewReports}
+                reportType="claim_approval"
+                category={selectedCategory}
+                engineerStatus={engineerStatus}
+              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -2495,24 +2228,9 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                   <p className="text-xs text-muted-foreground">Loading custom field options…</p>
                 )}
 
-                {/* DOC-105 — generation moved off the browser. The year/month
-                    filters become the job's date window; picking one employee
-                    yields the credit/debit ledger, All employees a flat list. */}
-                <div className="pt-1 space-y-2">
-                  <ServerReportExportPanel
-                    organizationId={organizationId}
-                    reportType="detailed_expense"
-                    category={selectedCategory}
-                    engineerStatus={null}
-                    dateFrom={detailedDateFrom}
-                    dateTo={detailedDateTo}
-                    userId={selectedEmployee !== "all" ? selectedEmployee : null}
-                    userIds={teamScoped ? teamMemberUserIds : null}
-                    teamScoped={teamScoped}
-                    disabled={loadingEmployeeFieldOptions}
-                  />
+                <div className="flex gap-2 pt-1">
                   <Button variant="outline" onClick={clearFilters}>
-                    Clear filters
+                    Clear
                   </Button>
                 </div>
               </div>
@@ -2524,211 +2242,36 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                 <p className="text-sm text-slate-600">Year : {selectedYear.slice(-2)}</p>
               </div>
 
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-lg font-semibold mb-2">Detailed List</h3>
-                  {isMobile ? (
-                    <MobileDetailedExpenseReportView
-                      showDetailedBalanceColumns={showDetailedBalanceColumns}
-                      loading={detailedQuery.isLoading}
-                      detailedCustomFilterHasNoData={detailedCustomFilterHasNoData}
-                      balanceInfo={balanceInfo}
-                      detailedListWithBalances={detailedListWithBalances}
-                      detailedAllEmployeesRows={detailedAllEmployeesRows}
-                    />
-                  ) : (
-                  <div className="overflow-x-auto border rounded-lg">
-                    <table className="min-w-full text-sm">
-                      <thead className="bg-slate-100 border-b">
-                        <tr>
-                          {!showDetailedBalanceColumns && (
-                            <>
-                              <th className="px-4 py-3 text-left font-semibold text-slate-700">Employee</th>
-                              <th className="px-4 py-3 text-left font-semibold text-slate-700">Employee ID</th>
-                            </>
-                          )}
-                          <th className="px-4 py-3 text-left font-semibold text-slate-700">Bill Date</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-700">Title</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-700">Type of Expense</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-700">Purpose</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-700">Destination</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-700">{t("columns.batch")}</th>
-                          {detailedCustomKeys.map((k) => (
-                            <th key={k} className="px-4 py-3 text-left font-semibold text-slate-700 whitespace-nowrap">{k}</th>
-                          ))}
-                          <th className="px-4 py-3 text-right font-semibold text-slate-700">Credit</th>
-                          <th className="px-4 py-3 text-right font-semibold text-slate-700">Debit</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-700">Notes</th>
-                          {showDetailedBalanceColumns && (
-                            <>
-                              <th className="px-4 py-3 text-right font-semibold text-slate-700">Opening Balance</th>
-                              <th className="px-4 py-3 text-right font-semibold text-slate-700">Closing Balance</th>
-                            </>
-                          )}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {showDetailedBalanceColumns && (
-                          <tr className="bg-slate-50 font-medium">
-                            <td className="px-4 py-3" colSpan={6 + detailedCustomKeys.length + 2}></td>
-                            <td className="px-4 py-3">Opening Balance</td>
-                            <td className="px-4 py-3 text-right font-medium">{formatINR(balanceInfo.opening)}</td>
-                            <td className="px-4 py-3 text-right font-medium">{formatINR(balanceInfo.opening)}</td>
-                          </tr>
-                        )}
-                        {showDetailedBalanceColumns ? (
-                          detailedListWithBalances.length === 0 ? (
-                            <tr>
-                              <td
-                                colSpan={11 + detailedCustomKeys.length}
-                                className="px-4 py-6 text-center text-slate-500"
-                              >
-                                {detailedCustomFilterHasNoData
-                                  ? "No approved expenses for this employee with the selected custom field value (red options have no data)."
-                                  : "No allocations or expenses in this period. Click Submit after choosing filters."}
-                              </td>
-                            </tr>
-                          ) : (
-                            detailedListWithBalances.map((row) => (
-                              <tr key={row.id} className="hover:bg-slate-50">
-                                <td className="px-4 py-3">{formatDateDDMMYYYY(row.date)}</td>
-                                <td className="px-4 py-3 max-w-[120px] truncate" title={row.type === "expense" ? row.title : ""}>
-                                  {row.type === "expense" ? row.title || "-" : "-"}
-                                </td>
-                                <td className="px-4 py-3">{row.category}</td>
-                                <td className="px-4 py-3">{row.purpose ?? "-"}</td>
-                                <td className="px-4 py-3">{row.destination ?? "-"}</td>
-                                <td className="px-4 py-3 max-w-[120px] truncate" title={row.batchRef}>
-                                  {row.batchRef}
-                                </td>
-                                {detailedCustomKeys.map((k) => (
-                                  <td
-                                    key={k}
-                                    className="px-4 py-3 max-w-[140px] truncate text-sm"
-                                    title={row.type === "expense" ? row.customFields?.[k] ?? "" : ""}
-                                  >
-                                    {row.type === "expense" ? row.customFields?.[k] ?? "" : ""}
-                                  </td>
-                                ))}
-                                <td className="px-4 py-3 text-right font-medium">
-                                  {row.credit > 0 ? formatINR(row.credit) : ""}
-                                </td>
-                                <td className="px-4 py-3 text-right font-medium">
-                                  {row.debit > 0 ? formatINR(row.debit) : ""}
-                                </td>
-                                <td className="px-4 py-3">{row.notes}</td>
-                                <td className="px-4 py-3 text-right">{formatINR(row.openingBalance)}</td>
-                                <td className="px-4 py-3 text-right font-medium">
-                                  {formatINR(row.closingBalance)}
-                                </td>
-                              </tr>
-                            ))
-                          )
-                        ) : detailedAllEmployeesRows.length === 0 ? (
-                          <tr>
-                            <td
-                              colSpan={10 + detailedCustomKeys.length}
-                              className="px-4 py-6 text-center text-slate-500"
-                            >
-                              No approved expenses match your filters. Click Submit to refresh, or widen year/month/category.
-                            </td>
-                          </tr>
-                        ) : (
-                          detailedAllEmployeesRows.map((exp) => (
-                            <tr key={exp.id} className="hover:bg-slate-50">
-                              <td className="px-4 py-3">{exp.user_name}</td>
-                              <td className="px-4 py-3 text-slate-500 font-mono text-xs">{exp.employee_id || "-"}</td>
-                              <td className="px-4 py-3">{formatDateDDMMYYYY(exp.trip_start)}</td>
-                              <td className="px-4 py-3 max-w-[120px] truncate" title={exp.title ?? ""}>
-                                {exp.title || "-"}
-                              </td>
-                              <td className="px-4 py-3">{exp.category ?? "-"}</td>
-                              <td className="px-4 py-3">{exp.purpose ?? "-"}</td>
-                              <td className="px-4 py-3">{exp.destination ?? "-"}</td>
-                              <td className="px-4 py-3 max-w-[120px] truncate" title={exp.batch_ref}>
-                                {exp.batch_ref}
-                              </td>
-                              {detailedCustomKeys.map((k) => (
-                                <td
-                                  key={k}
-                                  className="px-4 py-3 max-w-[140px] truncate text-sm"
-                                  title={exp.custom_fields?.[k] ?? ""}
-                                >
-                                  {exp.custom_fields?.[k] ?? ""}
-                                </td>
-                              ))}
-                              <td className="px-4 py-3 text-right font-medium"></td>
-                              <td className="px-4 py-3 text-right font-medium">
-                                {formatINR(Number(exp.total_amount || 0))}
-                              </td>
-                              <td className="px-4 py-3">{exp.purpose || "-"}</td>
-                            </tr>
-                          ))
-                        )}
-                        {showDetailedBalanceColumns &&
-                          !detailedQuery.isLoading &&
-                          detailedListWithBalances.length > 0 && (
-                            <tr className="bg-slate-50 font-medium">
-                              <td className="px-4 py-3" colSpan={6 + detailedCustomKeys.length + 2}></td>
-                              <td className="px-4 py-3">Closing Balance</td>
-                              <td className="px-4 py-3 text-right font-medium">
-                                {formatINR(
-                                  detailedListWithBalances[detailedListWithBalances.length - 1]
-                                    .closingBalance,
-                                )}
-                              </td>
-                              <td className="px-4 py-3 text-right font-medium">
-                                {formatINR(
-                                  detailedListWithBalances[detailedListWithBalances.length - 1]
-                                    .closingBalance,
-                                )}
-                              </td>
-                            </tr>
-                          )}
-                      </tbody>
-                    </table>
-                  </div>
-                  )}
-                </div>
+              {/*
+                Generation moved server-side: Detailed Expense had the same
+                unbounded-fetch risk as Verification/Approval, PLUS a separate
+                unpaginated cash_transfer_history query for the single-employee
+                ledger. Generate now enqueues a job; the worker resolves both
+                the expense rows and the allocation ledger via
+                report_expense_rows_v1 / report_expense_allocations_v1 and
+                merges them exactly as the client used to.
 
-                <div>
-                  <h3 className="text-lg font-semibold mb-2">Summary</h3>
-                  <div className="overflow-x-auto border rounded-lg">
-                    <table className="min-w-full text-sm">
-                      <thead className="bg-slate-100 border-b">
-                        <tr>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-700">Type of Expense</th>
-                          <th className="px-4 py-3 text-right font-semibold text-slate-700">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {totalAllocationsInPeriod > 0 && (
-                          <tr className="hover:bg-slate-50">
-                            <td className="px-4 py-3">Account Credited</td>
-                            <td className="px-4 py-3 text-right font-medium">{formatINR(totalAllocationsInPeriod)}</td>
-                          </tr>
-                        )}
-                        {totalReturnsInPeriod > 0 && (
-                          <tr className="hover:bg-slate-50">
-                            <td className="px-4 py-3">Money Returned</td>
-                            <td className="px-4 py-3 text-right font-medium">{formatINR(totalReturnsInPeriod)}</td>
-                          </tr>
-                        )}
-                        {Object.entries(detailedSummary).map(([category, amount]) => (
-                          <tr key={category} className="hover:bg-slate-50">
-                            <td className="px-4 py-3">{category}</td>
-                            <td className="px-4 py-3 text-right font-medium">{formatINR(amount)}</td>
-                          </tr>
-                        ))}
-                        <tr className="bg-slate-200 font-bold border-t-2">
-                          <td className="px-4 py-3">Total</td>
-                          <td className="px-4 py-3 text-right">{formatINR(totalAmount)}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
+                Date range (and Week, which used to sit in state/the query key
+                without ever reaching a server request) now comes from the one
+                canonical derivation in detailedExpenseReportFilters.ts --
+                Week takes precedence over Month over a bare Year, matching
+                how the filters visually narrow each other.
+              */}
+              <ServerReportExportPanel
+                organizationId={organizationId}
+                dateFrom={detailedExpenseDateRange.dateFrom}
+                dateTo={detailedExpenseDateRange.dateTo}
+                userId={selectedEmployee}
+                userIds={teamScoped ? teamMemberUserIds : null}
+                teamScoped={teamScoped}
+                disabled={!canViewReports}
+                reportType="detailed_expense"
+                category={selectedCategory}
+                customFieldFilters={activeCustomFieldFilters(customFieldFilters)}
+                selectedYear={selectedYear}
+                selectedMonth={selectedMonth}
+                selectedWeek={selectedWeek}
+              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -2802,21 +2345,29 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                       </Select>
                     </div>
                   </div>
-                  {/* DOC-104 — generation moved off the browser entirely. This
-                      enqueues a job, the worker builds the whole CSV server-side
-                      and writes it to Storage, and the panel then offers a
-                      download. The old buttons paged the report into this tab
-                      and serialised the file here; nothing of that runs now. */}
-                  <div className="pt-2">
-                    <ServerReportExportPanel
-                      organizationId={organizationId}
-                      dateFrom={dailyAllTime ? null : dailyDateFrom}
-                      dateTo={dailyAllTime ? null : dailyDateTo}
-                      userId={selectedEmployee !== "all" ? selectedEmployee : null}
-                      userIds={teamScoped ? teamMemberUserIds : null}
-                      teamScoped={teamScoped}
-                      disabled={!dailyConfigReady}
-                    />
+                  <div className="flex gap-2 pt-2">
+                    <Button
+                      onClick={() => void dailyQuery.refetch()}
+                      disabled={dailyQuery.isFetching || !dailyConfigReady}
+                    >
+                      {dailyQuery.isFetching ? t("daily.generating") : t("generate")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => exportDailyProjectReport("csv")}
+                      disabled={dailyQuery.isFetching || !dailyConfigReady || dailyReportRows.length === 0}
+                      title={dailyQuery.isFetching ? t("liveRefresh.exportWait") : undefined}
+                    >
+                      {t("exportCsv")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => exportDailyProjectReport("xlsx")}
+                      disabled={dailyQuery.isFetching || !dailyConfigReady || dailyReportRows.length === 0}
+                      title={dailyQuery.isFetching ? t("liveRefresh.exportWait") : undefined}
+                    >
+                      {t("exportXlsx")}
+                    </Button>
                   </div>
                 </div>
 
@@ -2841,8 +2392,32 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                   ) : null}
                 </p>
 
+                {/*
+                  Server-side background option, ADDED alongside the existing
+                  browser-paged coordinator above rather than replacing it.
+                  Unlike Verification/Approval/Detailed, the Daily tab's
+                  existing client-side pagination already has a fail-closed
+                  completeness gate and a source-expense drill-down
+                  (DailyReportSourceExpensesSheet, click a row) that this
+                  integration deliberately preserves. This panel is for a
+                  large export where staying on the page isn't wanted: it
+                  enqueues a report_export_jobs row that the same worker used
+                  by the other three tabs completes independently, sharing
+                  the identical report_daily_project_rows_v1 core so both
+                  paths always produce the same numbers.
+                */}
+                <ServerReportExportPanel
+                  organizationId={organizationId}
+                  dateFrom={dailyAllTime ? null : dailyDateFrom || null}
+                  dateTo={dailyAllTime ? null : dailyDateTo || null}
+                  userId={selectedEmployee}
+                  userIds={teamScoped ? teamMemberUserIds : null}
+                  teamScoped={teamScoped}
+                  disabled={!dailyConfigReady}
+                />
+
                 {/* A failed export must never look like an empty-but-successful
-                    one: say plainly that no file was produced (DOC-101). */}
+                    one: say plainly that no file was produced. */}
                 {!dailyQuery.isFetching && dailyQuery.error ? (
                   <p
                     className="text-xs text-red-800 bg-red-50 border border-red-200 rounded-md px-3 py-2"
@@ -2866,6 +2441,7 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                   <p className="text-xs text-muted-foreground">{t("daily.clickRowHint")}</p>
                 ) : null}
 
+                <ReportLiveRefreshBar query={dailyQuery} />
                 {isMobile ? (
                   <div className="space-y-2" data-testid="daily-report-card-list">
                     {dailyQuery.isLoading ? null : dailyReportRows.length === 0 ? (
@@ -2981,15 +2557,6 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                 )}
               </CardContent>
             </Card>
-
-            {/* DOC-103 — where a generated report goes. Every Generate click is
-                persisted server-side; this lists those snapshots and reopens
-                them without re-running the query. */}
-            <SavedReportsPanel
-              organizationId={organizationId}
-              reportType="daily_project_expense"
-              refreshToken={lastSavedReportId}
-            />
           </TabsContent>
         )}
       </Tabs>

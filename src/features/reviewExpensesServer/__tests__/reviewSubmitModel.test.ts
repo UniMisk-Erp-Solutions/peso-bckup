@@ -66,7 +66,12 @@ describe("Search submit coordinator (§8/§9/§29/§47)", () => {
 
   it("commit is atomic: one revision bump + page reset + selection clear (§8/§29)", () => {
     const idx = src.indexOf("const commitDraftFilters = () =>");
-    const body = src.slice(idx, idx + 700);
+    // Slice to the function's own closing brace rather than a fixed byte
+    // count -- see the identical fix a few lines below for why a fixed
+    // window silently stops covering the whole body once an explanatory
+    // comment (the exact-month mutual-exclusion note, §11) is added.
+    const endIdx = src.indexOf("\n  };", idx);
+    const body = src.slice(idx, endIdx === -1 ? idx + 1200 : endIdx);
     expect(body).toMatch(/setStatusFilter\(draftStatus\)/);
     expect(body).toMatch(/setCustomFieldFilters\(draftCustomFieldFilters\)/);
     expect(body).toMatch(/setServerPage\(1\)/);
@@ -78,7 +83,13 @@ describe("Search submit coordinator (§8/§9/§29/§47)", () => {
 describe("server parameter mapping + true pagination (§16-§27)", () => {
   it("buildServerQueryParams maps status / sort / time / custom server-side", () => {
     const idx = src.indexOf("const buildServerQueryParams");
-    const body = src.slice(idx, idx + 700);
+    // Slice to the function's own closing brace rather than a fixed byte
+    // count -- a fixed 700-char window silently stopped covering the whole
+    // body once the exact-month-vs-time-period preference comment (§11) was
+    // added, pushing statusToServerStatuses/appliedSortToServerSort past the
+    // cutoff and leaving this guard unable to see them at all.
+    const endIdx = src.indexOf("\n  };", idx);
+    const body = src.slice(idx, endIdx === -1 ? idx + 1200 : endIdx);
     expect(body).toMatch(/statusToServerStatuses\(applied\.status\)/);
     expect(body).toMatch(/appliedSortToServerSort\(applied\.sortBy, applied\.sortOrder\)/);
     expect(body).toMatch(/deriveDateRange\(applied\.timePeriod/);

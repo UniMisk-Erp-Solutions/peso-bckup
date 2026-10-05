@@ -953,3 +953,71 @@ input[type="number"]:focus {
     padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
   }
 }
+
+/* ---------------------------------------------------------------------
+ * Expense table responsive density -- Admin Expenses (AdminPanel.tsx) and
+ * Review (EngineerReview.tsx) desktop tables only. Scoped entirely under
+ * .expense-table-dense so it never touches the generic <Table> defaults
+ * in src/components/ui/table.tsx or any other table in the app. Element
+ * selectors here (`.expense-table-dense th`) have higher specificity than
+ * a single Tailwind utility class, so they win over table.tsx's baked-in
+ * `h-12 px-4` / `p-4` without needing !important.
+ *
+ * Font size and padding shrink smoothly with available width via clamp()
+ * instead of jumping at fixed breakpoints, so a laptop at 1366px or a
+ * desktop zoomed to 80% both land on a sensible density automatically.
+ * Column width/min-width is controlled separately by each page's own
+ * Tailwind classes (or, for Review, useResizableColumns) -- this block
+ * only ever changes padding/font-size/height, never width or layout.
+ * --------------------------------------------------------------------- */
+.expense-table-dense {
+  --etd-font: clamp(11px, 0.95vw, 13.5px);
+  --etd-font-secondary: clamp(9.5px, 0.75vw, 11.5px);
+  --etd-cell-x: clamp(6px, 0.7vw, 16px);
+  --etd-cell-y: clamp(6px, 0.55vw, 12px);
+  --etd-control-h: clamp(28px, 2.2vw, 32px);
+  --etd-control-px: clamp(6px, 0.7vw, 12px);
+  --etd-control-font: clamp(10.5px, 0.8vw, 12.5px);
+}
+
+.expense-table-dense table {
+  width: 100%;
+}
+
+.expense-table-dense th,
+.expense-table-dense td {
+  padding-left: var(--etd-cell-x);
+  padding-right: var(--etd-cell-x);
+  padding-top: var(--etd-cell-y);
+  padding-bottom: var(--etd-cell-y);
+  font-size: var(--etd-font);
+  height: auto;
+}
+
+.expense-table-dense th:has([role="checkbox"]),
+.expense-table-dense td:has([role="checkbox"]) {
+  padding-right: var(--etd-cell-y);
+}
+
+.expense-table-dense .etd-secondary {
+  font-size: var(--etd-font-secondary);
+}
+
+.expense-table-dense .etd-numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.expense-table-dense .etd-control {
+  height: var(--etd-control-h);
+  padding-left: var(--etd-control-px);
+  padding-right: var(--etd-control-px);
+  font-size: var(--etd-control-font);
+}
+
+.expense-table-dense .etd-badge {
+  font-size: var(--etd-font-secondary);
+  padding-top: 0.05rem;
+  padding-bottom: 0.05rem;
+  padding-left: 0.45rem;
+  padding-right: 0.45rem;
+}

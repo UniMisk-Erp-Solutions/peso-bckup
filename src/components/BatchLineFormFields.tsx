@@ -64,7 +64,8 @@ export function BatchLineFormFields({
   userId,
   onLoadErrorChange,
 }: BatchLineFormFieldsProps) {
-  const { optionBranches, selectOptionValue, reset, hasError } = useOnDemandOptionBranches(organizationId);
+  const { optionBranches, selectOptionValue, reset, hasError, isResolvedFor, isLoadingFor, hasErrorFor } =
+    useOnDemandOptionBranches(organizationId);
 
   // Reset stale branches whenever this line's category changes, then
   // re-derive from whatever is ALREADY selected — covers initial mount,
@@ -117,6 +118,9 @@ export function BatchLineFormFields({
       userId={userId}
       onSelectOptionValue={allowConditionalDropdown ? selectOptionValue : undefined}
       instanceId={lineId}
+      isOptionResolved={allowConditionalDropdown ? isResolvedFor : undefined}
+      isOptionLoading={allowConditionalDropdown ? isLoadingFor : undefined}
+      isOptionErrored={allowConditionalDropdown ? hasErrorFor : undefined}
     />
   );
 }

@@ -81,6 +81,46 @@ export type DailyProjectReportHeader = (typeof DAILY_PROJECT_REPORT_HEADERS)[num
 
 export type DailyProjectExpenseReportRow = Record<DailyProjectReportHeader, string | number>;
 
+/**
+ * "project id"/"project name" render-time markers for a blank resolved value.
+ *
+ * These are PRESENTATION ONLY: never written to the database, never treated
+ * as an actual project id/name for grouping or matching purposes -- applied
+ * exactly once, at final row-shaping time, in the one place both the
+ * foreground (`finalizeDailyReportGroups`) and the background worker
+ * (`run-report-export-job/index.ts`'s `finalize`, a direct port of this
+ * function) build the exported cell value. See the AMENDED 2026-08-27 note
+ * in supabase/migrations/20260827160000_daily_project_report_shared_core.sql
+ * for why the ambiguity signal itself is computed once in that shared SQL
+ * core rather than via a second, separately-callable RPC.
+ */
+export const DAILY_REPORT_NO_DATA_MARKER = "N/A - no data on record";
+export const DAILY_REPORT_AMBIGUOUS_NAME_MARKER =
+  "Ambiguous - multiple names on record, unresolved";
+
+/**
+ * Render-time value for the "project name" cell: the real resolved value
+ * when there is one, otherwise a marker distinguishing "nothing recorded"
+ * from "recorded, but conflicting values exist and picking one would
+ * fabricate a fact." `isAmbiguous` comes from
+ * get_daily_report_project_name_ambiguity_batch_v2, called once per page
+ * (browser) or per worker page with that page's project ids -- never
+ * re-derived independently by a caller, which is exactly how the
+ * foreground/worker drift bug documented in
+ * Documentations MD/daily-report-remarks-column.md happened before.
+ */
+export function resolveProjectNameCell(projectName: string, isAmbiguous: boolean): string {
+  const trimmed = String(projectName ?? "").trim();
+  if (trimmed) return trimmed;
+  return isAmbiguous ? DAILY_REPORT_AMBIGUOUS_NAME_MARKER : DAILY_REPORT_NO_DATA_MARKER;
+}
+
+/** Render-time value for the "project id" cell: the real id, or the same "no data" marker. */
+export function resolveProjectIdCell(projectId: string): string {
+  const trimmed = String(projectId ?? "").trim();
+  return trimmed || DAILY_REPORT_NO_DATA_MARKER;
+}
+
 export type ParsedFieldSource =
   | { kind: "base"; key: BaseExpenseFieldKey }
   | { kind: "template"; templateId: string }
@@ -128,8 +168,24 @@ export function parseFieldSource(raw: string | null | undefined): ParsedFieldSou
   return { kind: "template", templateId: value };
 }
 
+/**
+ * A row needs review when its project id/name cell is blank OR carries one
+ * of the render-time markers (resolveProjectIdCell/resolveProjectNameCell) --
+ * "N/A - no data on record" and "Ambiguous - multiple names on record,
+ * unresolved" are exactly the two cases this check exists to surface, so a
+ * bare blank-string test alone would stop catching them the moment the
+ * markers are wired into the row (they are: the on-screen preview and the
+ * exported file are shaped by the same finalizeDailyReportGroups).
+ */
 export function isDailyReportRowNeedsReview(row: DailyProjectExpenseReportRow): boolean {
-  return !String(row["project id"] ?? "").trim() || !String(row["project name"] ?? "").trim();
+  const projectId = String(row["project id"] ?? "").trim();
+  const projectName = String(row["project name"] ?? "").trim();
+  const idNeedsReview = !projectId || projectId === DAILY_REPORT_NO_DATA_MARKER;
+  const nameNeedsReview =
+    !projectName ||
+    projectName === DAILY_REPORT_NO_DATA_MARKER ||
+    projectName === DAILY_REPORT_AMBIGUOUS_NAME_MARKER;
+  return idNeedsReview || nameNeedsReview;
 }
 
 export function emptyDailyExpenseReportConfig(): DailyExpenseReportConfig {
@@ -362,32 +418,6 @@ export async function fetchOrganizationDailyReportConfig(
   }
 
   return { config: parseDailyExpenseReportConfig(data?.daily_expense_report_config) };
-}
-
-/**
- * DOC-113 follow-up. Project Unique IDs where more than one distinct
- * Project Name has genuinely been recorded across the org — used to tell
- * "no data exists" apart from "data exists but is ambiguous" when flagging
- * blank cells in the export. Live-computed on the server every call, never
- * a stale snapshot.
- */
-export async function fetchDailyReportProjectNameAmbiguity(
-  organizationId: string,
-): Promise<Set<string>> {
-  if (!organizationId) return new Set();
-
-  const { data, error } = await (supabase.rpc as any)(
-    "get_daily_report_project_name_ambiguity_v1",
-    { p_organization_id: organizationId },
-  );
-
-  if (error) {
-    console.warn("fetchDailyReportProjectNameAmbiguity", error);
-    return new Set();
-  }
-
-  const rows = (data ?? []) as { project_id: string }[];
-  return new Set(rows.map((r) => r.project_id));
 }
 
 export async function saveOrganizationDailyReportConfig(

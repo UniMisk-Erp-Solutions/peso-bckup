@@ -56,7 +56,11 @@ type ServerSourceExpense = {
   transaction_number: string | null;
   voucher_no: string | null;
   cost_column: string | null;
-  purpose: string | null;
+  /** Base `purpose` column. Optional: the currently-installed RPC (before
+   * the pending daily-report-remarks-column migration is applied) does not
+   * emit this key at all, so this must degrade to an empty Remarks column,
+   * never throw. */
+  purpose?: string | null;
 };
 
 type ServerReportRow = {
@@ -64,6 +68,10 @@ type ServerReportRow = {
   user_id: string;
   project_id: string;
   project_name: string;
+  /** Optional: the currently-installed RPC (before this pending migration is
+   * applied) does not emit this key, so it must degrade to "not ambiguous"
+   * (a blank name still renders as the plain "no data" marker), never throw. */
+  project_name_ambiguous?: boolean;
   location: string;
   voucher_no: string;
   employee_name: string;
@@ -242,6 +250,39 @@ export async function fetchDailyProjectReportPage(
   return parseDailyReportPage(data);
 }
 
+/**
+ * Page-scoped ambiguity lookup. Calls get_daily_report_project_name_ambiguity_batch_v2
+ * with only the project ids actually present on the rows in hand -- never
+ * the organization's full project population. See
+ * 20260829120000_daily_report_remarks_and_batch_ambiguity.sql for why this
+ * replaced a whole-population computation inside the report core itself
+ * (that design caused two separate Production incidents).
+ */
+export async function fetchProjectNameAmbiguityBatch(
+  organizationId: string,
+  projectIds: string[],
+  signal?: AbortSignal,
+): Promise<Map<string, boolean>> {
+  const ids = Array.from(new Set(projectIds.map((id) => id.trim()).filter(Boolean)));
+  if (ids.length === 0) return new Map();
+
+  const builder = supabase.rpc("get_daily_report_project_name_ambiguity_batch_v2", {
+    p_organization_id: organizationId,
+    p_project_ids: ids,
+  });
+  const { data, error } = signal ? await builder.abortSignal(signal) : await builder;
+
+  if (error) {
+    throw new DailyReportExportError("ambiguity_batch_failed", error.message);
+  }
+
+  const result = new Map<string, boolean>();
+  for (const row of (data ?? []) as Array<{ project_id: string; project_name_ambiguous: boolean }>) {
+    result.set(row.project_id, row.project_name_ambiguous === true);
+  }
+  return result;
+}
+
 /** Convert one server row into the shared pre-shaping group. */
 export function serverRowToGroup(row: ServerReportRow): DailyReportGroup {
   const trackDate = formatTrackDate(row.track_date || null);
@@ -278,6 +319,7 @@ export function serverRowToGroup(row: ServerReportRow): DailyReportGroup {
     userId: row.user_id,
     projectId,
     projectName,
+    projectNameAmbiguous: row.project_name_ambiguous === true,
     location,
     voucherNo: String(row.voucher_no ?? "").trim(),
     employeeName: String(row.employee_name ?? ""),
@@ -303,6 +345,12 @@ export type DailyReportExportOptions = Omit<
   maxRetriesPerPage?: number;
   /** Injected in tests. */
   fetchPage?: (params: DailyReportPageParams) => Promise<DailyReportPage>;
+  /** Injected in tests. Defaults to fetchProjectNameAmbiguityBatch. */
+  fetchAmbiguityBatch?: (
+    organizationId: string,
+    projectIds: string[],
+    signal?: AbortSignal,
+  ) => Promise<Map<string, boolean>>;
   /** Injected in tests to avoid real timers. */
   delay?: (ms: number) => Promise<void>;
 };
@@ -339,6 +387,7 @@ export async function runDailyProjectReportExport(
     onProgress,
     maxRetriesPerPage = 2,
     fetchPage = fetchDailyProjectReportPage,
+    fetchAmbiguityBatch = fetchProjectNameAmbiguityBatch,
     delay = defaultDelay,
     ...pageParams
   } = options;
@@ -408,6 +457,27 @@ export async function runDailyProjectReportExport(
       );
     }
 
+    // Page-scoped ambiguity: only the project ids on THIS page, never the
+    // whole organization. A failure here must not silently render wrong
+    // ambiguity markers -- it aborts the export like any other page failure.
+    const pageProjectIds = Array.from(
+      new Set(page.rows.map((row) => String(row.project_id ?? "").trim()).filter(Boolean)),
+    );
+    let ambiguityByProjectId: Map<string, boolean>;
+    try {
+      ambiguityByProjectId = await fetchAmbiguityBatch(
+        pageParams.organizationId,
+        pageProjectIds,
+        signal,
+      );
+    } catch (err) {
+      if (err instanceof DailyReportExportError) throw err;
+      throw new DailyReportExportError(
+        "ambiguity_batch_failed",
+        err instanceof Error ? err.message : "Ambiguity lookup failed.",
+      );
+    }
+
     for (const row of page.rows) {
       const identity = dailyReportRowIdentity(row);
       if (seen.has(identity)) {
@@ -417,7 +487,11 @@ export async function runDailyProjectReportExport(
         );
       }
       seen.add(identity);
-      groups.push(serverRowToGroup(row));
+      const projectId = String(row.project_id ?? "").trim();
+      groups.push(serverRowToGroup({
+        ...row,
+        project_name_ambiguous: ambiguityByProjectId.get(projectId) ?? false,
+      }));
     }
 
     pages += 1;

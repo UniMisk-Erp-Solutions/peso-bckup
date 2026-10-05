@@ -70,60 +70,6 @@ describe("buildDailyProjectExpenseReportRows", () => {
     expect(rows[1]["percent"]).toBe(50);
   });
 
-  it("joins every batch line's purpose into Remarks, in order, keeping duplicates", () => {
-    // Same trip_start AND same category for every line so the sort that
-    // orders sourceExpenses (trip_start, then category) is a no-op tie,
-    // and JS's stable Array.sort preserves this array's own insertion
-    // order -- the same order a real 5-line batch would naturally have.
-    const rows = dailyReportResultsToRows(buildDailyProjectExpenseReportRows({
-      expenses: [
-        { id: "e1", user_id: USER, trip_start: "2026-07-03", category: "Travel", total_amount: 100, purpose: "Auto" },
-        { id: "e2", user_id: USER, trip_start: "2026-07-03", category: "Travel", total_amount: 200, purpose: "Doormatory" },
-        { id: "e3", user_id: USER, trip_start: "2026-07-03", category: "Travel", total_amount: 50, purpose: "Private lucjury" },
-        { id: "e4", user_id: USER, trip_start: "2026-07-03", category: "Travel", total_amount: 75, purpose: "Personal auto" },
-        { id: "e5", user_id: USER, trip_start: "2026-07-03", category: "Travel", total_amount: 25, purpose: "Auto" },
-      ],
-      profilesByUserId: {
-        [USER]: { user_id: USER, name: "Ravi", employee_id: "EMP01" },
-      },
-      fieldValuesByExpenseId: {
-        e1: { projectId: "P1", projectName: "Alpha", location: "Site A" },
-        e2: { projectId: "P1", projectName: "Alpha", location: "Site A" },
-        e3: { projectId: "P1", projectName: "Alpha", location: "Site A" },
-        e4: { projectId: "P1", projectName: "Alpha", location: "Site A" },
-        e5: { projectId: "P1", projectName: "Alpha", location: "Site A" },
-      },
-      config: baseConfig(),
-    }));
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]["Remarks"]).toBe("Auto, Doormatory, Private lucjury, Personal auto, Auto");
-  });
-
-  it("skips blank purposes when joining Remarks, without leaving a stray comma", () => {
-    const rows = dailyReportResultsToRows(buildDailyProjectExpenseReportRows({
-      expenses: [
-        { id: "e1", user_id: USER, trip_start: "2026-07-03", category: "Travel", total_amount: 100, purpose: "Auto" },
-        { id: "e2", user_id: USER, trip_start: "2026-07-03", category: "Travel", total_amount: 200, purpose: "" },
-        { id: "e3", user_id: USER, trip_start: "2026-07-03", category: "Travel", total_amount: 50, purpose: null },
-        { id: "e4", user_id: USER, trip_start: "2026-07-03", category: "Travel", total_amount: 75, purpose: "Personal auto" },
-      ],
-      profilesByUserId: {
-        [USER]: { user_id: USER, name: "Ravi", employee_id: "EMP01" },
-      },
-      fieldValuesByExpenseId: {
-        e1: { projectId: "P1", projectName: "Alpha", location: "Site A" },
-        e2: { projectId: "P1", projectName: "Alpha", location: "Site A" },
-        e3: { projectId: "P1", projectName: "Alpha", location: "Site A" },
-        e4: { projectId: "P1", projectName: "Alpha", location: "Site A" },
-      },
-      config: baseConfig(),
-    }));
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]["Remarks"]).toBe("Auto, Personal auto");
-  });
-
   it("merges rows with the same project id even when project names differ", () => {
     const rows = dailyReportResultsToRows(buildDailyProjectExpenseReportRows({
       expenses: [
@@ -275,6 +221,163 @@ describe("buildDailyProjectExpenseReportRows", () => {
     expect(results).toHaveLength(1);
     expect(results[0].sourceExpenses).toHaveLength(2);
     expect(results[0].sourceExpenses.map((exp) => exp.id)).toEqual(["e1", "e2"]);
+  });
+});
+
+describe("Remarks column (foreground/legacy client builder)", () => {
+  it("one source expense produces its own purpose as the Remarks value", () => {
+    const rows = dailyReportResultsToRows(buildDailyProjectExpenseReportRows({
+      expenses: [
+        { id: "e1", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 300, purpose: "Auto" },
+      ],
+      profilesByUserId: { [USER]: { user_id: USER, name: "Ravi", employee_id: "EMP01" } },
+      fieldValuesByExpenseId: { e1: { projectId: "P1", projectName: "Alpha", location: "Site A" } },
+      config: baseConfig(),
+    }));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]["Remarks"]).toBe("Auto");
+  });
+
+  it("multiple expenses in one grouped row comma-join their purposes in source order", () => {
+    const rows = dailyReportResultsToRows(buildDailyProjectExpenseReportRows({
+      expenses: [
+        { id: "e1", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 100, purpose: "Auto" },
+        { id: "e2", user_id: USER, trip_start: "2026-05-10", category: "Petrol", total_amount: 100, purpose: "Private vehicle" },
+      ],
+      profilesByUserId: { [USER]: { user_id: USER, name: "Ravi", employee_id: "EMP01" } },
+      fieldValuesByExpenseId: {
+        e1: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+        e2: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+      },
+      config: baseConfig(),
+    }));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]["Remarks"]).toBe("Auto, Private vehicle");
+  });
+
+  it("keeps duplicate remarks -- does NOT deduplicate merely because strings match", () => {
+    // Same fixture the task itself specifies: ["Auto", "Private vehicle", "", "Auto"]
+    // must produce "Auto, Private vehicle, Auto", not "Auto, Private vehicle".
+    const rows = dailyReportResultsToRows(buildDailyProjectExpenseReportRows({
+      expenses: [
+        { id: "e1", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 10, purpose: "Auto" },
+        { id: "e2", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 10, purpose: "Private vehicle" },
+        { id: "e3", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 10, purpose: "" },
+        { id: "e4", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 10, purpose: "Auto" },
+      ],
+      profilesByUserId: { [USER]: { user_id: USER, name: "Ravi", employee_id: "EMP01" } },
+      fieldValuesByExpenseId: {
+        e1: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+        e2: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+        e3: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+        e4: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+      },
+      config: baseConfig(),
+    }));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]["Remarks"]).toBe("Auto, Private vehicle, Auto");
+  });
+
+  it("skips blank/whitespace-only purposes without leaving a stray comma", () => {
+    const rows = dailyReportResultsToRows(buildDailyProjectExpenseReportRows({
+      expenses: [
+        { id: "e1", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 10, purpose: "Auto" },
+        { id: "e2", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 10, purpose: "   " },
+        { id: "e3", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 10, purpose: null },
+        { id: "e4", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 10, purpose: "Private vehicle" },
+      ],
+      profilesByUserId: { [USER]: { user_id: USER, name: "Ravi", employee_id: "EMP01" } },
+      fieldValuesByExpenseId: {
+        e1: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+        e2: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+        e3: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+        e4: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+      },
+      config: baseConfig(),
+    }));
+
+    expect(rows[0]["Remarks"]).toBe("Auto, Private vehicle");
+    expect(rows[0]["Remarks"]).not.toMatch(/,\s*,/);
+    expect(rows[0]["Remarks"]).not.toMatch(/^,|,$/);
+  });
+
+  it("all-blank purposes across a whole group produce an empty string, not a stray comma", () => {
+    const rows = dailyReportResultsToRows(buildDailyProjectExpenseReportRows({
+      expenses: [
+        { id: "e1", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 10, purpose: "" },
+        { id: "e2", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 10, purpose: null },
+      ],
+      profilesByUserId: { [USER]: { user_id: USER, name: "Ravi", employee_id: "EMP01" } },
+      fieldValuesByExpenseId: {
+        e1: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+        e2: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+      },
+      config: baseConfig(),
+    }));
+
+    expect(rows[0]["Remarks"]).toBe("");
+  });
+
+  it("preserves source-expense order in Remarks -- reordering source expenses reorders Remarks identically", () => {
+    const rows = dailyReportResultsToRows(buildDailyProjectExpenseReportRows({
+      expenses: [
+        { id: "e1", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 10, purpose: "Third" },
+        { id: "e2", user_id: USER, trip_start: "2026-05-10", category: "Petrol", total_amount: 10, purpose: "Second" },
+        { id: "e3", user_id: USER, trip_start: "2026-05-10", category: "Ants", total_amount: 10, purpose: "First" },
+      ],
+      profilesByUserId: { [USER]: { user_id: USER, name: "Ravi", employee_id: "EMP01" } },
+      fieldValuesByExpenseId: {
+        e1: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+        e2: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+        e3: { projectId: "P1", projectName: "Alpha", location: "Site A" },
+      },
+      config: baseConfig(),
+    }));
+
+    // finalizeDailyReportGroups sorts sourceExpenses by (trip_start, category) --
+    // same date here, so category ("Ants" < "Fuel" < "Petrol") decides order.
+    expect(rows[0]["Remarks"]).toBe("First, Third, Second");
+  });
+
+  it("does not invent a remark or substitute another field -- a missing purpose is empty, not title/destination/category", () => {
+    const rows = dailyReportResultsToRows(buildDailyProjectExpenseReportRows({
+      expenses: [
+        {
+          id: "e1", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 10,
+          title: "Should not appear", destination: "Should not appear either",
+        },
+      ],
+      profilesByUserId: { [USER]: { user_id: USER, name: "Ravi", employee_id: "EMP01" } },
+      fieldValuesByExpenseId: { e1: { projectId: "P1", projectName: "Alpha", location: "Site A" } },
+      config: baseConfig(),
+    }));
+
+    expect(rows[0]["Remarks"]).toBe("");
+  });
+
+  it("regression: adding Remarks does not change any other column", () => {
+    const rows = dailyReportResultsToRows(buildDailyProjectExpenseReportRows({
+      expenses: [
+        { id: "e1", user_id: USER, trip_start: "2026-05-10", category: "Fuel", total_amount: 500, destination: "Site A", purpose: "Auto" },
+      ],
+      profilesByUserId: { [USER]: { user_id: USER, name: "Ravi", employee_id: "EMP01" } },
+      fieldValuesByExpenseId: { e1: { projectId: "P1", projectName: "Alpha", location: "Site A" } },
+      config: baseConfig(),
+    }));
+
+    expect(rows[0]["Track Date"]).toBe("10-05-2026");
+    expect(rows[0]["project id"]).toBe("P1");
+    expect(rows[0]["project name"]).toBe("Alpha");
+    expect(rows[0]["Employee"]).toBe("Ravi");
+    expect(rows[0]["Employee Code"]).toBe("EMP01");
+    expect(rows[0]["Location"]).toBe("Site A");
+    expect(rows[0]["Presence"]).toBe("P");
+    expect(rows[0]["percent"]).toBe(100);
+    expect(rows[0]["Petrol Cost"]).toBe(500);
+    expect(rows[0]["Remarks"]).toBe("Auto");
   });
 });
 

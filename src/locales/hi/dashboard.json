@@ -84,5 +84,27 @@
     "expenseFallback": "व्यय",
     "noRecentActivity": "कोई हाल की गतिविधि नहीं।",
     "memberFallback": "सदस्य"
+  },
+  "monthFilter": {
+    "period": "डैशबोर्ड अवधि",
+    "label": "महीना",
+    "aria": "डैशबोर्ड महीना",
+    "allTime": "पूरी अवधि",
+    "showing": "{{month}} दिखा रहे हैं",
+    "showingAll": "पूरी अवधि दिखा रहे हैं",
+    "updating": "अपडेट हो रहा है…",
+    "scopeNote": "खर्च कार्ड खर्च की तारीख पर आधारित हैं। लंबित आइटम अभी की स्थिति दिखाते हैं। बैलेंस महीने के अंत तक के हैं।",
+    "loadFailedTitle": "वह महीना लोड नहीं हो सका",
+    "loadFailedBody": "पिछली अवधि दिखाई जा रही है।"
+  },
+  "monthCards": {
+    "balanceAsOf": "{{date}} तक का बैलेंस",
+    "balanceToday": "आज तक का बैलेंस",
+    "amountIn": "खर्च राशि · {{month}}",
+    "expensesIn": "खर्च · {{month}}",
+    "expenseDateTip": "वे खर्च जिनकी तारीख {{month}} में है",
+    "pendingIn": "{{month}} में लंबित",
+    "pendingTip": "{{month}} की तारीख वाले खर्च जो अभी लंबित हैं (अभी की स्थिति, महीने के आखिरी दिन की नहीं)",
+    "asOf": "{{date}} तक"
   }
 }

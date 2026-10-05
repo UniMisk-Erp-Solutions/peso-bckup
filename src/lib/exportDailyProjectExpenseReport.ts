@@ -10,31 +10,19 @@ const AMOUNT_HEADERS = new Set<string>(
   DAILY_REPORT_COST_COLUMNS.map((column) => column.label),
 );
 
-/** DOC-113 follow-up. Shown instead of a plain blank cell so a genuinely
- * checked-and-empty value in the exported file is never confused with an
- * ordinary blank. */
-const NO_DATA_MARKER = "N/A - no data on record";
-const AMBIGUOUS_MARKER = "Ambiguous - multiple names on record, unresolved";
-
 export function dailyReportRowsToSheetAoa(
   rows: DailyProjectExpenseReportRow[],
-  ambiguousProjectIds: Set<string> = new Set(),
 ): (string | number)[][] {
   const headerRow: string[] = [...DAILY_PROJECT_REPORT_HEADERS];
-  const dataRows = rows.map((row) => {
-    const projectId = String(row["project id"] ?? "").trim();
-    return DAILY_PROJECT_REPORT_HEADERS.map((header) =>
-      cellValueForExport(header, row[header], projectId, ambiguousProjectIds),
-    );
-  });
+  const dataRows = rows.map((row) =>
+    DAILY_PROJECT_REPORT_HEADERS.map((header) => cellValueForExport(header, row[header])),
+  );
   return [headerRow, ...dataRows];
 }
 
 function cellValueForExport(
   header: DailyProjectReportHeader,
   value: string | number | undefined,
-  rowProjectId: string,
-  ambiguousProjectIds: Set<string>,
 ): string | number {
   if (header === "percent") {
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -44,14 +32,8 @@ function cellValueForExport(
     if (typeof value === "number" && Number.isFinite(value)) return value;
     return "";
   }
-  const stringValue = value === null || value === undefined ? "" : String(value).trim();
-  if (stringValue !== "") return stringValue;
-
-  if (header === "project id") return NO_DATA_MARKER;
-  if (header === "project name") {
-    return rowProjectId && ambiguousProjectIds.has(rowProjectId) ? AMBIGUOUS_MARKER : NO_DATA_MARKER;
-  }
-  return "";
+  if (value === null || value === undefined || value === "") return "";
+  return String(value);
 }
 
 function columnWidth(header: DailyProjectReportHeader): number {
@@ -74,14 +56,13 @@ export function downloadDailyProjectExpenseReportFile(options: {
   dateFrom?: string | null;
   dateTo?: string | null;
   format: "csv" | "xlsx";
-  ambiguousProjectIds?: Set<string>;
 }): void {
-  const { rows, dateFrom, dateTo, format, ambiguousProjectIds } = options;
+  const { rows, dateFrom, dateTo, format } = options;
   const baseName =
     dateFrom && dateTo
       ? `daily-project-expense-report-${dateFrom}-to-${dateTo}`
       : "daily-project-expense-report-all-time";
-  const aoa = dailyReportRowsToSheetAoa(rows, ambiguousProjectIds);
+  const aoa = dailyReportRowsToSheetAoa(rows);
 
   if (format === "csv") {
     const lines = aoa.map((row) => row.map(escapeCsvValue).join(","));

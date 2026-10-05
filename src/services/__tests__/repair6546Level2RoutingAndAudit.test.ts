@@ -26,8 +26,13 @@ import { resolve } from "path";
 
 const cwd = process.cwd();
 
+// Normalizes CRLF -> LF so the multi-line literal assertions below match
+// regardless of the checkout's line-ending convention (this repo's
+// core.autocrlf setting can check this file out with \r\n on Windows) --
+// this reads the file for comparison only and never touches the migration
+// file itself, so its committed bytes/audit-trail content are untouched.
 function read(relativePath: string): string {
-  return readFileSync(resolve(cwd, relativePath), "utf-8");
+  return readFileSync(resolve(cwd, relativePath), "utf-8").replace(/\r\n/g, "\n");
 }
 
 describe("6546 Level 2 routing + audit repair (SQL)", () => {

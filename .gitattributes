@@ -1,0 +1,8 @@
+# DOC-130: narrowly-scoped line-ending safety for files that get piped
+# directly into psql on a Linux server. A prior session found (and fixed) a
+# real bug where a Windows checkout/write path silently introduced CRLF into
+# an applied migration's stored function body. Forcing LF for these two
+# extensions prevents a repeat, without touching line-ending behavior for
+# any other file type in this repository.
+*.sql text eol=lf
+*.sh text eol=lf

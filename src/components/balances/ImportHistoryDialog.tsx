@@ -15,7 +15,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { formatINR } from "@/lib/format";
-import { reverseImportBatch, type ImportReverseResult } from "@/services/BalanceLedgerService";
+import {
+  reverseImportBatchV2,
+  reverseImportBatchV3,
+  type ImportReverseResult,
+} from "@/services/BalanceLedgerService";
 import {
   getImportBatches,
   getImportRows,
@@ -42,8 +46,46 @@ function batchStatusBadge(status: string) {
   }
 }
 
+const KNOWN_IMPORT_MODES = [
+  "historical_opening",
+  "balance_update",
+  "allocation",
+  "opening_credit",
+  "balance_credit",
+] as const;
+
+/** Additive V3 (2026-09-01) modes -- reversed via balance_reverse_import_v3,
+ *  never the old target-anchor v2 reversal. */
+const ADDITIVE_V3_MODES = ["opening_credit", "balance_credit"] as const;
+
+/** Never falls through an unrecognized mode to "Allocation" -- that would
+ *  misrepresent what an import batch actually did. */
 function modeLabel(mode: string) {
-  return mode === "historical_opening" ? "Opening / Historical" : "Allocation";
+  switch (mode) {
+    case "historical_opening":
+      return "Opening Balance";
+    case "balance_update":
+      return "Balance Update";
+    case "allocation":
+      return "Allocation";
+    case "opening_credit":
+      return "Opening Balance Credit";
+    case "balance_credit":
+      return "Balance Credit";
+    default:
+      return mode;
+  }
+}
+
+/** Reverse Import is offered only for a mode this dialog actually knows how
+ *  to reverse -- an unrecognized mode hides the action rather than risking
+ *  it being treated as Allocation. */
+function isSupportedReversalMode(mode: string): boolean {
+  return (KNOWN_IMPORT_MODES as readonly string[]).includes(mode);
+}
+
+function isAdditiveV3Mode(mode: string): boolean {
+  return (ADDITIVE_V3_MODES as readonly string[]).includes(mode);
 }
 
 interface UploaderName {
@@ -205,7 +247,11 @@ export function ImportHistoryDialog({ open, onOpenChange, organizationId }: Impo
     }
     setReversing(true);
     try {
-      const result = await reverseImportBatch(reverseTargetId, reverseReason.trim());
+      const targetBatch = batches.find((b) => b.id === reverseTargetId);
+      const result =
+        targetBatch && isAdditiveV3Mode(targetBatch.mode)
+          ? await reverseImportBatchV3(reverseTargetId, reverseReason.trim())
+          : await reverseImportBatchV2(reverseTargetId, reverseReason.trim());
       setReverseResult(result);
       setReverseResultBatchId(reverseTargetId);
       setReverseTargetId(null);
@@ -286,7 +332,7 @@ export function ImportHistoryDialog({ open, onOpenChange, organizationId }: Impo
                             {downloadingBatchId === batch.id ? "Preparing..." : "Download Original"}
                           </Button>
                         )}
-                        {batch.status === "applied" && (
+                        {batch.status === "applied" && isSupportedReversalMode(batch.mode) && (
                           <Button
                             variant="destructive"
                             size="sm"

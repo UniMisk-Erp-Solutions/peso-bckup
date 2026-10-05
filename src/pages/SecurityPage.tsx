@@ -11,6 +11,12 @@ import { SEOHead } from "@/components/SEOHead";
 import { absoluteUrl, DEFAULT_OG_IMAGE } from "@/lib/siteConfig";
 import { breadcrumbSchema } from "@/lib/schema/jsonLd";
 import {
+    SECURITY_META_DESCRIPTION,
+    SECURITY_ORG_ANSWER,
+    SECURITY_SEO_PARAGRAPH,
+    SECURITY_STORAGE_ANSWER,
+} from "@/lib/marketingCopy";
+import {
     Shield,
     Lock,
     Database,
@@ -22,69 +28,48 @@ import {
     Server
 } from "lucide-react";
 
+const SECURITY_FAQ: { question: string; answer: string }[] = [
+    { question: "Where is data stored?", answer: SECURITY_STORAGE_ANSWER },
+    {
+        question: "How is access controlled?",
+        answer:
+            "Access is controlled through Row Level Security (RLS) policies at the database level, combined with role-based permissions. Even if someone bypasses the frontend, the database enforces access rules.",
+    },
+    {
+        question: "Can we get security documentation?",
+        answer: "Yes. Contact us to request a security overview for your organization.",
+    },
+    { question: "How does organization isolation work?", answer: SECURITY_ORG_ANSWER },
+    {
+        question: "Are receipts stored securely?",
+        answer:
+            "Receipts are stored under organization-scoped paths and require authenticated access that follows the visibility of the related expense. File type restrictions (PDF/JPG/PNG) and size limits are enforced.",
+    },
+    {
+        question: "Who can see custom form field values on an expense?",
+        answer:
+            "Custom field values follow the same visibility rules as the parent expense. Reviewers, admins, and other roles authorized to view an expense can see its saved category-specific field data on review and detail views.",
+    },
+];
+
 export default function SecurityPage() {
     const navigate = useNavigate();
 
     const faqSchema = {
         "@context": "https://schema.org",
         "@type": "FAQPage",
-        "mainEntity": [
-            {
-                "@type": "Question",
-                "name": "Where is data stored in PesoWise?",
-                "acceptedAnswer": {
-                    "@type": "Answer",
-                    "text": "Data is stored in secure cloud infrastructure with encryption at rest. All database connections use SSL/TLS encryption."
-                }
-            },
-            {
-                "@type": "Question",
-                "name": "How is access controlled in PesoWise?",
-                "acceptedAnswer": {
-                    "@type": "Answer",
-                    "text": "Access is controlled through Row Level Security (RLS) policies at the database level, combined with role-based permissions. Even if someone bypasses the frontend, the database enforces access rules."
-                }
-            },
-            {
-                "@type": "Question",
-                "name": "Can we get security documentation?",
-                "acceptedAnswer": {
-                    "@type": "Answer",
-                    "text": "Yes, we provide security documentation and compliance information. Contact us to request a security overview document."
-                }
-            },
-            {
-                "@type": "Question",
-                "name": "How does organization isolation work?",
-                "acceptedAnswer": {
-                    "@type": "Answer",
-                    "text": "PesoWise uses strict organization-level data isolation. Each user belongs to one organization, and all data including expenses, receipts, and balances are scoped to that organization. Cross-organization visibility is prevented at the database level."
-                }
-            },
-            {
-                "@type": "Question",
-                "name": "Are receipts stored securely?",
-                "acceptedAnswer": {
-                    "@type": "Answer",
-                    "text": "Yes, receipts are stored with organization-scoped paths and require authenticated access. Only users who are members of the organization can access receipts. File type restrictions (PDF/JPG/PNG) and size limits are enforced."
-                }
-            },
-            {
-                "@type": "Question",
-                "name": "Who can see custom form field values on an expense?",
-                "acceptedAnswer": {
-                    "@type": "Answer",
-                    "text": "Custom field values inherit the same visibility rules as the parent expense. Reviewers, admins, and other roles authorized to view an expense can see saved category-specific field data on review and detail views."
-                }
-            }
-        ]
+        mainEntity: SECURITY_FAQ.map((f) => ({
+            "@type": "Question",
+            name: f.question,
+            acceptedAnswer: { "@type": "Answer", text: f.answer },
+        })),
     };
 
     return (
         <>
             <SEOHead
-                title="Security & compliance | PesoWise"
-                description="How PesoWise uses role-based access, row-level security, encryption, and audit trails—including custom field visibility tied to expense access."
+                title="Data security & access control | PesoWise"
+                description={SECURITY_META_DESCRIPTION}
                 canonicalUrl={absoluteUrl("/security")}
                 ogImage={DEFAULT_OG_IMAGE}
                 faqSchema={faqSchema}
@@ -128,7 +113,7 @@ export default function SecurityPage() {
                 <SectionBand>
                     <h2 className="text-3xl font-bold text-center text-gray-900 mb-12">Security Pillars</h2>
                     <p className="text-center text-gray-600 mb-8">
-                        See our <a href="/pricing" className="text-blue-600 hover:underline font-medium">pricing plans</a> that include enterprise security features.
+                        See our <a href="/pricing" className="text-blue-600 hover:underline font-medium">pricing plans</a> and how access is scoped in every plan.
                     </p>
                     <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
                         <Card className="hover:shadow-lg transition-all hover:-translate-y-1">
@@ -146,16 +131,16 @@ export default function SecurityPage() {
                                 <CardTitle>Org Isolation</CardTitle>
                             </CardHeader>
                             <CardContent>
-                                <p className="text-sm text-gray-600">Strict separation between organizations</p>
+                                <p className="text-sm text-gray-600">Data isolated per organization</p>
                             </CardContent>
                         </Card>
                         <Card className="hover:shadow-lg transition-all hover:-translate-y-1">
                             <CardHeader>
                                 <Lock className="h-10 w-10 text-blue-600 mb-4" />
-                                <CardTitle>Secure Storage</CardTitle>
+                                <CardTitle>Controlled Storage</CardTitle>
                             </CardHeader>
                             <CardContent>
-                                <p className="text-sm text-gray-600">Encrypted file storage for receipts</p>
+                                <p className="text-sm text-gray-600">Receipts available only to authorized, authenticated users</p>
                             </CardContent>
                         </Card>
                         <Card className="hover:shadow-lg transition-all hover:-translate-y-1">
@@ -164,7 +149,7 @@ export default function SecurityPage() {
                                 <CardTitle>Audit Trails</CardTitle>
                             </CardHeader>
                             <CardContent>
-                                <p className="text-sm text-gray-600">Complete activity logs for compliance</p>
+                                <p className="text-sm text-gray-600">Activity records for reviews and audits</p>
                             </CardContent>
                         </Card>
                     </div>
@@ -181,7 +166,7 @@ export default function SecurityPage() {
                         </CardHeader>
                         <CardContent className="space-y-2 text-gray-700">
                             <p>• Email + password</p>
-                            <p>• Optional email verification</p>
+                            <p>• Optional employee ID sign-in</p>
                             <p>• Secure sessions</p>
                         </CardContent>
                     </Card>
@@ -233,7 +218,8 @@ export default function SecurityPage() {
                             </div>
                         </CardHeader>
                         <CardContent className="space-y-2 text-gray-700">
-                            <p>• One org per user, no cross-org visibility</p>
+                            <p>• Access is scoped to the user's active organization membership</p>
+                            <p>• Membership roles and database policies together prevent cross-organization access</p>
                             <p>• Receipts stored with org-scoped paths</p>
                         </CardContent>
                     </Card>
@@ -249,7 +235,7 @@ export default function SecurityPage() {
                             </div>
                         </CardHeader>
                         <CardContent className="space-y-2 text-gray-700">
-                            <p>• Authenticated access only, org membership rules</p>
+                            <p>• Authenticated access only, following the related expense's visibility</p>
                             <p>• File type restrictions: PDF/JPG/PNG</p>
                             <p>• Size limits: 2MB combined for all files</p>
                         </CardContent>
@@ -266,7 +252,7 @@ export default function SecurityPage() {
                             </div>
                         </CardHeader>
                         <CardContent className="space-y-2 text-gray-700">
-                            <p>• Who did what + timestamps for submissions, decisions, balance changes</p>
+                            <p>• Who did what, and when, for submissions, decisions and balance changes</p>
                         </CardContent>
                     </Card>
                 </Section>
@@ -306,21 +292,21 @@ export default function SecurityPage() {
                                 <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
                                 <div>
                                     <p className="font-medium text-gray-900">Organization Isolation</p>
-                                    <p className="text-sm text-gray-600">Complete data separation per organization</p>
+                                    <p className="text-sm text-gray-600">Data isolated per organization</p>
                                 </div>
                             </div>
                             <div className="flex items-start gap-3">
                                 <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
                                 <div>
-                                    <p className="font-medium text-gray-900">Secure File Storage</p>
-                                    <p className="text-sm text-gray-600">Encrypted receipt storage with access controls</p>
+                                    <p className="font-medium text-gray-900">Receipt Storage Controls</p>
+                                    <p className="text-sm text-gray-600">Receipts stored under organization-scoped paths with access controls</p>
                                 </div>
                             </div>
                             <div className="flex items-start gap-3">
                                 <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
                                 <div>
                                     <p className="font-medium text-gray-900">Audit Logs</p>
-                                    <p className="text-sm text-gray-600">Complete trail of all actions and changes</p>
+                                    <p className="text-sm text-gray-600">Records of approvals, decisions and balance changes</p>
                                 </div>
                             </div>
                             <Button onClick={() => navigate("/contact")} className="w-full mt-6">
@@ -335,36 +321,12 @@ export default function SecurityPage() {
                     <h2 className="text-3xl font-bold text-center text-gray-900 mb-12">Security FAQ</h2>
                     <div className="max-w-3xl mx-auto">
                         <Accordion type="single" collapsible className="w-full">
-                            <AccordionItem value="item-1">
-                                <AccordionTrigger>Where is data stored?</AccordionTrigger>
-                                <AccordionContent>
-                                    Data is stored in secure cloud infrastructure with encryption at rest. All database connections use SSL/TLS encryption.
-                                </AccordionContent>
-                            </AccordionItem>
-                            <AccordionItem value="item-2">
-                                <AccordionTrigger>How is access controlled?</AccordionTrigger>
-                                <AccordionContent>
-                                    Access is controlled through Row Level Security (RLS) policies at the database level, combined with role-based permissions. Even if someone bypasses the frontend, the database enforces access rules.
-                                </AccordionContent>
-                            </AccordionItem>
-                            <AccordionItem value="item-3">
-                                <AccordionTrigger>Can we get security documentation?</AccordionTrigger>
-                                <AccordionContent>
-                                    Yes, we provide security documentation and compliance information. Contact us to request a security overview document.
-                                </AccordionContent>
-                            </AccordionItem>
-                            <AccordionItem value="item-4">
-                                <AccordionTrigger>How does organization isolation work?</AccordionTrigger>
-                                <AccordionContent>
-                                    PesoWise uses strict organization-level data isolation. Each user belongs to one organization, and all data including expenses, receipts, and balances are scoped to that organization. Cross-organization visibility is prevented at the database level.
-                                </AccordionContent>
-                            </AccordionItem>
-                            <AccordionItem value="item-5">
-                                <AccordionTrigger>Are receipts stored securely?</AccordionTrigger>
-                                <AccordionContent>
-                                    Yes, receipts are stored with organization-scoped paths and require authenticated access. Only users who are members of the organization can access receipts. File type restrictions (PDF/JPG/PNG) and size limits are enforced.
-                                </AccordionContent>
-                            </AccordionItem>
+                            {SECURITY_FAQ.slice(0, 5).map((f, i) => (
+                                <AccordionItem key={f.question} value={`item-${i + 1}`}>
+                                    <AccordionTrigger>{f.question}</AccordionTrigger>
+                                    <AccordionContent>{f.answer}</AccordionContent>
+                                </AccordionItem>
+                            ))}
                         </Accordion>
                     </div>
                 </SectionBand>
@@ -373,8 +335,7 @@ export default function SecurityPage() {
                 <Section className="py-12">
                     <div className="max-w-4xl mx-auto text-center">
                         <p className="text-gray-700 text-lg leading-relaxed">
-                            PesoWise implements enterprise-grade security practices including row level security, role-based access control, and comprehensive audit trails. Our expense management software ensures organization-level data isolation and secure receipt storage for compliance-ready financial records.
-                        </p>
+                            {SECURITY_SEO_PARAGRAPH}</p>
                     </div>
                 </Section>
 

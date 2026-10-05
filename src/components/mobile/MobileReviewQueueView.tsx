@@ -4,6 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Search } from "lucide-react";
 import { MobileReviewExpenseCard } from "./MobileReviewExpenseCard";
 import type { Expense } from "@/pages/EngineerReview";
+import { formatExpenseMonthLabel, type ExpenseMonthOption, type ExpenseMonthValue } from "@/lib/expenseMonthFilter";
 
 type Props = {
   expenses: Expense[];
@@ -14,6 +15,10 @@ type Props = {
   setStatusFilter: (v: string) => void;
   timePeriod: string;
   setTimePeriod: (v: string) => void;
+  /** Exact expense-month filter (§43). Applies immediately, same as every other control here. */
+  expenseMonth?: ExpenseMonthValue;
+  monthOptions?: ExpenseMonthOption[];
+  onExpenseMonthChange?: (v: ExpenseMonthValue) => void;
   managerFetchWarning: string | null;
   isPendingForCurrentReviewer: (exp: Expense) => boolean;
   formatSubline: (exp: Expense) => string;
@@ -36,6 +41,9 @@ export function MobileReviewQueueView({
   setStatusFilter,
   timePeriod,
   setTimePeriod,
+  expenseMonth = "all",
+  monthOptions = [{ value: "all", label: "All months" }],
+  onExpenseMonthChange = () => {},
   managerFetchWarning,
   isPendingForCurrentReviewer,
   formatSubline,
@@ -104,12 +112,30 @@ export function MobileReviewQueueView({
         </Select>
       </div>
 
+      {/* Month — exact calendar month on expenses.trip_start; applies immediately. */}
+      <Select value={expenseMonth} onValueChange={(v) => onExpenseMonthChange(v as ExpenseMonthValue)}>
+        <SelectTrigger className="text-xs" aria-label="Month">
+          <SelectValue placeholder="Month" />
+        </SelectTrigger>
+        <SelectContent>
+          {monthOptions.map((opt) => (
+            <SelectItem key={opt.value} value={opt.value}>
+              {opt.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
       {/* Content */}
       {loading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-24 w-full rounded-xl" />
           ))}
+        </div>
+      ) : expenses.length === 0 && expenseMonth !== "all" ? (
+        <div className="py-16 text-center text-muted-foreground text-sm">
+          No review expenses found for {formatExpenseMonthLabel(expenseMonth)}.
         </div>
       ) : expenses.length === 0 ? (
         <div className="py-16 text-center text-muted-foreground text-sm">

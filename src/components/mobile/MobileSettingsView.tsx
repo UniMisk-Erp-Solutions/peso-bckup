@@ -4,6 +4,7 @@ import { LanguageSelector } from "@/components/LanguageSelector";
 import { PwaInstallSettingsSection } from "@/components/PwaInstallSettingsSection";
 import { TeamManagementSection } from "@/components/TeamManagementSection";
 import { DailyExpenseReportMappingSection } from "@/components/DailyExpenseReportMappingSection";
+import { ExpenseDateLockSection } from "@/components/ExpenseDateLockSection";
 import { AdditionalInfoLayoutSection } from "@/components/AdditionalInfoLayoutSection";
 import {
   Card,
@@ -79,6 +80,8 @@ interface Props {
   hierarchyEnabled: boolean;
   teamsEnabled: boolean;
   dailyProjectReportEnabled: boolean;
+  /** Optional (defaults to false) so pre-existing test mocks that predate this prop keep typechecking without needing an update for an unrelated feature. */
+  expenseDateLockingEnabled?: boolean;
   baseFieldCustomizationEnabled: boolean;
   batchExpenseEntryEnabled: boolean;
 
@@ -163,6 +166,7 @@ export function MobileSettingsView({
   hierarchyEnabled,
   teamsEnabled,
   dailyProjectReportEnabled,
+  expenseDateLockingEnabled = false,
   baseFieldCustomizationEnabled,
   batchExpenseEntryEnabled,
   dashboardTheme,
@@ -405,6 +409,9 @@ export function MobileSettingsView({
           {dailyProjectReportEnabled &&
             organizationId &&
             userRole === "admin" && <DailyExpenseReportMappingSection />}
+          {expenseDateLockingEnabled &&
+            organizationId &&
+            userRole === "admin" && <ExpenseDateLockSection />}
 
           {/* Admin Settings */}
           <Card data-testid="mobile-settings-admin">

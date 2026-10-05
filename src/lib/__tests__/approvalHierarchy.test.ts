@@ -146,6 +146,39 @@ describe("approvalHierarchy", () => {
     ).toBe(true);
   });
 
+  // A persisted final-tier assignment cannot override role authorization.
+  // Historical rows may contain the immediate Executive here even though the
+  // reporting chain's engineer-role Manager is the real final approver.
+  it("an executive assigned at the terminal engineer tier is still denied", () => {
+    expect(
+      canRoleActOnExpense("executive", "engineer", "exec-1", "exec-1", "exec-1"),
+    ).toBe(false);
+  });
+
+  it("a team leader assigned at the terminal engineer tier is also denied", () => {
+    expect(
+      canRoleActOnExpense("team_leader", "engineer", "tl-1", "tl-1", "tl-1"),
+    ).toBe(false);
+  });
+
+  it("an executive who is NOT assigned to this expense at all is still rejected", () => {
+    expect(
+      canRoleActOnExpense("executive", "engineer", "other-1", "exec-1", "other-1"),
+    ).toBe(false);
+  });
+
+  it("an executive verifying at their OWN tier is unaffected by the engineer-tier bypass", () => {
+    expect(
+      canRoleActOnExpense("executive", "executive", "exec-1", "exec-1", "exec-1"),
+    ).toBe(true);
+  });
+
+  it("a genuine engineer assigned at the engineer tier still works exactly as before", () => {
+    expect(
+      canRoleActOnExpense("engineer", "engineer", "mgr-1", "mgr-1", "mgr-1"),
+    ).toBe(true);
+  });
+
   it("Level 2 routes to team leader immediate superior (executive)", () => {
     const flags = buildHierarchyFlags({
       approval_hierarchy: true,

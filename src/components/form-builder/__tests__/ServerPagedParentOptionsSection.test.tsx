@@ -204,4 +204,38 @@ describe("ServerPagedParentOptionsSection — draft-first import (no silent muta
     const [, , , entries] = batchSaveMock.mock.calls.at(-1)!;
     expect(entries.map((e: { parentOptionValue: string }) => e.parentOptionValue)).toEqual(["A1"]);
   });
+
+  it("saving the pending bar for an option NOT yet in existingOptions threads it through as a new option value, instead of hardcoding an empty array (regression: 'Parent option X is not an active option on this template')", async () => {
+    // "NEW1" is referenced by the imported table's branch data but is
+    // deliberately absent from existingOptions -- reproducing a dirty
+    // option the template doesn't recognize yet (a stale existingOptions
+    // snapshot, or a Matrix/import path that staged branch data before the
+    // option was confirmed created). save_parent_option_branch_configuration_atomically
+    // rejects any batch entry whose parent_option_value isn't already in
+    // the template's options[], so the fix must pass "NEW1" through as
+    // newOptionValues (the RPC's 3rd positional arg) so the same atomic
+    // call creates it before validating the entry -- never a hardcoded [].
+    batchGetMock.mockResolvedValue([
+      { parentOptionValue: "NEW1", drafts: [], configurationFingerprint: null },
+    ]);
+    render(
+      <ServerPagedParentOptionsSection {...defaultProps} existingOptions={["A1", "A2", "A3"]} section="options" />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Paste \/ Import data/i }));
+
+    const anyTextarea = document.querySelector("textarea") as HTMLTextAreaElement;
+    fireEvent.change(anyTextarea, { target: { value: "Project\tType\nNEW1\tInternal" } });
+    await waitFor(() => expect(batchGetMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(await screen.findByRole("button", { name: /Apply to draft/i }));
+    await screen.findByText(/unsaved dependent-field changes/i);
+
+    const saveBar = screen.getByText(/unsaved dependent-field changes/i).closest("div")!;
+    fireEvent.click(within(saveBar.parentElement as HTMLElement).getByRole("button", { name: /^Save/i }));
+    await waitFor(() => expect(batchSaveMock).toHaveBeenCalled());
+
+    const [, , newOptionValues, entries] = batchSaveMock.mock.calls.at(-1)!;
+    expect(newOptionValues).toEqual(["NEW1"]);
+    expect(entries.map((e: { parentOptionValue: string }) => e.parentOptionValue)).toEqual(["NEW1"]);
+  });
 });

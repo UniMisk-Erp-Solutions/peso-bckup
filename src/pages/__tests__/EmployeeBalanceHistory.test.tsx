@@ -69,9 +69,27 @@ function renderPage() {
   );
 }
 
+/**
+ * The page's own get_my_balance_transfer_history query and the Balance
+ * Ledger card's get_my_unified_balance_timeline_v3 query now both run
+ * whenever the feature is on (previously only the former existed) -- both
+ * go through this same rpcMock. Branching by RPC name here, rather than one
+ * blanket mockResolvedValue, keeps every existing assertion about the
+ * transfer-history RPC's shape correct without the two concurrent queries'
+ * calls interfering with each other.
+ */
+function lastCallTo(name: string) {
+  return [...rpcMock.mock.calls].reverse().find((call) => call[0] === name);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  rpcMock.mockResolvedValue({ data: [makeRow()], error: null });
+  rpcMock.mockImplementation((fn: string) => {
+    if (fn === "get_my_unified_balance_timeline_v3") {
+      return Promise.resolve({ data: [], error: null });
+    }
+    return Promise.resolve({ data: [makeRow()], error: null });
+  });
   mockAuth();
 });
 
@@ -260,9 +278,11 @@ describe("EmployeeBalanceHistory — pagination", () => {
   });
 
   it("sends the correct offset when moving to page 2", async () => {
-    rpcMock.mockResolvedValue({
-      data: [makeRow({ total_count: 60 })],
-      error: null,
+    rpcMock.mockImplementation((fn: string) => {
+      if (fn === "get_my_unified_balance_timeline_v3") {
+        return Promise.resolve({ data: [], error: null });
+      }
+      return Promise.resolve({ data: [makeRow({ total_count: 60 })], error: null });
     });
     renderPage();
     await screen.findByText("Bank transfer");
@@ -281,15 +301,18 @@ describe("EmployeeBalanceHistory — pagination", () => {
   it("clamps back to page 1 when the server reports fewer records than the current page needs", async () => {
     // Page 1 looks like a 60-record list, but by the time page 2 is requested
     // only one record remains — the view must not strand the user on page 2.
-    rpcMock.mockImplementation((_fn: string, args: { p_offset: number }) =>
-      Promise.resolve({
+    rpcMock.mockImplementation((fn: string, args: { p_offset: number }) => {
+      if (fn === "get_my_unified_balance_timeline_v3") {
+        return Promise.resolve({ data: [], error: null });
+      }
+      return Promise.resolve({
         data:
           args.p_offset === 0
             ? [makeRow({ total_count: 60 })]
             : [makeRow({ id: "shrunk", total_count: 1 })],
         error: null,
-      }),
-    );
+      });
+    });
     renderPage();
     await screen.findByText("Bank transfer");
 
@@ -301,12 +324,15 @@ describe("EmployeeBalanceHistory — pagination", () => {
       ),
     );
 
-    // The shrunken total forces a clamp, which re-requests offset 0.
+    // The shrunken total forces a clamp, which re-requests offset 0. Checked
+    // against this RPC's own last call specifically -- the unified-ledger
+    // query (get_my_unified_balance_timeline_v3) also runs concurrently and
+    // may legitimately be the mock's overall last call.
     await waitFor(() =>
-      expect(rpcMock).toHaveBeenLastCalledWith(
+      expect(lastCallTo("get_my_balance_transfer_history")).toEqual([
         "get_my_balance_transfer_history",
         expect.objectContaining({ p_offset: 0 }),
-      ),
+      ]),
     );
   });
 });
@@ -346,10 +372,10 @@ describe("EmployeeBalanceHistory — organization scoping", () => {
     await waitFor(() =>
       expect(screen.queryByText("Finance Admin")).not.toBeInTheDocument(),
     );
-    expect(rpcMock).toHaveBeenLastCalledWith(
+    expect(lastCallTo("get_my_balance_transfer_history")).toEqual([
       "get_my_balance_transfer_history",
       expect.objectContaining({ p_organization_id: "org-2" }),
-    );
+    ]);
   });
 
   it("passes the current organization id to the RPC", async () => {

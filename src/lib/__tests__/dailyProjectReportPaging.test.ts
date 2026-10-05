@@ -17,6 +17,7 @@ import {
 import {
   buildDailyProjectExpenseReportRows,
   dailyReportResultsToRows,
+  finalizeDailyReportGroups,
   type RawDailyReportExpense,
 } from "@/lib/buildDailyProjectExpenseReport";
 import {
@@ -112,7 +113,9 @@ function manyRows(n: number): ServerRow[] {
   return out;
 }
 
-const baseExport = { organizationId: "org-1", delay: noDelay };
+/** Default: nothing is ambiguous. Tests that care override this explicitly. */
+const noAmbiguity = async () => new Map<string, boolean>();
+const baseExport = { organizationId: "org-1", delay: noDelay, fetchAmbiguityBatch: noAmbiguity };
 
 // ─── contract parsing ───────────────────────────────────────────────────────
 describe("parseDailyReportPage", () => {
@@ -182,6 +185,34 @@ describe("serverRowToGroup", () => {
       }) as never,
     );
     expect(g.sourceExpenses[0].costColumn).toBe("other_exp");
+  });
+
+  it("graceful degradation: the CURRENTLY-LIVE RPC (before the pending Remarks migration is applied) omits `purpose` from source_expenses entirely -- must not throw, must produce an empty Remarks, not crash the report page", () => {
+    // No `purpose` key at all -- exactly what the unmigrated, currently
+    // installed report_daily_project_rows_v1 returns today.
+    expect(() =>
+      serverRowToGroup(
+        serverRow({
+          source_expenses: [
+            { id: "e1", category: "Fuel", total_amount: 5, trip_start: "2026-08-03",
+              title: "t", transaction_number: "1", voucher_no: "1", cost_column: "petrol_cost" },
+          ],
+        }) as never,
+      ),
+    ).not.toThrow();
+
+    const g = serverRowToGroup(
+      serverRow({
+        source_expenses: [
+          { id: "e1", category: "Fuel", total_amount: 5, trip_start: "2026-08-03",
+            title: "t", transaction_number: "1", voucher_no: "1", cost_column: "petrol_cost" },
+        ],
+      }) as never,
+    );
+    expect(g.sourceExpenses[0].purpose).toBeNull();
+
+    const [result] = finalizeDailyReportGroups([g]);
+    expect(result.row["Remarks"]).toBe("");
   });
 });
 
@@ -399,6 +430,86 @@ describe("runDailyProjectReportExport", () => {
   });
 });
 
+// ─── Remarks at scale: page boundaries must not lose/duplicate/reorder/merge ─
+function manyRowsWithRemarks(n: number): ServerRow[] {
+  const out: ServerRow[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(
+      serverRow({
+        track_date: `2026-08-${String((i % 28) + 1).padStart(2, "0")}`,
+        user_id: `user-${String(i % 50).padStart(4, "0")}`,
+        project_id: `P-${String(i).padStart(6, "0")}`,
+        source_expenses: [
+          {
+            id: `e-${i}`, category: "Travelling", total_amount: 10,
+            trip_start: `2026-08-${String((i % 28) + 1).padStart(2, "0")}`,
+            title: "t", transaction_number: String(i), voucher_no: String(i),
+            cost_column: "travelling_cost", purpose: `Remark-${i}`,
+          },
+        ],
+      }),
+    );
+  }
+  return out;
+}
+
+describe("Remarks at scale — page boundaries never lose, duplicate, reorder or merge remarks", () => {
+  it.each([[1], [250], [251], [1000], [1001], [5000]])(
+    "%i rows: every row keeps its own, correct, unmodified Remarks",
+    async (n) => {
+      const rows = manyRowsWithRemarks(n);
+      const { fetchPage } = pagingServer(rows, 250);
+      const out = await runDailyProjectReportExport({ ...baseExport, fetchPage });
+      const workbookRows = dailyReportResultsToRows(out.results);
+
+      expect(workbookRows).toHaveLength(n);
+
+      // Every group is a distinct (trackDate, user, project) triple in this
+      // fixture -- one source expense each -- so Remarks must be exactly that
+      // one expense's own purpose, never another row's, never merged, never
+      // duplicated, never dropped.
+      const remarksSeen = new Set(workbookRows.map((r) => r["Remarks"]));
+      expect(remarksSeen.size).toBe(n); // every Remark is unique and present exactly once
+
+      for (const row of workbookRows) {
+        const idx = Number(String(row["Remarks"]).replace("Remark-", ""));
+        expect(Number.isInteger(idx)).toBe(true);
+        expect(row["Remarks"]).toBe(`Remark-${idx}`);
+      }
+    },
+  );
+
+  it("a group spanning a page boundary still comma-joins all of its own remarks and no others (project split across two pages of source data is not possible server-side, but a wide employee-day group crossing a page cursor is)", async () => {
+    // Two full rows on either side of a 250-row page boundary, sandwiching a
+    // single project group so pagination itself never touches grouping --
+    // grouping is already complete server-side. This proves the CLIENT loop
+    // that assembles pages does not accidentally re-merge or truncate a
+    // row's own source_expenses while walking pages.
+    const rows = manyRowsWithRemarks(500);
+    // Replace the row that lands exactly on the 250th boundary with a
+    // multi-source-expense group to prove its own internal join is intact.
+    rows[249] = serverRow({
+      track_date: "2026-08-15",
+      user_id: "user-0099",
+      project_id: "P-boundary",
+      source_expenses: [
+        { id: "b1", category: "Fuel", total_amount: 10, trip_start: "2026-08-15",
+          title: "t", transaction_number: "1", voucher_no: "1", cost_column: "petrol_cost", purpose: "Auto" },
+        { id: "b2", category: "Fuel", total_amount: 10, trip_start: "2026-08-15",
+          title: "t", transaction_number: "2", voucher_no: "2", cost_column: "petrol_cost", purpose: "Private vehicle" },
+      ],
+    });
+
+    const { fetchPage } = pagingServer(rows, 250);
+    const out = await runDailyProjectReportExport({ ...baseExport, fetchPage });
+    const workbookRows = dailyReportResultsToRows(out.results);
+    const boundaryRow = workbookRows.find((r) => r["project id"] === "P-boundary");
+
+    expect(boundaryRow?.["Remarks"]).toBe("Auto, Private vehicle");
+    expect(workbookRows).toHaveLength(500);
+  });
+});
+
 // ─── output parity with the legacy pipeline ─────────────────────────────────
 describe("output parity: legacy in-browser pipeline vs server-paged pipeline", () => {
   const PID = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -424,13 +535,13 @@ describe("output parity: legacy in-browser pipeline vs server-paged pipeline", (
   // `percent` a whole-report property rather than a per-row one.
   const expenses: RawDailyReportExpense[] = [
     { id: "e1", user_id: U1, trip_start: "2026-08-03", category: "Travelling",
-      total_amount: 30, title: "Cctv", destination: "Site A", transaction_number: "12200" },
+      total_amount: 30, title: "Cctv", destination: "Site A", transaction_number: "12200", purpose: "Auto" },
     { id: "e2", user_id: U1, trip_start: "2026-08-03", category: "Hotel/Guest House",
-      total_amount: 650, title: "Stay", destination: "Site A", transaction_number: "12201" },
+      total_amount: 650, title: "Stay", destination: "Site A", transaction_number: "12201", purpose: "Stay charges" },
     { id: "e3", user_id: U1, trip_start: "2026-08-03", category: "Travelling",
-      total_amount: 40, title: "Bus", destination: "Site B", transaction_number: "12202" },
+      total_amount: 40, title: "Bus", destination: "Site B", transaction_number: "12202", purpose: "Auto" },
     { id: "e4", user_id: U2, trip_start: "2026-08-04", category: "Travelling",
-      total_amount: 55, title: "Cab", destination: "Site C", transaction_number: "12203" },
+      total_amount: 55, title: "Cab", destination: "Site C", transaction_number: "12203", purpose: "" },
   ];
 
   const fieldValuesByExpenseId = {
@@ -460,9 +571,9 @@ describe("output parity: legacy in-browser pipeline vs server-paged pipeline", (
                hotel_exp: 650, transport_exp: 0, contra_bill: 0, other_exp: 0 },
       source_expenses: [
         { id: "e1", category: "Travelling", total_amount: 30, trip_start: "2026-08-03",
-          title: "Cctv", transaction_number: "12200", voucher_no: "12200", cost_column: "travelling_cost" },
+          title: "Cctv", transaction_number: "12200", voucher_no: "12200", cost_column: "travelling_cost", purpose: "Auto" },
         { id: "e2", category: "Hotel/Guest House", total_amount: 650, trip_start: "2026-08-03",
-          title: "Stay", transaction_number: "12201", voucher_no: "12201", cost_column: "hotel_exp" },
+          title: "Stay", transaction_number: "12201", voucher_no: "12201", cost_column: "hotel_exp", purpose: "Stay charges" },
       ],
     },
     {
@@ -473,7 +584,7 @@ describe("output parity: legacy in-browser pipeline vs server-paged pipeline", (
                hotel_exp: 0, transport_exp: 0, contra_bill: 0, other_exp: 0 },
       source_expenses: [
         { id: "e3", category: "Travelling", total_amount: 40, trip_start: "2026-08-03",
-          title: "Bus", transaction_number: "12202", voucher_no: "12202", cost_column: "travelling_cost" },
+          title: "Bus", transaction_number: "12202", voucher_no: "12202", cost_column: "travelling_cost", purpose: "Auto" },
       ],
     },
     {
@@ -484,7 +595,7 @@ describe("output parity: legacy in-browser pipeline vs server-paged pipeline", (
                hotel_exp: 0, transport_exp: 0, contra_bill: 0, other_exp: 0 },
       source_expenses: [
         { id: "e4", category: "Travelling", total_amount: 55, trip_start: "2026-08-04",
-          title: "Cab", transaction_number: "12203", voucher_no: "12203", cost_column: "travelling_cost" },
+          title: "Cab", transaction_number: "12203", voucher_no: "12203", cost_column: "travelling_cost", purpose: "" },
       ],
     },
   ];
@@ -497,6 +608,29 @@ describe("output parity: legacy in-browser pipeline vs server-paged pipeline", (
     const server = await runDailyProjectReportExport({ ...baseExport, fetchPage });
 
     expect(dailyReportResultsToRows(server.results)).toEqual(dailyReportResultsToRows(legacy));
+  });
+
+  it("Remarks agree exactly between the legacy client pipeline and the server-paged pipeline", async () => {
+    const legacyRows = dailyReportResultsToRows(
+      buildDailyProjectExpenseReportRows({ expenses, profilesByUserId, fieldValuesByExpenseId, config }),
+    );
+    const { fetchPage } = pagingServer(serverRows, 250);
+    const server = await runDailyProjectReportExport({ ...baseExport, fetchPage });
+    const serverRowsOut = dailyReportResultsToRows(server.results);
+
+    // Sorted by category before employeeName/projectId; Hotel/Guest House <
+    // Travelling alphabetically, so e2 (Stay charges) precedes e1 (Auto).
+    const p1 = serverRowsOut.find((r) => r["project id"] === "P-1");
+    const p2 = serverRowsOut.find((r) => r["project id"] === "P-2");
+    const p3 = serverRowsOut.find((r) => r["project id"] === "P-3");
+    expect(p1?.["Remarks"]).toBe("Stay charges, Auto");
+    expect(p2?.["Remarks"]).toBe("Auto");
+    expect(p3?.["Remarks"]).toBe(""); // blank purpose skipped, no stray comma
+
+    // Not just spot checks -- every Remarks cell, both pipelines, must agree.
+    for (let i = 0; i < serverRowsOut.length; i++) {
+      expect(serverRowsOut[i]["Remarks"]).toBe(legacyRows[i]["Remarks"]);
+    }
   });
 
   it("keeps grouping, costs, percent and blank cells identical across a page split", async () => {

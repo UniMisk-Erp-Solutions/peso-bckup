@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { usePwaInstall } from "@/hooks/usePwaInstall";
 import { refreshManifestLink, verifyManifestForCurrentHost } from "@/lib/manifestVerification";
+import { reportError } from "@/lib/monitoring";
 
 export function usePwaInstallFlow() {
   const { t } = useTranslation("common");
@@ -41,6 +42,24 @@ export function usePwaInstallFlow() {
     const verdict = await verifyManifestForCurrentHost();
     if (!verdict.ok) {
       refreshManifestLink();
+      // This used to fail with a toast and nothing else, so a total install
+      // outage left no trace anywhere — GlitchTip held zero manifest events
+      // while every install on every host was being refused. Report it.
+      reportError(new Error(`pwa_install_blocked:${verdict.reason}`), {
+        area: "pwa",
+        operation: "verify-manifest",
+        severity: "warning",
+        errorCode: verdict.reason,
+        tags: {
+          reason: verdict.reason,
+          marker: verdict.marker ?? "none",
+          expected_marker: verdict.expectedMarker,
+        },
+        extra: {
+          host: typeof window !== "undefined" ? window.location.hostname : "unknown",
+        },
+        fingerprintKey: `pwa-install-blocked:${verdict.reason}`,
+      });
       toast({
         variant: "destructive",
         title: t("pwa.installBlockedTitle"),
@@ -55,6 +74,35 @@ export function usePwaInstallFlow() {
       if (outcome === "accepted") {
         toast({ title: t("pwa.installSuccess") });
       } else if (outcome === "unavailable") {
+        // The manifest verified, yet the browser never offered a native prompt.
+        // That means beforeinstallprompt did not fire — the app is already
+        // installed, the browser suppressed a previously dismissed prompt, or an
+        // installability criterion is failing on that device. We cannot tell from
+        // here, and previously this was invisible: the user just got a "use the
+        // browser menu" dialog and we learned nothing. Record enough context to
+        // tell those cases apart next time.
+        reportError(new Error("pwa_install_prompt_unavailable"), {
+          area: "pwa",
+          operation: "native-install-prompt",
+          severity: "warning",
+          errorCode: "prompt_unavailable",
+          tags: {
+            manifest_verified: true,
+            controlled_by_sw:
+              typeof navigator !== "undefined" && "serviceWorker" in navigator
+                ? String(Boolean(navigator.serviceWorker.controller))
+                : "unsupported",
+            standalone:
+              typeof window !== "undefined"
+                ? String(window.matchMedia("(display-mode: standalone)").matches)
+                : "unknown",
+          },
+          extra: {
+            host: typeof window !== "undefined" ? window.location.hostname : "unknown",
+            userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
+          },
+          fingerprintKey: "pwa-install-prompt-unavailable",
+        });
         setManualGuideOpen(true);
       }
       return outcome;

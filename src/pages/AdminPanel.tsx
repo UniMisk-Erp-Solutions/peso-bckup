@@ -2291,11 +2291,11 @@ export default function AdminPanel() {
                     </p>
                   </div>
                 ) : (
-                  <div data-testid="admin-expenses-scroll-container" className="relative w-full overflow-x-auto -mx-4 sm:mx-0">
-                    <Table noScrollWrapper className="min-w-max">
+                  <div data-testid="admin-expenses-scroll-container" className="relative w-full overflow-x-auto -mx-4 sm:mx-0 expense-table-dense">
+                    <Table noScrollWrapper className="w-full">
                       <TableHeader>
                         <TableRow className="border-gray-200">
-                          <TableHead className="font-semibold w-[50px]">
+                          <TableHead className="font-semibold w-10">
                             <Checkbox
                               checked={
                                 getSelectableExpenses().length > 0 &&
@@ -2305,17 +2305,25 @@ export default function AdminPanel() {
                               disabled={getSelectableExpenses().length === 0}
                             />
                           </TableHead>
-                          <TableHead className="font-semibold min-w-[80px] whitespace-nowrap">Txn #</TableHead>
-                          <TableHead className="font-semibold min-w-[140px] sm:min-w-[140px]">Employee / Employee ID</TableHead>
-                          <TableHead className="font-semibold min-w-[100px] hidden sm:table-cell">Title</TableHead>
-                          <TableHead className="font-semibold min-w-[100px] hidden md:table-cell">Category</TableHead>
-                          <TableHead className="font-semibold w-[140px] max-w-[140px] hidden sm:table-cell">Destination</TableHead>
-                          <TableHead className="font-semibold min-w-[90px] whitespace-nowrap">Amount</TableHead>
-                          <TableHead className="font-semibold min-w-[90px] hidden md:table-cell">Balance</TableHead>
-                          <TableHead className="font-semibold min-w-[100px] hidden sm:table-cell">Status</TableHead>
-                          <TableHead className="font-semibold min-w-[100px] whitespace-nowrap text-right pr-2 sm:pr-4 hidden sm:table-cell">Expense Date</TableHead>
-                          <TableHead className="font-semibold min-w-[100px] whitespace-nowrap text-right pr-2 sm:pr-4 hidden md:table-cell">{t("admin:panel.searchFilter.dateCreated")}</TableHead>
-                          <TableHead data-testid="admin-expenses-actions-header" className="sticky right-0 z-30 min-w-[150px] border-l bg-background shadow-[-4px_0_8px_-6px_rgba(0,0,0,0.25)] text-right font-semibold">Status / Actions</TableHead>
+                          <TableHead className="font-semibold w-[64px] min-w-[60px] whitespace-nowrap">Txn #</TableHead>
+                          {/* Flexible columns: min-w only, no fixed width -- table-layout:auto
+                              hands these any leftover space beyond the fixed columns' total,
+                              so wide screens show more Employee/Title/Category/Destination
+                              text instead of an empty gap before Actions. */}
+                          <TableHead className="font-semibold min-w-[150px]">Employee / Employee ID</TableHead>
+                          <TableHead className="font-semibold min-w-[130px]">Title</TableHead>
+                          <TableHead className="font-semibold min-w-[90px]">Category</TableHead>
+                          <TableHead className="font-semibold min-w-[100px]">Destination</TableHead>
+                          <TableHead className="font-semibold w-[85px] min-w-[85px] whitespace-nowrap text-right">Amount</TableHead>
+                          <TableHead className="font-semibold w-[95px] min-w-[95px] whitespace-nowrap text-right">Balance</TableHead>
+                          <TableHead className="font-semibold w-[90px] min-w-[90px]">Status</TableHead>
+                          <TableHead className="font-semibold w-[95px] min-w-[95px] whitespace-nowrap text-right pr-2 sm:pr-4">Expense Date</TableHead>
+                          {/* Must fit formatCreatedDateTime's full "Aug 27, 2026 at 12:26 PM". */}
+                          <TableHead className="font-semibold w-[165px] min-w-[165px] whitespace-nowrap text-right pr-2 sm:pr-4">{t("admin:panel.searchFilter.dateCreated")}</TableHead>
+                          {/* Fixed, compact -- previously only had a minimum, so
+                              table-layout:auto handed it 100% of any leftover
+                              table width instead of the flexible columns above. */}
+                          <TableHead data-testid="admin-expenses-actions-header" className="sticky right-0 z-30 w-[125px] min-w-[110px] max-w-[140px] border-l bg-background shadow-[-4px_0_8px_-6px_rgba(0,0,0,0.25)] text-right font-semibold">Status / Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -2325,7 +2333,7 @@ export default function AdminPanel() {
                           const isSelected = selectedExpenseIds.has(expense.id);
                           return (
                             <TableRow key={expense.id} className="group">
-                              <TableCell className="w-[50px]">
+                              <TableCell className="w-10">
                                 <Checkbox
                                   checked={isSelected}
                                   onCheckedChange={(checked) =>
@@ -2334,56 +2342,60 @@ export default function AdminPanel() {
                                   disabled={!isSelectable || bulkActionLoading}
                                 />
                               </TableCell>
-                              <TableCell className="text-xs sm:text-sm font-mono font-semibold text-blue-600 whitespace-nowrap">
+                              <TableCell className="font-mono font-semibold text-blue-600 whitespace-nowrap">
                                 {(expense as any).transaction_number || '-'}
                               </TableCell>
-                              <TableCell className="text-xs sm:text-sm">
-                                <div>
+                              <TableCell className="min-w-0">
+                                <div className="min-w-0">
                                   <div className="font-medium truncate">{expense.user_name}</div>
-                                  <div className={`text-xs truncate ${employeeIdLoginEnabled && expense.user_employee_id ? "font-mono font-medium text-foreground" : "text-muted-foreground"}`}>
+                                  <div className={`etd-secondary truncate ${employeeIdLoginEnabled && expense.user_employee_id ? "font-mono font-medium text-foreground" : "text-muted-foreground"}`}>
                                     {employeeIdLoginEnabled
                                       ? (expense.user_employee_id?.trim() || "—")
                                       : (expense.user_employee_id?.trim() || expense.user_email || "—")}
                                   </div>
                                   {!employeeIdLoginEnabled && (
-                                    <div className="text-xs text-muted-foreground truncate sm:hidden">{expense.user_email}</div>
+                                    <div className="etd-secondary text-muted-foreground truncate sm:hidden">{expense.user_email}</div>
                                   )}
                                   {expense.batch_id && (
-                                    <Badge variant="outline" className="text-xs mt-1 bg-violet-50 text-violet-700 border-violet-200">
+                                    <Badge variant="outline" className="etd-badge mt-1 bg-violet-50 text-violet-700 border-violet-200">
                                       Batch
                                     </Badge>
                                   )}
-                                  <div className="text-xs text-muted-foreground sm:hidden mt-1">{expense.destination}</div>
-                                  <div className="text-xs text-muted-foreground sm:hidden mt-1">
+                                  <div className="etd-secondary text-muted-foreground sm:hidden mt-1">{expense.destination}</div>
+                                  <div className="etd-secondary text-muted-foreground sm:hidden mt-1">
                                     Expense: {format(parseLocalDate(expense.trip_start) ?? new Date(expense.trip_start), "MMM d, yyyy")}
                                   </div>
-                                  <div className="text-xs text-muted-foreground sm:hidden">
+                                  <div className="etd-secondary text-muted-foreground sm:hidden">
                                     {t("admin:panel.searchFilter.dateCreated")}: {formatCreatedDateTime(expense.created_at)}
                                   </div>
                                 </div>
                               </TableCell>
-                              <TableCell className="font-medium text-xs sm:text-sm hidden sm:table-cell">
-                                <div className="line-clamp-2 break-words">{expense.title}</div>
+                              <TableCell className="font-medium min-w-0" title={expense.title}>
+                                <div className="truncate">{expense.title}</div>
                               </TableCell>
-                              <TableCell className="text-xs sm:text-sm hidden md:table-cell capitalize">{expense.category ?? "-"}</TableCell>
-                              <TableCell className="text-xs sm:text-sm truncate hidden sm:table-cell max-w-[140px]" title={expense.destination}>{expense.destination}</TableCell>
-                              <TableCell className="whitespace-nowrap text-xs sm:text-sm font-medium">{formatINR(expense.total_amount)}</TableCell>
-                              <TableCell className="text-xs sm:text-sm hidden md:table-cell">
-                                <div className={`font-medium whitespace-nowrap ${expense.user_balance >= expense.total_amount
+                              {/* No max-w cap -- Category/Destination are flexible columns
+                                  now (see the TableHead widths above); a fixed cap here
+                                  would fight the column's own, possibly much larger,
+                                  computed width and defeat "show more text on wide screens". */}
+                              <TableCell className="capitalize truncate min-w-0" title={expense.category ?? undefined}>{expense.category ?? "-"}</TableCell>
+                              <TableCell className="truncate min-w-0" title={expense.destination}>{expense.destination}</TableCell>
+                              <TableCell className="etd-numeric whitespace-nowrap font-medium text-right">{formatINR(expense.total_amount)}</TableCell>
+                              <TableCell className="text-right">
+                                <div className={`etd-numeric font-medium whitespace-nowrap ${expense.user_balance >= expense.total_amount
                                   ? 'text-green-600'
                                   : 'text-red-600'
                                   }`}>
                                   {formatINR(expense.user_balance)}
                                 </div>
                                 {expense.user_balance < expense.total_amount && (
-                                  <div className="text-xs text-red-500 whitespace-nowrap">
+                                  <div className="etd-secondary text-red-500 whitespace-nowrap">
                                     Insufficient balance
                                   </div>
                                 )}
                               </TableCell>
-                              <TableCell className="hidden sm:table-cell">
+                              <TableCell>
                                 {(expense as any).isResubmitted && expense.status === "submitted" ? (
-                                  <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                                  <Badge variant="outline" className="etd-badge bg-blue-50 text-blue-700 border-blue-200">
                                     Resubmitted
                                   </Badge>
                                 ) : (
@@ -2394,17 +2406,22 @@ export default function AdminPanel() {
                                   />
                                 )}
                               </TableCell>
-                              <TableCell className="whitespace-nowrap text-xs sm:text-sm text-right pr-2 sm:pr-4 hidden sm:table-cell">
+                              <TableCell className="whitespace-nowrap text-right pr-2 sm:pr-4">
                                 {format(parseLocalDate(expense.trip_start) ?? new Date(expense.trip_start), "MMM d, yyyy")}
                               </TableCell>
-                              <TableCell className="whitespace-nowrap text-xs sm:text-sm text-right pr-2 sm:pr-4 hidden md:table-cell">
+                              <TableCell className="whitespace-nowrap text-right pr-2 sm:pr-4">
                                 {formatCreatedDateTime(expense.created_at)}
                               </TableCell>
-                              <TableCell data-testid="admin-expenses-actions-cell" className="sticky right-0 z-20 min-w-[150px] border-l bg-background group-hover:bg-muted text-right">
-                                <div className="flex flex-col sm:flex-row items-end gap-2 sm:gap-0">
+                              <TableCell data-testid="admin-expenses-actions-cell" className="sticky right-0 z-20 w-[125px] min-w-[110px] max-w-[140px] border-l bg-background group-hover:bg-muted text-right">
+                                {/* sm:justify-end fixes the header/button misalignment:
+                                    this container previously had no horizontal
+                                    justify-content, so its one visible child (the
+                                    button) sat at flex-start regardless of the cell's
+                                    width -- while the header text was right-aligned. */}
+                                <div className="flex flex-col sm:flex-row sm:justify-end items-end gap-2 sm:gap-0">
                                   <div className="sm:hidden mb-2">
                                     {(expense as any).isResubmitted && expense.status === "submitted" ? (
-                                      <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                                      <Badge variant="outline" className="etd-badge bg-blue-50 text-blue-700 border-blue-200">
                                         Resubmitted
                                       </Badge>
                                     ) : (
@@ -2420,8 +2437,8 @@ export default function AdminPanel() {
                                       variant={(expense.status || "").toLowerCase() === "approved" || (expense.status || "").toLowerCase() === "rejected" ? "secondary" : "default"}
                                       size="sm"
                                       className={(expense.status || "").toLowerCase() === "approved" || (expense.status || "").toLowerCase() === "rejected"
-                                        ? "h-8 px-2 text-xs font-normal whitespace-nowrap"
-                                        : "h-8 px-2 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap"
+                                        ? "etd-control font-normal whitespace-nowrap"
+                                        : "etd-control font-medium bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap"
                                       }
                                       onClick={() => {
                                         if (expense.batch_id) {

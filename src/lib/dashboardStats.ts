@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchOrgMembershipRolesMap } from "@/lib/orgUsers";
+import { expenseMonthBounds, type ExpenseMonthValue } from "@/lib/expenseMonthFilter";
 
 export type ExpenseSummary = {
   totalAmount: number;
@@ -117,7 +118,8 @@ export async function fetchDashboardExpenseSummary(
   const { data, error } = await supabase
     .from("expenses")
     .select("status, total_amount, assigned_engineer_id")
-    .eq("user_id", opts.userId);
+    .eq("user_id", opts.userId)
+    .is("deleted_at", null); // DOC-129: mirrors get_dashboard_expense_summary's own filter
   if (error) throw error;
   return rollupExpenseRows((data || []) as SummaryRow[]);
 }
@@ -130,7 +132,8 @@ export async function fetchEngineerPendingReviewSummary(
     .from("expenses")
     .select("total_amount")
     .eq("assigned_engineer_id", engineerId)
-    .eq("status", "submitted");
+    .eq("status", "submitted")
+    .is("deleted_at", null); // DOC-129
   if (error) throw error;
   const rows = data || [];
   return {
@@ -208,4 +211,105 @@ export async function fetchOrgRoleBalanceTotals(
     else if (role === "cashier") totals.cashier += balance;
   }
   return totals;
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard Month filter: ONE server-side snapshot (get_dashboard_stats_v2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether Current Balance is the live balance or a month-end balance. "live"
+ * covers All time AND a month that has not finished yet (current month) --
+ * the server never invents a future month-end balance.
+ */
+export type DashboardBalanceBasis = "live" | "month_end";
+
+export type DashboardStatsV2 = {
+  totalAmount: number;
+  expenseCount: number;
+  pendingAmount: number;
+  approvedAmount: number;
+  pendingApprovals: number;
+  pendingApprovalsAmount: number;
+  /** null for roles that have no review queue (everyone but engineers). */
+  pendingReviews: number | null;
+  pendingReviewsAmount: number | null;
+  currentBalance: number;
+  /** null unless the caller is an admin. */
+  roleBalanceTotals: RoleBalanceTotals | null;
+  balanceBasis: DashboardBalanceBasis;
+  /** "YYYY-MM-DD" last day of the selected month when basis is month_end, else null. */
+  balanceAsOf: string | null;
+};
+
+function numOrNull(v: unknown): number | null {
+  return v === null || v === undefined ? null : Number(v);
+}
+
+export function parseDashboardStatsV2(data: unknown): DashboardStatsV2 | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  if (d.current_balance === undefined || d.total_amount === undefined) return null;
+  const rt = d.role_balance_totals as Record<string, unknown> | null | undefined;
+  const scope = (d.scope ?? {}) as Record<string, unknown>;
+  return {
+    totalAmount: Number(d.total_amount ?? 0),
+    expenseCount: Number(d.expense_count ?? 0),
+    pendingAmount: Number(d.pending_amount ?? 0),
+    approvedAmount: Number(d.approved_amount ?? 0),
+    pendingApprovals: Number(d.pending_approvals ?? 0),
+    pendingApprovalsAmount: Number(d.pending_approvals_amount ?? 0),
+    pendingReviews: numOrNull(d.pending_reviews),
+    pendingReviewsAmount: numOrNull(d.pending_reviews_amount),
+    currentBalance: Number(d.current_balance ?? 0),
+    roleBalanceTotals: rt
+      ? { employee: Number(rt.employee ?? 0), engineer: Number(rt.engineer ?? 0), cashier: Number(rt.cashier ?? 0) }
+      : null,
+    balanceBasis: scope.balance_basis === "month_end" ? "month_end" : "live",
+    balanceAsOf: typeof scope.balance_as_of === "string" ? scope.balance_as_of : null,
+  };
+}
+
+/** RPC bounds for a Dashboard month value: both null for "all" (today's behaviour, exactly). */
+export function dashboardMonthRpcBounds(month: ExpenseMonthValue): {
+  p_month_from: string | null;
+  p_month_to_exclusive: string | null;
+} {
+  const b = expenseMonthBounds(month);
+  return { p_month_from: b?.from ?? null, p_month_to_exclusive: b?.toExclusive ?? null };
+}
+
+/**
+ * One request, one consistent snapshot: every card for the selected month
+ * comes from the same response, so they can never disagree about the month.
+ * The caller's identity is taken from the session on the server -- never
+ * from an argument here.
+ */
+export async function fetchDashboardStatsV2(
+  organizationId: string,
+  month: ExpenseMonthValue,
+  signal?: AbortSignal,
+): Promise<DashboardStatsV2> {
+  // get_dashboard_stats_v2 is not in the generated Supabase types yet.
+  const client = supabase as unknown as {
+    rpc: (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => PromiseLike<{ data: unknown; error: { message: string } | null }> & {
+      abortSignal: (s: AbortSignal) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+    };
+  };
+  let q: PromiseLike<{ data: unknown; error: { message: string } | null }> = client.rpc("get_dashboard_stats_v2", {
+    p_organization_id: organizationId,
+    ...dashboardMonthRpcBounds(month),
+  });
+  // Cancel the in-flight request when superseded (newest month wins).
+  if (signal) {
+    q = (q as ReturnType<typeof client.rpc>).abortSignal(signal);
+  }
+  const { data, error } = await q;
+  if (error) throw error;
+  const parsed = parseDashboardStatsV2(data);
+  if (!parsed) throw new Error("get_dashboard_stats_v2 returned an unexpected payload");
+  return parsed;
 }

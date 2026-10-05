@@ -1,6 +1,8 @@
 import { Search, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import type { ExpenseMonthOption, ExpenseMonthValue } from "@/lib/expenseMonthFilter";
 
 const STATUS_CHIPS = [
   { value: "all", label: "All" },
@@ -15,6 +17,10 @@ interface Props {
   onSearchChange: (s: string) => void;
   statusFilter: string;
   onStatusFilterChange: (s: string) => void;
+  /** Exact month filter -- applies immediately, same as every other control here. */
+  expenseMonth?: ExpenseMonthValue;
+  monthOptions?: ExpenseMonthOption[];
+  onExpenseMonthChange?: (v: ExpenseMonthValue) => void;
 }
 
 export function MobileExpenseListFilters({
@@ -22,6 +28,9 @@ export function MobileExpenseListFilters({
   onSearchChange,
   statusFilter,
   onStatusFilterChange,
+  expenseMonth = "all",
+  monthOptions = [{ value: "all", label: "All months" }],
+  onExpenseMonthChange = () => {},
 }: Props) {
   return (
     <div className="flex flex-col gap-3">
@@ -62,6 +71,19 @@ export function MobileExpenseListFilters({
           </button>
         ))}
       </div>
+
+      <Select value={expenseMonth} onValueChange={(v) => onExpenseMonthChange(v as ExpenseMonthValue)}>
+        <SelectTrigger className="h-9 text-xs" aria-label="Month">
+          <SelectValue placeholder="Month" />
+        </SelectTrigger>
+        <SelectContent>
+          {monthOptions.map((opt) => (
+            <SelectItem key={opt.value} value={opt.value}>
+              {opt.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

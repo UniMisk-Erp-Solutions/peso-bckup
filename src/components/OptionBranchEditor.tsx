@@ -212,12 +212,12 @@ function DraftBranchCard({
           />
         </div>
         <div className="space-y-1">
-          <Label className="text-xs">Type</Label>
+          <Label className="text-xs" htmlFor={`branch-field-type-${draft.localId}`}>Type</Label>
           <Select
             value={draft.field_type}
             onValueChange={(v: BranchFieldType) => onUpdate(draft.localId, { field_type: v })}
           >
-            <SelectTrigger>
+            <SelectTrigger id={`branch-field-type-${draft.localId}`}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

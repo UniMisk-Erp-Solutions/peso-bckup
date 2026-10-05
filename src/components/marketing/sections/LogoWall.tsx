@@ -21,7 +21,7 @@ export function LogoWall() {
   return (
     <div className="py-12 border-y border-border">
       <p className="text-sm text-muted-foreground text-center mb-8">
-        Trusted by teams across industries
+        Built for teams like these
       </p>
       <div className="flex flex-wrap items-center justify-center gap-8 md:gap-12">
         {items.map((item, index) => {

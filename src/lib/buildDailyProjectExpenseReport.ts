@@ -9,6 +9,8 @@ import {
   collectMappedFieldSourceIds,
   emptyDailyReportFieldValueLookup,
   resolveMappedFieldValue,
+  resolveProjectIdCell,
+  resolveProjectNameCell,
   type DailyExpenseReportConfig,
   type DailyProjectExpenseReportRow,
   type DailyReportCostColumnKey,
@@ -147,6 +149,16 @@ export type DailyReportGroup = {
   userId: string;
   projectId: string;
   projectName: string;
+  /**
+   * True when two or more distinct, actually-submitted project_name values
+   * exist for this projectId across sibling expenses (report_daily_project_rows_v1's
+   * `project_name_ambiguous`). Only meaningful when `projectName` is blank;
+   * a row with its own resolved name is never itself ambiguous. Absent
+   * (undefined) for the legacy all-client-side pipeline, which has no access
+   * to this signal -- a blank name there renders as "no data", never
+   * "ambiguous", since there is nothing to compare against.
+   */
+  projectNameAmbiguous?: boolean;
   location: string;
   voucherNo: string;
   employeeName: string;
@@ -193,10 +205,9 @@ export function finalizeDailyReportGroups(
       // A report row groups every expense sharing (trackDate, employee,
       // project) -- e.g. every line of one multi-line batch. Each line's
       // own free-text remark (base `purpose`, shown as "Remark" after this
-      // org's own field relabeling -- see expenseFormConfig.ts) is joined
-      // here in the group's own natural order, one comma-separated string
-      // per line, duplicates and all -- this is real per-line data, not
-      // deduplicated or reordered.
+      // org's own field relabeling) is joined here in the group's own
+      // natural order, one comma-separated string per line, duplicates and
+      // all -- this is real per-line data, not deduplicated or reordered.
       const remarks = sortedSourceExpenses
         .map((src) => String(src.purpose ?? "").trim())
         .filter((p) => p !== "")
@@ -208,8 +219,8 @@ export function finalizeDailyReportGroups(
       }
       row["Track Date"] = g.trackDate;
       row["Voucher No"] = g.voucherNo;
-      row["project id"] = g.projectId;
-      row["project name"] = g.projectName;
+      row["project id"] = resolveProjectIdCell(g.projectId);
+      row["project name"] = resolveProjectNameCell(g.projectName, g.projectNameAmbiguous ?? false);
       row["Employee"] = g.employeeName;
       row["Employee Code"] = g.employeeCode;
       row["Location"] = g.location;

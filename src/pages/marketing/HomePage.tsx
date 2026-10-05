@@ -7,28 +7,59 @@ import { SEOHead } from "@/components/SEOHead";
 import { FAQAccordion } from "@/components/marketing/sections";
 import { absoluteUrl, DEFAULT_OG_IMAGE } from "@/lib/siteConfig";
 import { homepageGraphSchema } from "@/lib/schema/jsonLd";
-import { HOME_DESCRIPTION, HOME_FAQ_ITEMS, HOME_TITLE } from "@/lib/marketingCopy";
+import {
+  ADAPT_SECTION,
+  APPROVAL_SECTION,
+  BALANCE_SECTION,
+  CAPABILITY_CARDS,
+  COMPARISON_SECTION,
+  CTA_PRIMARY,
+  CTA_SECONDARY,
+  FORM_SECTION,
+  HERO_BODY,
+  HERO_CAPABILITY_LINE,
+  HERO_HEADING,
+  HERO_SUBLINE,
+  HOME_DESCRIPTION,
+  HOME_FAQ_ITEMS,
+  HOME_TITLE,
+  MONTH_SECTION,
+  PROBLEM_SECTION,
+  REPORTING_SECTION,
+  TEAMS_SECTION,
+  USE_CASES,
+} from "@/lib/marketingCopy";
+import {
+  LazyDemo,
+  LazyInteractiveApprovalWorkflow,
+  LazyInteractiveBalanceTransfer,
+  LazyInteractiveDashboardPreview,
+  LazyInteractiveExpenseFormPreview,
+  LazyInteractiveReportPreview,
+  LazyInteractiveTeamPreview,
+} from "@/components/marketing/product/lazy";
 import {
   ArrowRight,
-  Eye,
-  Clock,
-  AlertTriangle,
-  FileWarning,
-  Zap,
-  TrendingUp,
-  Shield,
+  BarChart3,
+  Briefcase,
+  CalendarRange,
+  CheckCircle2,
+  ClipboardList,
+  Factory,
   FileText,
-  CheckCircle,
+  GitBranch,
+  HardHat,
+  MapPin,
+  Shield,
+  Sprout,
+  TrendingUp,
   Users,
-  BarChart,
+  Wallet,
+  X,
+  Zap,
+  type LucideIcon,
 } from "lucide-react";
 
-const MockDashboardLarge = lazy(() =>
-  import("@/components/marketing/mocks/MockDashboardLarge").then((m) => ({ default: m.MockDashboardLarge }))
-);
-const DemoMotionPanel = lazy(() =>
-  import("@/components/marketing/mocks/DemoMotionPanel").then((m) => ({ default: m.DemoMotionPanel }))
-);
 const LogoWall = lazy(() =>
   import("@/components/marketing/sections/LogoWall").then((m) => ({ default: m.LogoWall }))
 );
@@ -39,67 +70,51 @@ const CTASection = lazy(() =>
   import("@/components/marketing/sections/CTASection").then((m) => ({ default: m.CTASection }))
 );
 
-const painPoints = [
-  { icon: Eye, text: "No visibility on who spent what" },
-  { icon: Clock, text: "Manual approvals & delays" },
-  { icon: AlertTriangle, text: "Balance mismatches and errors" },
-  { icon: FileWarning, text: "No audit trail or compliance" },
-];
+const capabilityIcons: Record<string, LucideIcon> = {
+  forms: ClipboardList,
+  approvals: GitBranch,
+  balances: Wallet,
+  projects: FileText,
+  months: CalendarRange,
+  reporting: BarChart3,
+};
+
+const useCaseIcons: LucideIcon[] = [Factory, HardHat, MapPin, Briefcase, Sprout];
 
 const howItWorksSteps = [
-  {
-    step: "1",
-    title: "Submit Expense",
-    description: "Employees submit reports with receipts and custom category fields",
-    icon: FileText,
-  },
-  {
-    step: "2",
-    title: "Hierarchy Review",
-    description: "Supervisors, team leaders, or engineers verify when configured",
-    icon: Users,
-  },
-  {
-    step: "3",
-    title: "Approve & Track",
-    description: "Admin approves with full context; balances update automatically",
-    icon: CheckCircle,
-  },
-  {
-    step: "4",
-    title: "Report & Audit",
-    description: "Export reports, filter by custom fields, maintain audit trails",
-    icon: BarChart,
-  },
+  { step: "1", title: "Configure", description: "Admins set categories, required fields and review rules", icon: ClipboardList },
+  { step: "2", title: "Capture", description: "Employees submit with receipts and project details", icon: FileText },
+  { step: "3", title: "Review", description: "Supervisors, team leaders, engineers or executives review where configured", icon: Users },
+  { step: "4", title: "Approve", description: "An authorized approver decides with full context", icon: CheckCircle2 },
+  { step: "5", title: "Balance", description: "Approved spend reduces the relevant balance and is kept in history", icon: Wallet },
+  { step: "6", title: "Report", description: "Finance reviews dashboards and generates audit-ready reports", icon: BarChart3 },
 ];
 
 const whyPesoWise = [
   {
     icon: Zap,
-    title: "Faster Approvals",
-    description:
-      "Multi-tier hierarchy and engineer verification move expenses from submission to approval in hours, not days.",
+    title: "Reviews that follow your hierarchy",
+    description: "Optional supervisor, team leader, engineer and executive tiers move expenses to the right person without giving everyone admin access.",
   },
   {
     icon: TrendingUp,
-    title: "Real-time Balances",
-    description:
-      "Cash allocations, transfer offers, and approved spend stay synchronized across roles and locations.",
+    title: "Balances you can trust",
+    description: "Cash additions, transfer offers and approved spend stay in step across roles and locations, with history to look back on.",
   },
   {
     icon: Shield,
-    title: "Audit-ready Records",
-    description:
-      "Every transaction, custom field value, and approval is logged with timestamps, actors, and documentation.",
+    title: "Audit-ready records",
+    description: "Approvals, project details and report history keep who did what, and when, easy to show at month-end.",
   },
 ];
 
-function HeroVisualFallback() {
+function CopyBlock({ heading, body, children }: { heading: string; body: string; children?: React.ReactNode }) {
   return (
-    <div
-      className="min-h-[280px] lg:min-h-[320px] rounded-2xl border border-border bg-muted/40 animate-pulse"
-      aria-hidden
-    />
+    <div>
+      <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">{heading}</h2>
+      <p className="text-muted-foreground leading-relaxed">{body}</p>
+      {children}
+    </div>
   );
 }
 
@@ -117,74 +132,261 @@ const HomePage = () => {
         structuredData={structuredData}
       />
 
-      <FullBleedBand variant="hero" className="py-20 md:py-28">
-        <div className="grid items-center gap-12 lg:grid-cols-2">
+      {/* Hero */}
+      <FullBleedBand variant="hero" className="py-16 md:py-24">
+        <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-12">
           <ScrollReveal variant="fade-up">
             <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-primary">PesoWise</p>
-            <h1 className="mb-6 text-4xl font-bold leading-tight tracking-tight text-foreground md:text-5xl lg:text-[2.75rem]">
-              Smart expense management with hierarchy approvals and ERP-ready controls
+            <h1 className="mb-5 text-4xl font-bold leading-tight tracking-tight text-foreground md:text-5xl lg:text-[2.6rem]">
+              {HERO_HEADING}
             </h1>
-            <p className="mb-4 text-lg text-muted-foreground md:text-xl">
-              Track employee expenses, automate multi-tier approvals, manage cash balances, and capture
-              custom fields per category—all in one secure, multi-organization platform.
-            </p>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Custom form builder • My Teams • Transfer offers • Audit-ready
-            </p>
-            <p className="mb-8 text-sm leading-relaxed text-muted-foreground">
-              Explore{" "}
-              <Link to="/features" className="text-primary underline-offset-4 hover:underline font-medium">
-                product features
-              </Link>
-              , see{" "}
-              <Link to="/how-it-works" className="text-primary underline-offset-4 hover:underline font-medium">
-                how workflows run
-              </Link>
-              , review{" "}
-              <Link to="/pricing" className="text-primary underline-offset-4 hover:underline font-medium">
-                pricing
-              </Link>
-              , or read our approach to{" "}
-              <Link to="/security" className="text-primary underline-offset-4 hover:underline font-medium">
-                security
-              </Link>
-              . Questions?{" "}
-              <Link to="/contact" className="text-primary underline-offset-4 hover:underline font-medium">
-                Contact us
-              </Link>{" "}
-              or review the{" "}
-              <Link to="/privacy" className="text-primary underline-offset-4 hover:underline font-medium">
-                privacy policy
-              </Link>{" "}
-              and{" "}
-              <Link to="/toc" className="text-primary underline-offset-4 hover:underline font-medium">
-                terms
-              </Link>
-              .
-            </p>
+            <p className="mb-3 text-lg text-muted-foreground md:text-xl">{HERO_BODY}</p>
+            <p className="mb-4 text-sm text-muted-foreground/90">{HERO_SUBLINE}</p>
+            <p className="mb-8 text-sm font-medium text-foreground/80">{HERO_CAPABILITY_LINE}</p>
             <div className="flex flex-col gap-4 sm:flex-row">
               <Button asChild size="lg" className="btn-glow group">
                 <Link to="/contact">
-                  Request demo
+                  {CTA_PRIMARY}
                   <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
                 </Link>
               </Button>
               <Button asChild size="lg" variant="outline">
-                <Link to="/auth">Login</Link>
+                <Link to="/how-it-works">{CTA_SECONDARY}</Link>
               </Button>
             </div>
+            <p className="mt-6 text-sm text-muted-foreground">
+              <Link to="/features" className="font-medium text-primary underline-offset-4 hover:underline">
+                Explore features
+              </Link>
+              {" · "}
+              <Link to="/pricing" className="font-medium text-primary underline-offset-4 hover:underline">
+                Pricing
+              </Link>
+              {" · "}
+              <Link to="/security" className="font-medium text-primary underline-offset-4 hover:underline">
+                Security
+              </Link>
+              {" · "}
+              <Link to="/auth" className="font-medium text-primary underline-offset-4 hover:underline">
+                Login
+              </Link>
+            </p>
           </ScrollReveal>
 
-          <ScrollReveal variant="fade-left" delay={0.2}>
-            <div className="relative">
-              <Suspense fallback={<HeroVisualFallback />}>
-                <MockDashboardLarge />
-              </Suspense>
-              <div className="absolute -bottom-4 -right-4 w-64 md:w-72 hidden sm:block">
-                <Suspense fallback={null}>
-                  <DemoMotionPanel />
-                </Suspense>
+          <ScrollReveal variant="fade-left" delay={0.2} className="min-w-0">
+            <LazyDemo minHeight={380}>
+              <LazyInteractiveDashboardPreview />
+            </LazyDemo>
+          </ScrollReveal>
+        </div>
+      </FullBleedBand>
+
+      {/* Problem */}
+      <FullBleedBand variant="soft" className="py-20">
+        <ScrollReveal className="mx-auto mb-10 max-w-3xl text-center">
+          <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">{PROBLEM_SECTION.heading}</h2>
+          <p className="text-muted-foreground">{PROBLEM_SECTION.intro}</p>
+        </ScrollReveal>
+        <StaggerContainer className="mx-auto grid max-w-4xl gap-3 sm:grid-cols-2">
+          {PROBLEM_SECTION.items.map((item) => (
+            <StaggerItem key={item}>
+              <div className="flex h-full items-center gap-3 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-destructive/10">
+                  <X className="h-3.5 w-3.5 text-destructive" aria-hidden />
+                </span>
+                <span className="text-sm text-foreground">{item}</span>
               </div>
+            </StaggerItem>
+          ))}
+        </StaggerContainer>
+        <ScrollReveal>
+          <p className="mx-auto mt-8 max-w-2xl text-center text-base font-medium text-foreground">
+            {PROBLEM_SECTION.transition}
+          </p>
+        </ScrollReveal>
+      </FullBleedBand>
+
+      {/* Old way vs PesoWise */}
+      <FullBleedBand className="py-20">
+        <ScrollReveal className="mx-auto mb-10 max-w-3xl text-center">
+          <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">{COMPARISON_SECTION.heading}</h2>
+          <p className="text-muted-foreground">{COMPARISON_SECTION.body}</p>
+        </ScrollReveal>
+        <div className="mx-auto grid max-w-3xl gap-6 sm:grid-cols-2">
+          <div className="rounded-2xl border border-border bg-muted/30 p-6">
+            <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              {COMPARISON_SECTION.oldWay.label}
+            </h3>
+            <ul className="space-y-3">
+              {COMPARISON_SECTION.oldWay.items.map((item) => (
+                <li key={item} className="flex items-start gap-2.5 text-sm text-muted-foreground">
+                  <X className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/70" aria-hidden /> {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="rounded-2xl border border-primary/30 bg-primary/5 p-6">
+            <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-primary">
+              {COMPARISON_SECTION.pesowise.label}
+            </h3>
+            <ul className="space-y-3">
+              {COMPARISON_SECTION.pesowise.items.map((item) => (
+                <li key={item} className="flex items-start gap-2.5 text-sm text-foreground">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-accent" aria-hidden /> {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </FullBleedBand>
+
+      {/* Adaptability — the core product philosophy */}
+      <FullBleedBand variant="soft" className="py-20">
+        <ScrollReveal className="mx-auto mb-10 max-w-3xl text-center">
+          <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-primary">{ADAPT_SECTION.kicker}</p>
+          <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">{ADAPT_SECTION.heading}</h2>
+          <p className="text-muted-foreground leading-relaxed">{ADAPT_SECTION.body}</p>
+        </ScrollReveal>
+
+        <div className="mx-auto mb-10 grid max-w-3xl gap-4 sm:grid-cols-3">
+          {ADAPT_SECTION.examples.map((ex) => (
+            <div key={ex.label} className="rounded-xl border border-border bg-card p-4 shadow-soft">
+              <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">{ex.label}</p>
+              <ol className="space-y-1.5">
+                {ex.steps.map((s, i) => (
+                  <li key={s} className="flex items-center gap-2 text-sm text-foreground">
+                    {i > 0 && <span className="text-muted-foreground" aria-hidden>↓</span>}
+                    {i === 0 && <span className="w-3" aria-hidden />}
+                    {s}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ))}
+        </div>
+        <p className="mx-auto mb-10 max-w-3xl text-center text-xs text-muted-foreground">{ADAPT_SECTION.disclaimer}</p>
+
+        <StaggerContainer className="mx-auto grid max-w-4xl grid-cols-2 gap-3 sm:grid-cols-3">
+          {ADAPT_SECTION.areas.map((area) => (
+            <StaggerItem key={area}>
+              <div className="flex h-full items-center gap-2 rounded-lg border border-border bg-card px-3 py-2.5 text-sm text-foreground shadow-soft">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-accent" aria-hidden /> {area}
+              </div>
+            </StaggerItem>
+          ))}
+        </StaggerContainer>
+        <p className="mx-auto mt-8 max-w-2xl text-center text-sm text-muted-foreground">{ADAPT_SECTION.scopeNote}</p>
+      </FullBleedBand>
+
+      {/* Built for real operations finance */}
+      <FullBleedBand className="py-20">
+        <ScrollReveal className="mb-12 text-center">
+          <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">Built for real operations finance</h2>
+          <p className="mx-auto max-w-2xl text-muted-foreground">
+            Operations expense management for organizations with real approval hierarchies, employee cash balances,
+            project-level data and serious reporting requirements.
+          </p>
+        </ScrollReveal>
+        <StaggerContainer className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+          {CAPABILITY_CARDS.map((card) => {
+            const Icon = capabilityIcons[card.id] ?? FileText;
+            return (
+              <StaggerItem key={card.id}>
+                <div className="card-hover h-full rounded-xl border border-border bg-card p-6 shadow-soft">
+                  <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
+                    <Icon className="h-5 w-5 text-primary" aria-hidden />
+                  </div>
+                  <h3 className="mb-2 text-base font-semibold text-foreground">{card.title}</h3>
+                  <p className="text-sm text-muted-foreground">{card.description}</p>
+                </div>
+              </StaggerItem>
+            );
+          })}
+        </StaggerContainer>
+      </FullBleedBand>
+
+      <FullBleedBand variant="soft" className="py-20">
+        <div className="grid items-center gap-10 lg:grid-cols-2">
+          <ScrollReveal variant="fade-right" className="min-w-0">
+            <CopyBlock heading={FORM_SECTION.heading} body={FORM_SECTION.body}>
+              <ul className="mt-5 space-y-2 text-sm text-muted-foreground">
+                {["Fields that change with the category", "Fields that appear after a selection", "Project details that fill together"].map((t) => (
+                  <li key={t} className="flex items-start gap-2">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-accent" aria-hidden /> {t}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-4 text-sm font-medium text-foreground/80">{FORM_SECTION.note}</p>
+            </CopyBlock>
+          </ScrollReveal>
+          <ScrollReveal variant="fade-left" delay={0.1} className="min-w-0">
+            <LazyDemo minHeight={520}>
+              <LazyInteractiveExpenseFormPreview />
+            </LazyDemo>
+          </ScrollReveal>
+        </div>
+      </FullBleedBand>
+
+      <FullBleedBand className="py-20">
+        <div className="grid items-center gap-10 lg:grid-cols-2">
+          <ScrollReveal variant="fade-right" className="lg:order-2">
+            <CopyBlock heading={APPROVAL_SECTION.heading} body={APPROVAL_SECTION.body}>
+              <p className="mt-4 text-sm font-medium text-foreground/80">
+                Your approval process doesn&apos;t have to change for PesoWise — PesoWise can be configured around it.
+              </p>
+            </CopyBlock>
+          </ScrollReveal>
+          <ScrollReveal variant="fade-left" delay={0.1} className="lg:order-1">
+            <LazyDemo minHeight={460}>
+              <LazyInteractiveApprovalWorkflow />
+            </LazyDemo>
+          </ScrollReveal>
+        </div>
+      </FullBleedBand>
+
+      <FullBleedBand variant="soft" className="py-20">
+        <ScrollReveal className="mx-auto mb-10 max-w-3xl text-center">
+          <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">{REPORTING_SECTION.heading}</h2>
+          <p className="text-muted-foreground leading-relaxed">{REPORTING_SECTION.body}</p>
+        </ScrollReveal>
+        <ScrollReveal>
+          <LazyDemo minHeight={560}>
+            <LazyInteractiveReportPreview />
+          </LazyDemo>
+        </ScrollReveal>
+        <ul className="mx-auto mt-8 grid max-w-4xl gap-3 sm:grid-cols-2">
+          {REPORTING_SECTION.bullets.map((b) => (
+            <li key={b} className="flex items-start gap-2 text-sm text-muted-foreground">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-accent" aria-hidden /> {b}
+            </li>
+          ))}
+        </ul>
+      </FullBleedBand>
+
+      <FullBleedBand className="py-16">
+        <ScrollReveal className="mx-auto max-w-3xl text-center">
+          <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">{MONTH_SECTION.heading}</h2>
+          <p className="text-muted-foreground leading-relaxed">{MONTH_SECTION.body}</p>
+          <p className="mt-3 text-sm text-muted-foreground">Try the Month selector in the dashboard preview at the top of this page.</p>
+        </ScrollReveal>
+      </FullBleedBand>
+
+      <FullBleedBand variant="soft" className="py-20">
+        <div className="grid gap-10 lg:grid-cols-2">
+          <ScrollReveal variant="fade-up">
+            <CopyBlock heading={BALANCE_SECTION.heading} body={BALANCE_SECTION.body} />
+            <div className="mt-6">
+              <LazyDemo minHeight={330}>
+                <LazyInteractiveBalanceTransfer />
+              </LazyDemo>
+            </div>
+          </ScrollReveal>
+          <ScrollReveal variant="fade-up" delay={0.1}>
+            <CopyBlock heading={TEAMS_SECTION.heading} body={TEAMS_SECTION.body} />
+            <div className="mt-6">
+              <LazyDemo minHeight={330}>
+                <LazyInteractiveTeamPreview />
+              </LazyDemo>
             </div>
           </ScrollReveal>
         </div>
@@ -194,34 +396,33 @@ const HomePage = () => {
         <div className="mx-auto max-w-3xl space-y-6 text-muted-foreground leading-relaxed">
           <h2 className="text-2xl font-bold text-foreground">What PesoWise is</h2>
           <p>
-            PesoWise is operations finance software for organizations that still wrestle with informal
-            expense capture, ad-hoc approvals, and scattered receipts. It replaces fragile spreadsheets and chat
-            threads with a single workflow: capture spend with category-specific fields, route it through
-            configurable hierarchy tiers, and keep balances truthful in near real time.
+            PesoWise is operations expense management software for organizations that run on projects, sites and
+            distributed teams. It replaces spreadsheets and chat threads with one workflow: capture spend with
+            category-specific fields, route it through your configurable approval hierarchy, keep employee balances
+            clear, and give finance reports it can rely on at month-end.
           </p>
-          <h2 className="text-2xl font-bold text-foreground pt-2">Who it is for</h2>
+          <h2 className="pt-2 text-2xl font-bold text-foreground">Who it is for</h2>
           <p>
-            Finance managers, COOs, and admin leads use PesoWise when they need consistent policy across
-            branches or project sites. My Teams gives supervisors visibility without full admin access.
-            Multi-organization tenants keep each entity isolated while leadership sees consolidated exports.
+            Finance managers, operations heads and admin leads who need consistent policy across branches and project
+            sites. My Teams gives supervisors visibility without administrator access, and each organization&apos;s
+            data stays isolated from every other.
           </p>
-          <h2 className="text-2xl font-bold text-foreground pt-2">Why it matters</h2>
+          <h2 className="pt-2 text-2xl font-bold text-foreground">Why it matters</h2>
           <p>
-            Opaque cash processes hide leakage, slow reimbursements, and create friction between
-            operations and finance. PesoWise makes intent, evidence, custom attributes, and authority explicit
-            so month-end reviews are faster and auditors see a coherent trail without chasing individuals for
-            screenshots.
+            PesoWise captures and governs operational expense activity before finance reconciles or posts it into the
+            accounting or ERP system you already use. It complements that system rather than replacing it, so project
+            spend, approvals and balances are clear before they reach the ledger.
           </p>
           <p>
-            If you are evaluating tools, start with our{" "}
+            If you are evaluating tools, start with the{" "}
             <Link className="text-primary underline-offset-4 hover:underline" to="/features">
               feature overview
             </Link>{" "}
             and{" "}
             <Link className="text-primary underline-offset-4 hover:underline" to="/contact">
               book a conversation
-            </Link>{" "}
-            —we will map your roles, limits, and rollout without reshaping your brand or internal jargon.
+            </Link>
+            . We will map your roles, limits and rollout with you.
           </p>
         </div>
       </FullBleedBand>
@@ -234,46 +435,45 @@ const HomePage = () => {
         </ScrollReveal>
       </FullBleedBand>
 
+      {/* Built for teams like yours */}
       <FullBleedBand className="py-20">
-        <ScrollReveal className="text-center mb-12">
-          <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">
-            Still managing expenses on spreadsheets, WhatsApp, or emails?
-          </h2>
-          <p className="text-muted-foreground max-w-2xl mx-auto">
-            Most teams struggle with manual expense tracking that leads to:
+        <ScrollReveal className="mb-12 text-center">
+          <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">Built for teams like yours</h2>
+          <p className="mx-auto max-w-2xl text-muted-foreground">
+            PesoWise is configured around your workflow — these are examples of where that fits, not an exhaustive list.
           </p>
         </ScrollReveal>
-
-        <StaggerContainer className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {painPoints.map((point, index) => (
-            <StaggerItem key={index}>
-              <div className="flex items-center gap-4 rounded-xl border border-destructive/20 bg-destructive/5 p-4 h-full">
-                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-destructive/10">
-                  <point.icon className="h-5 w-5 text-destructive" />
+        <StaggerContainer className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {USE_CASES.map((uc, i) => {
+            const Icon = useCaseIcons[i] ?? Briefcase;
+            return (
+              <StaggerItem key={uc.title}>
+                <div className="card-hover h-full rounded-xl border border-border bg-card p-6 shadow-soft">
+                  <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-accent/10">
+                    <Icon className="h-5 w-5 text-accent" aria-hidden />
+                  </div>
+                  <h3 className="mb-2 text-base font-semibold text-foreground">{uc.title}</h3>
+                  <p className="text-sm text-muted-foreground">{uc.description}</p>
                 </div>
-                <span className="text-sm font-medium text-foreground">{point.text}</span>
-              </div>
-            </StaggerItem>
-          ))}
+              </StaggerItem>
+            );
+          })}
         </StaggerContainer>
       </FullBleedBand>
 
       <FullBleedBand variant="soft" className="py-20">
-        <ScrollReveal className="text-center mb-12">
+        <ScrollReveal className="mb-12 text-center">
           <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">How PesoWise Works</h2>
-          <p className="text-muted-foreground">
-            A simple, four-step process from capture to audit-ready records
-          </p>
+          <p className="text-muted-foreground">From configuration to audit-ready reporting</p>
         </ScrollReveal>
-
-        <StaggerContainer className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-          {howItWorksSteps.map((step, index) => (
-            <StaggerItem key={index}>
-              <div className="relative rounded-xl border border-border bg-card p-6 shadow-soft card-hover h-full">
+        <StaggerContainer className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {howItWorksSteps.map((step) => (
+            <StaggerItem key={step.step}>
+              <div className="card-hover relative h-full rounded-xl border border-border bg-card p-6 shadow-soft">
                 <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-                  <step.icon className="h-6 w-6 text-primary" />
+                  <step.icon className="h-6 w-6 text-primary" aria-hidden />
                 </div>
-                <div className="absolute -top-3 -left-3 flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">
+                <div className="absolute -left-3 -top-3 flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">
                   {step.step}
                 </div>
                 <h3 className="mb-2 text-base font-semibold text-foreground">{step.title}</h3>
@@ -282,12 +482,16 @@ const HomePage = () => {
             </StaggerItem>
           ))}
         </StaggerContainer>
-
+        <ScrollReveal>
+          <p className="mx-auto mt-6 max-w-2xl text-center text-xs text-muted-foreground">
+            One example flow — your organization can configure its own stages, reviewers and fields.
+          </p>
+        </ScrollReveal>
         <ScrollReveal delay={0.3}>
-          <div className="mt-8 text-center">
+          <div className="mt-4 text-center">
             <Button asChild variant="outline">
               <Link to="/how-it-works">
-                Learn more about the workflow
+                Walk through it step by step
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
             </Button>
@@ -296,19 +500,16 @@ const HomePage = () => {
       </FullBleedBand>
 
       <FullBleedBand className="py-20">
-        <ScrollReveal className="text-center mb-12">
+        <ScrollReveal className="mb-12 text-center">
           <h2 className="mb-4 text-2xl font-bold text-foreground md:text-3xl">Why PesoWise?</h2>
-          <p className="text-muted-foreground">
-            Built for teams that need operational clarity—not another generic expense form
-          </p>
+          <p className="text-muted-foreground">Built for teams that need operational clarity, not another generic expense form</p>
         </ScrollReveal>
-
         <StaggerContainer className="grid gap-8 md:grid-cols-3">
-          {whyPesoWise.map((item, index) => (
-            <StaggerItem key={index}>
-              <div className="rounded-xl border border-border bg-card p-8 shadow-soft card-hover text-center h-full">
-                <div className="mb-6 mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
-                  <item.icon className="h-8 w-8 text-primary" />
+          {whyPesoWise.map((item) => (
+            <StaggerItem key={item.title}>
+              <div className="card-hover h-full rounded-xl border border-border bg-card p-8 text-center shadow-soft">
+                <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
+                  <item.icon className="h-8 w-8 text-primary" aria-hidden />
                 </div>
                 <h3 className="mb-3 text-lg font-semibold text-foreground">{item.title}</h3>
                 <p className="text-sm text-muted-foreground">{item.description}</p>
@@ -320,11 +521,9 @@ const HomePage = () => {
 
       <FullBleedBand variant="soft" className="py-20">
         <ScrollReveal className="mx-auto max-w-3xl">
-          <h2 className="text-2xl md:text-3xl font-bold text-foreground text-center mb-4">
-            Frequently asked questions
-          </h2>
-          <p className="text-center text-muted-foreground mb-10 text-sm">
-            Direct answers for buyers and teams researching expense management and ERP-friendly tools.
+          <h2 className="mb-4 text-center text-2xl font-bold text-foreground md:text-3xl">Frequently asked questions</h2>
+          <p className="mb-10 text-center text-sm text-muted-foreground">
+            Direct answers for teams researching expense management software.
           </p>
           <FAQAccordion items={HOME_FAQ_ITEMS} />
         </ScrollReveal>

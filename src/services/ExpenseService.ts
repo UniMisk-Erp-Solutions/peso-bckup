@@ -16,6 +16,10 @@ import {
 import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
 import { parseApproveExpenseV2Result } from "@/lib/approvalResult";
 import {
+  isExpenseDateLockedError as isExpenseDateLockedDbError,
+  EXPENSE_DATE_LOCKED_ERROR_CODE,
+} from "@/lib/expenseDateLockError";
+import {
   fetchFirstAdminUserId,
   fetchTeamForUser,
 } from "@/services/TeamHierarchyService";
@@ -243,19 +247,117 @@ function expenseFromReviewRpc(rpcResult: unknown, fallback: Expense): Expense {
   return fallback;
 }
 
+/**
+ * Thrown by `ExpenseService.createExpense()` / `submitExpense()` /
+ * `submitExpenseBatch()` whenever a NEW-submission attempt is blocked
+ * because the expense's date falls inside an active organization date lock
+ * -- whether caught by the client-side preflight (`isExpenseDateLockedOnServer`,
+ * before any row is written -- `draftPreserved: false`) or surfaced from the
+ * database trigger itself (SQLSTATE PW010, see src/lib/expenseDateLockError.ts
+ * for the canonical classifier this reuses) on an existing draft that raced a
+ * lock being created/activated after the draft was made (`draftPreserved: true`).
+ *
+ * `expenseId` is set whenever an expense row already exists (the draft race
+ * case), so a caller can navigate the user straight back to that draft
+ * instead of a list view that might filter it out.
+ */
+export class ExpenseDateLockedError extends Error {
+  readonly code = EXPENSE_DATE_LOCKED_ERROR_CODE;
+  readonly expenseId?: string;
+  readonly draftPreserved: boolean;
+
+  constructor(options: { expenseId?: string; draftPreserved?: boolean; message?: string } = {}) {
+    super(
+      options.message ??
+        "This expense date is closed for submission. An organization admin has locked this date range.",
+    );
+    this.name = "ExpenseDateLockedError";
+    this.expenseId = options.expenseId;
+    this.draftPreserved = options.draftPreserved ?? false;
+  }
+}
+
+/** Whether an error/value is the expense-date-lock rejection (any source). */
+export function isExpenseDateLockedError(error: unknown): error is ExpenseDateLockedError {
+  return error instanceof ExpenseDateLockedError;
+}
+
 export class ExpenseService {
+  /**
+   * Server-authoritative preflight: asks `is_expense_date_locked_v1(organization_id,
+   * expense_date)` (supabase/migrations/20261018100000_expense_date_locking_v1.sql)
+   * whether a NEW submission on this date would be rejected by
+   * `trg_enforce_expense_date_lock`.
+   *
+   * Callers MUST gate this behind their own already-in-memory
+   * `hasOrganizationFeature(ORGANIZATION_FEATURE_KEYS.expense_date_locking)` (or
+   * equivalent) check first -- this function does not check the flag itself, so
+   * the feature-OFF path never issues this extra round-trip at all (zero added
+   * latency/behavior change when the feature is off for the org). The RPC is
+   * also feature-gated server-side as defense in depth: it returns false
+   * whenever the feature is off for the org, regardless of whether lock rows
+   * exist.
+   *
+   * The underlying table/RPC are not in the generated Supabase types yet (not
+   * deployed to Production at time of writing) -- the `db` cast follows the
+   * existing workaround in src/lib/expenseFieldMemory.ts.
+   *
+   * Fails OPEN on an RPC error (e.g. not deployed yet, transient network
+   * issue): this is a UX nicety, not the real authority, so an error here
+   * must never block a submission the database itself would have allowed.
+   * The trigger remains the actual, unbypassable enforcement.
+   */
+  static async isExpenseDateLockedOnServer(
+    organizationId: string,
+    expenseDate: string,
+  ): Promise<boolean> {
+    const db = supabase as any;
+    const { data, error } = await db.rpc("is_expense_date_locked_v1", {
+      p_organization_id: organizationId,
+      p_expense_date: expenseDate,
+    });
+    if (error) {
+      console.warn("isExpenseDateLockedOnServer check failed:", error.message);
+      return false;
+    }
+    return data === true;
+  }
+
   /**
    * Create a new expense with line items
    * Automatically computes total amount from line items
    */
   static async createExpense(
     userId: string,
-    data: CreateExpenseData
+    data: CreateExpenseData,
+    options?: { dateLockingEnabled?: boolean },
   ): Promise<ExpenseWithLineItems> {
     // Get user's organization_id
     const organizationId = await getUserOrganizationId(userId);
     if (!organizationId) {
       throw new Error("User is not associated with an organization");
+    }
+
+    // Admin-controlled expense date locking preflight (DOC-138, hotfix
+    // 2026-10-01): a brand-new expense whose date is already locked should
+    // never even become a draft -- no row, no attachments moved, no custom
+    // field writes, no audit row. `options.dateLockingEnabled` is the
+    // caller's own already-in-memory `hasOrganizationFeature(
+    // ORGANIZATION_FEATURE_KEYS.expense_date_locking)` result: when omitted
+    // or false, this performs ZERO extra work and behaves byte-for-byte as
+    // before this feature existed (no RPC call at all). Only when the
+    // caller says the feature is on for this org do we spend the one extra
+    // round-trip to ask the server-authoritative `is_expense_date_locked_v1`.
+    // This is a UX nicety only -- createExpense() always inserts at
+    // status='draft', which `trg_enforce_expense_date_lock` never blocks;
+    // the real, unbypassable enforcement is the trigger firing on the later
+    // submitExpense() transition to 'submitted' (see that method's own PW010
+    // handling for the race where a lock appears after this preflight ran).
+    if (options?.dateLockingEnabled) {
+      const locked = await this.isExpenseDateLockedOnServer(organizationId, data.trip_start);
+      if (locked) {
+        throw new ExpenseDateLockedError({ draftPreserved: false });
+      }
     }
 
     // No line items in creation flow; use provided amount as total
@@ -1409,6 +1511,28 @@ export class ExpenseService {
     }
 
     const expenseDateStr = formatExpenseDateString(payload.shared.expenseDate);
+
+    // Admin-controlled expense date locking preflight (DOC-138, hotfix
+    // 2026-10-01): every line in a batch shares ONE trip date
+    // (BatchSubmitSharedInput.expenseDate), so a single check here blocks
+    // the ENTIRE batch -- no expense_batches row, no child expense rows, no
+    // attachments, no custom-field writes -- before any of it is created.
+    // This mirrors the ExpenseBatchForm client-side check (UX layer, against
+    // the locally-fetched lock list) with the server-authoritative RPC as
+    // the real backstop for a lock created/activated after that list was
+    // fetched. Reuses the existing `isOrganizationFeatureEnabled` org-features
+    // query this method already pays for one line above (isBatchExpenseEntryEnabled),
+    // so this is consistent with the method's own existing round-trip budget.
+    const dateLockingEnabled = await this.isOrganizationFeatureEnabled(
+      organizationId,
+      ORGANIZATION_FEATURE_KEYS.expense_date_locking,
+    );
+    if (dateLockingEnabled) {
+      const locked = await this.isExpenseDateLockedOnServer(organizationId, expenseDateStr);
+      if (locked) {
+        throw new ExpenseDateLockedError({ draftPreserved: false });
+      }
+    }
     const totalAmount = batchLineTotal(
       payload.lines.map((l) => ({
         clientId: "",
@@ -1516,10 +1640,20 @@ export class ExpenseService {
         }
 
         await enforceMaxAttachmentSize(expenseId, organizationId);
-        await this.submitExpense(expenseId, userId);
 
-        // Single atomic replace for regular + branch values. A failure throws and
-        // marks this line as failed (caught below) instead of a false success.
+        // INCIDENT hotfix (2026-09): custom field values must be written
+        // BEFORE the status transition to 'submitted', not after. The old
+        // order called submitExpense() first — a status-transitioning UPDATE
+        // that is its own separate, already-committed round trip — then
+        // wrote custom field values in a LATER round trip. If that later
+        // write failed (or, before this incident's client fixes, silently
+        // produced an incomplete payload), the catch block below marked the
+        // LINE as failed but the expense was already, permanently, sitting
+        // in the database as `status = 'submitted'` with missing required
+        // data: a real, reviewable expense with no rollback. Writing values
+        // first also lets the new validate_expense_custom_fields_for_submission_v1
+        // trigger (fired on the submitExpense status UPDATE) see the
+        // complete, authoritative data it needs instead of nothing.
         const hasTemplateValues =
           !!line.formFieldValues && Object.keys(line.formFieldValues).length > 0;
         const hasBranchValues =
@@ -1539,6 +1673,8 @@ export class ExpenseService {
           });
           await this.replaceExpenseFormFieldValues(expenseId, organizationId, payload);
         }
+
+        await this.submitExpense(expenseId, userId);
 
         const { data: txnRow } = await supabase
           .from("expenses")
@@ -1649,13 +1785,7 @@ export class ExpenseService {
     };
   }
 
-  /**
-   * Org-admin verify, bypassing the reviewer hierarchy — same authorization
-   * the reviewer-queue admin path already uses. Public (was previously
-   * private/internal-only) so the admin submit-for-employee page can call it
-   * directly as one of the status-choice options at creation time.
-   */
-  static async adminVerifyExpense(
+  private static async adminVerifyExpense(
     expenseId: string,
     adminId: string,
     organizationId: string,
@@ -1751,8 +1881,52 @@ export class ExpenseService {
     }
 
     if (isAdmin && expense.user_id === userId) {
+      // BUG FIX (2026-10-01): this UPDATE's result used to be completely
+      // unchecked -- if it failed (e.g. the expense-date-lock trigger
+      // rejects the transition to 'submitted' once that trigger is
+      // deployed), execution still fell through into approveExpense() as if
+      // the status change had succeeded, which would approve an expense
+      // whose status transition was actually rejected. An admin submitting
+      // their OWN expense is NOT exempt from a date lock -- this performs
+      // the exact same update + error/result check a normal employee
+      // submission goes through below, with no special-cased bypass.
       if (expense.status !== "submitted") {
-        await supabase.from("expenses").update({ status: "submitted" }).eq("id", expenseId);
+        const { data: updatedRow, error: updateError } = await supabase
+          .from("expenses")
+          .update({ status: "submitted" })
+          .eq("id", expenseId)
+          .select("id, status")
+          .maybeSingle();
+
+        if (updateError) {
+          if (isExpenseDateLockedDbError(updateError)) {
+            // The expense row itself is untouched (the trigger rejected the
+            // whole transaction) -- it remains queryable as whatever status
+            // it was before this call (draft/rejected), never 'submitted'.
+            throw new ExpenseDateLockedError({ expenseId, draftPreserved: true });
+          }
+          throw updateError;
+        }
+
+        let confirmedStatus = updatedRow?.status;
+        if (!updatedRow) {
+          // Some RLS/select configurations can return no row on an update
+          // that nonetheless committed -- refetch before concluding failure,
+          // matching the pattern already used elsewhere in this function.
+          const { data: refetched, error: refetchErr } = await supabase
+            .from("expenses")
+            .select("id, status")
+            .eq("id", expenseId)
+            .maybeSingle();
+          if (refetchErr) throw refetchErr;
+          confirmedStatus = refetched?.status;
+        }
+
+        if (confirmedStatus !== "submitted") {
+          throw new Error(
+            `Submission failed: expense status is still "${confirmedStatus ?? expense.status}". Please try again or contact support.`,
+          );
+        }
       }
       return await this.approveExpense(expenseId, userId, "Auto-approved: Admin expense");
     }
@@ -1784,7 +1958,15 @@ export class ExpenseService {
         .select()
         .maybeSingle();
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        // Existing-draft race (DOC-138): a lock created/activated after this
+        // draft existed rejects the submit transition at the trigger layer.
+        // The row is untouched -- it remains queryable as 'draft'/'rejected'.
+        if (isExpenseDateLockedDbError(updateError)) {
+          throw new ExpenseDateLockedError({ expenseId, draftPreserved: true });
+        }
+        throw updateError;
+      }
       // Some orgs/environments may block "UPDATE ... returning" via RLS/select policies.
       // Treat it as success if the row can be refetched.
       let submittedExpense = updatedExpense;
@@ -1887,7 +2069,15 @@ export class ExpenseService {
       .select()
       .maybeSingle();
 
-    if (updateError) throw updateError;
+    if (updateError) {
+      // Existing-draft race (DOC-138): a lock created/activated after this
+      // draft existed rejects the submit transition at the trigger layer.
+      // The row is untouched -- it remains queryable as 'draft'/'rejected'.
+      if (isExpenseDateLockedDbError(updateError)) {
+        throw new ExpenseDateLockedError({ expenseId, draftPreserved: true });
+      }
+      throw updateError;
+    }
     let submittedExpense = updatedExpense;
     if (!submittedExpense) {
       const { data: refetched, error: refetchErr } = await supabase

@@ -3,7 +3,7 @@
   "welcome": "Welcome, {{name}}",
   "quickActions": "Quick actions",
   "recentExpenses": "Recent expenses",
-  "pendingApprovals": "Pending approvals",
+  "pendingApprovals": "Pending Approvals",
   "totalSubmitted": "Total submitted",
   "totalApproved": "Total approved",
   "thisMonth": "This month",
@@ -15,7 +15,6 @@
   "currentBalance": "Current Balance",
   "totalExpenses": "Total Expenses",
   "pendingReviews": "Pending Reviews",
-  "pendingApprovals": "Pending Approvals",
   "pendingAmount": "Pending Amount",
   "totalEmployeeBalance": "Total Employee Balance",
   "totalManagerBalance": "Total Manager Balance",
@@ -85,5 +84,27 @@
     "expenseFallback": "Expense",
     "noRecentActivity": "No recent activity.",
     "memberFallback": "Member"
+  },
+  "monthFilter": {
+    "period": "Dashboard period",
+    "label": "Month",
+    "aria": "Dashboard month",
+    "allTime": "All time",
+    "showing": "Showing {{month}}",
+    "showingAll": "Showing all time",
+    "updating": "Updating…",
+    "scopeNote": "Expense cards use the expense date. Pending items show their status right now. Balances are as of month end.",
+    "loadFailedTitle": "Could not load that month",
+    "loadFailedBody": "Showing the previous period instead."
+  },
+  "monthCards": {
+    "balanceAsOf": "Balance as of {{date}}",
+    "balanceToday": "Balance as of today",
+    "amountIn": "Expense amount · {{month}}",
+    "expensesIn": "Expenses · {{month}}",
+    "expenseDateTip": "Expenses whose expense date falls in {{month}}",
+    "pendingIn": "Pending in {{month}}",
+    "pendingTip": "Amount of expenses dated in {{month}} that are pending right now (current status, not the status on the last day of the month)",
+    "asOf": "as of {{date}}"
   }
 }

@@ -1,6 +1,6 @@
 # Project ID / Project Name — full backfill + export flagging — 2026-08-26
 
-**Doc ID:** DOC-113 second follow-up
+**Doc ID:** DOC-141 (formerly DOC-113 second follow-up / DOC-114) (renumbered on the 2026-10-05 upstream sync — see DOC-143; the pre-sync `peso-bckup` index gave this a different ID than upstream's independently-numbered catalog)
 **Status:** deployed to backup instance. NOT applied to Production.
 **Scope:** MicroLink organization, **all expense statuses** (not approved-only — this round covers Batch Review, which happens before approval).
 

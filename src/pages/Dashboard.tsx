@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Coins, Clock, CheckCircle, XCircle, TrendingUp, Users, Receipt, Wallet, Bell, CheckCircle as CheckCircleIcon, XCircle as XCircleIcon, AlertCircle, ArrowRight, UserPlus, ArrowLeft } from "lucide-react";
 import { formatINR } from "@/lib/format";
 import { useNavigate } from "react-router-dom";
@@ -27,7 +28,17 @@ import {
   fetchEngineerPendingReviewSummary,
   fetchMyTeamsPendingSummary,
   fetchOrgRoleBalanceTotals,
+  fetchDashboardStatsV2,
 } from "@/lib/dashboardStats";
+import {
+  ALL_MONTHS,
+  expenseMonthOfDateString,
+  formatExpenseMonthLabel,
+  type ExpenseMonthOption,
+  type ExpenseMonthValue,
+} from "@/lib/expenseMonthFilter";
+import { buildDashboardMonthOptions, formatBalanceAsOfDate } from "@/lib/dashboardMonthScope";
+import { createMonthFetchGuardState, invalidateMonthFetch, runMonthFetch } from "@/lib/monthFetchGuard";
 import {
   hasApprovalHierarchy,
   hasTeamsEnabled,
@@ -55,6 +66,9 @@ interface DashboardStats {
   totalEmployeeBalance?: number;
   totalEngineerBalance?: number;
   totalCashierBalance?: number;
+  /** "live" = the real current balance (All time / unfinished month); "month_end" = balance as of balanceAsOf. */
+  balanceBasis?: "live" | "month_end";
+  balanceAsOf?: string | null;
 }
 
 interface Notification {
@@ -145,6 +159,23 @@ export default function Dashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [statsRefreshing, setStatsRefreshing] = useState(false);
+  // Dashboard Month filter. "all" = today's behaviour exactly. The REF is what
+  // fetchStats reads, so a realtime/notification-driven refresh always refreshes
+  // the CURRENTLY selected month, never a stale closure's month.
+  const [selectedMonth, setSelectedMonth] = useState<ExpenseMonthValue>(ALL_MONTHS);
+  const selectedMonthRef = useRef<ExpenseMonthValue>(ALL_MONTHS);
+  const [monthOptions, setMonthOptions] = useState<ExpenseMonthOption[]>([
+    { value: ALL_MONTHS, label: "All time" },
+  ]);
+  const statsGuardRef = useRef(createMonthFetchGuardState());
+  // Which month the numbers ON SCREEN belong to (differs from selectedMonth
+  // while a new month is loading -- the old values stay visible, dimmed).
+  const [displayedMonth, setDisplayedMonthState] = useState<ExpenseMonthValue>(ALL_MONTHS);
+  const displayedMonthRef = useRef<ExpenseMonthValue>(ALL_MONTHS);
+  const setDisplayedMonth = (m: ExpenseMonthValue) => {
+    displayedMonthRef.current = m;
+    setDisplayedMonthState(m);
+  };
   const {
     progress: dashboardProgress,
     startOperation: startDashboardProgress,
@@ -172,6 +203,49 @@ export default function Dashboard() {
   const [loadingRequests, setLoadingRequests] = useState(false);
   const { toast } = useToast();
 
+  // A different user / role / organization must never inherit the previous
+  // scope's month (MicroLink "August" must not leak into another org).
+  // Declared BEFORE the load effect so the ref is already "all" when it runs.
+  useEffect(() => {
+    invalidateMonthFetch(statsGuardRef.current);
+    selectedMonthRef.current = ALL_MONTHS;
+    setSelectedMonth(ALL_MONTHS);
+    setDisplayedMonth(ALL_MONTHS);
+    setMonthOptions([{ value: ALL_MONTHS, label: "All time" }]);
+  }, [user?.id, userRole, organizationId]);
+
+  // Month dropdown range: two 1-row queries (earliest trip_start of the
+  // relevant accessible expenses), never a scan and never row downloads.
+  useEffect(() => {
+    if (!user?.id || !organizationId || !userRole || userRole === "master_admin") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        let q = supabase
+          .from("expenses")
+          .select("trip_start")
+          .eq("organization_id", organizationId)
+          .is("deleted_at", null)
+          .order("trip_start", { ascending: true })
+          .limit(1);
+        if (userRole !== "admin") q = q.eq("user_id", user.id);
+        const { data } = await q.maybeSingle();
+        if (cancelled) return;
+        setMonthOptions(
+          buildDashboardMonthOptions({
+            earliest: data?.trip_start ? expenseMonthOfDateString(data.trip_start) : null,
+            now: new Date(),
+          }),
+        );
+      } catch (error) {
+        if (!cancelled) console.warn("Could not resolve the Dashboard month range:", error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, userRole, organizationId]);
+
   useEffect(() => {
     if (userRole === "master_admin") return; // redirecting to /master
     if (!user?.id || !userRole) return;
@@ -181,7 +255,7 @@ export default function Dashboard() {
       void fetchReturnRequests();
     }
 
-    const cacheKey = dashboardStatsCacheKey(user.id, userRole, organizationId);
+    const cacheKey = dashboardStatsCacheKey(user.id, userRole, organizationId, selectedMonthRef.current);
     const cached = readDashboardStatsCache(cacheKey);
     if (cached) {
       setStats((prev) => ({
@@ -392,7 +466,7 @@ export default function Dashboard() {
         const merged = { ...prev, currentBalance: nextBalance };
         if (user?.id && userRole) {
           writeDashboardStatsCache(
-            dashboardStatsCacheKey(user.id, userRole, organizationId),
+            dashboardStatsCacheKey(user.id, userRole, organizationId, selectedMonthRef.current),
             merged,
           );
         }
@@ -405,81 +479,141 @@ export default function Dashboard() {
     }
   };
 
+  /**
+   * All-time stats via the three long-standing RPC/queries. Kept ONLY as the
+   * safety net for "All time" if get_dashboard_stats_v2 is unavailable -- a
+   * month can never be answered by it (it has no month scope).
+   */
+  const loadLegacyAllTimeStats = async (userId: string, isAdmin: boolean): Promise<DashboardStats> => {
+    // All independent fetches run in parallel.
+    const [profileResult, expenseSummary, pendingReviewResult, roleTotalsResult] =
+      await Promise.all([
+        supabase.from("profiles").select("balance").eq("user_id", userId).maybeSingle(),
+        fetchDashboardExpenseSummary(supabase, {
+          organizationId: isAdmin ? organizationId : null,
+          userId: isAdmin ? null : userId,
+        }),
+        userRole === "engineer"
+          ? myTeamsEnabled && organizationId
+            ? fetchMyTeamsPendingSummary(organizationId)
+            : fetchEngineerPendingReviewSummary(supabase, userId)
+          : Promise.resolve(null),
+        isAdmin && organizationId
+          ? fetchOrgRoleBalanceTotals(supabase, organizationId)
+          : Promise.resolve(null),
+      ]);
+
+    const { data: profile, error: profileError } = profileResult;
+    if (profileError) throw profileError;
+
+    return {
+      totalExpenses: isAdmin ? expenseSummary.totalAmount : expenseSummary.expenseCount,
+      pendingAmount: expenseSummary.pendingAmount,
+      approvedAmount: expenseSummary.approvedAmount,
+      currentBalance: profile?.balance ?? 0,
+      pendingReviews: pendingReviewResult ? pendingReviewResult.count : 0,
+      pendingReviewsAmount: pendingReviewResult ? pendingReviewResult.amount : 0,
+      pendingApprovals: expenseSummary.pendingApprovals,
+      pendingApprovalsAmount: expenseSummary.pendingApprovalsAmount,
+      totalEmployeeBalance: isAdmin ? (roleTotalsResult?.employee ?? 0) : undefined,
+      totalEngineerBalance: isAdmin ? (roleTotalsResult?.engineer ?? 0) : undefined,
+      totalCashierBalance: isAdmin ? (roleTotalsResult?.cashier ?? 0) : undefined,
+      balanceBasis: "live",
+      balanceAsOf: null,
+    };
+  };
+
+  /**
+   * Loads ONE consistent snapshot for the CURRENTLY selected month (read from
+   * the ref, never a captured closure value) and swaps every card at once.
+   * Newest request wins: an older/slower response -- e.g. August arriving
+   * after September was selected -- is dropped by the generation guard.
+   */
   const fetchStats = async (opts?: { background?: boolean }) => {
-    const seq = ++statsSeqRef.current;
-    try {
-      if (!user?.id || !userRole) return;
-      if (opts?.background) {
-        setStatsRefreshing(true);
-      } else {
-        setLoading(true);
+    if (!user?.id || !userRole) return;
+    const month = selectedMonthRef.current;
+    const userId = user.id;
+    const isAdmin = userRole === "admin";
+    const orgId = organizationId;
+    if (opts?.background) {
+      setStatsRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
+    const outcome = await runMonthFetch<DashboardStats>(
+      statsGuardRef.current,
+      () => selectedMonthRef.current === month,
+      async (signal) => {
+        if (orgId) {
+          try {
+            const v = await fetchDashboardStatsV2(orgId, month, signal);
+            return {
+              totalExpenses: isAdmin ? v.totalAmount : v.expenseCount,
+              pendingAmount: v.pendingAmount,
+              approvedAmount: v.approvedAmount,
+              currentBalance: v.currentBalance,
+              pendingReviews: v.pendingReviews ?? 0,
+              pendingReviewsAmount: v.pendingReviewsAmount ?? 0,
+              pendingApprovals: v.pendingApprovals,
+              pendingApprovalsAmount: v.pendingApprovalsAmount,
+              totalEmployeeBalance: isAdmin ? (v.roleBalanceTotals?.employee ?? 0) : undefined,
+              totalEngineerBalance: isAdmin ? (v.roleBalanceTotals?.engineer ?? 0) : undefined,
+              totalCashierBalance: isAdmin ? (v.roleBalanceTotals?.cashier ?? 0) : undefined,
+              balanceBasis: v.balanceBasis,
+              balanceAsOf: v.balanceAsOf,
+            };
+          } catch (error) {
+            // A month has no legacy equivalent -- only All time may fall back.
+            if (month !== ALL_MONTHS || signal?.aborted) throw error;
+            console.warn("get_dashboard_stats_v2 unavailable, using the legacy All-time path:", error);
+          }
+        }
+        return loadLegacyAllTimeStats(userId, isAdmin);
+      },
+    );
+
+    if (outcome.kind === "stale" || outcome.kind === "aborted") return;
+    if (outcome.kind === "error") {
+      console.error("Error fetching stats:", outcome.error);
+      // The numbers on screen still belong to the previously displayed month:
+      // never leave the dropdown claiming a month the cards do not show.
+      const shown = displayedMonthRef.current;
+      if (selectedMonthRef.current !== shown) {
+        selectedMonthRef.current = shown;
+        setSelectedMonth(shown);
+        toast({
+          variant: "destructive",
+          title: t("monthFilter.loadFailedTitle", { defaultValue: "Could not load that month" }),
+          description: t("monthFilter.loadFailedBody", { defaultValue: "Showing the previous period instead." }),
+        });
       }
-
-      const isAdmin = userRole === "admin";
-
-      // All independent fetches run in parallel.
-      const [profileResult, expenseSummary, pendingReviewResult, roleTotalsResult] =
-        await Promise.all([
-          supabase.from("profiles").select("balance").eq("user_id", user.id).maybeSingle(),
-          fetchDashboardExpenseSummary(supabase, {
-            organizationId: isAdmin ? organizationId : null,
-            userId: isAdmin ? null : user.id,
-          }),
-          userRole === "engineer"
-            ? myTeamsEnabled && organizationId
-              ? fetchMyTeamsPendingSummary(organizationId)
-              : fetchEngineerPendingReviewSummary(supabase, user.id)
-            : Promise.resolve(null),
-          isAdmin && organizationId
-            ? fetchOrgRoleBalanceTotals(supabase, organizationId)
-            : Promise.resolve(null),
-        ]);
-
-      const { data: profile, error: profileError } = profileResult;
-      if (profileError) throw profileError;
-
-      let pendingReviews = 0;
-      let pendingReviewsAmount = 0;
-      if (pendingReviewResult) {
-        pendingReviews = pendingReviewResult.count;
-        pendingReviewsAmount = pendingReviewResult.amount;
-      }
-
-      let totalEmployeeBalance = 0;
-      let totalEngineerBalance = 0;
-      let totalCashierBalance = 0;
-      if (roleTotalsResult) {
-        totalEmployeeBalance = roleTotalsResult.employee;
-        totalEngineerBalance = roleTotalsResult.engineer;
-        totalCashierBalance = roleTotalsResult.cashier;
-      }
-
-      const nextStats: DashboardStats = {
-        totalExpenses: isAdmin ? expenseSummary.totalAmount : expenseSummary.expenseCount,
-        pendingAmount: expenseSummary.pendingAmount,
-        approvedAmount: expenseSummary.approvedAmount,
-        currentBalance: profile?.balance ?? 0,
-        pendingReviews,
-        pendingReviewsAmount,
-        pendingApprovals: expenseSummary.pendingApprovals,
-        pendingApprovalsAmount: expenseSummary.pendingApprovalsAmount,
-        totalEmployeeBalance: isAdmin ? totalEmployeeBalance : undefined,
-        totalEngineerBalance: isAdmin ? totalEngineerBalance : undefined,
-        totalCashierBalance: isAdmin ? totalCashierBalance : undefined,
-      };
-
-      if (seq !== statsSeqRef.current) return;
-      setStats(nextStats);
-      writeDashboardStatsCache(
-        dashboardStatsCacheKey(user.id, userRole, organizationId),
-        nextStats,
-      );
-    } catch (error) {
-      console.error("Error fetching stats:", error);
-    } finally {
       setLoading(false);
       setStatsRefreshing(false);
+      return;
     }
+    setStats(outcome.data);
+    setDisplayedMonth(month);
+    writeDashboardStatsCache(dashboardStatsCacheKey(userId, userRole, orgId, month), outcome.data);
+    setLoading(false);
+    setStatsRefreshing(false);
+  };
+
+  const handleMonthChange = (value: string) => {
+    const next = (value || ALL_MONTHS) as ExpenseMonthValue;
+    if (next === selectedMonthRef.current) return;
+    selectedMonthRef.current = next;
+    setSelectedMonth(next);
+    // Stale-while-revalidate for a month already seen; otherwise the previous
+    // values stay visible (dimmed, "Updating…") until the new snapshot lands.
+    if (user?.id && userRole) {
+      const cached = readDashboardStatsCache(dashboardStatsCacheKey(user.id, userRole, organizationId, next));
+      if (cached) {
+        setStats((prev) => ({ ...prev, ...cached }));
+        setDisplayedMonth(next);
+      }
+    }
+    void fetchStats({ background: true });
   };
 
   const fetchNotifications = async () => {
@@ -685,12 +819,6 @@ export default function Dashboard() {
           return;
         }
 
-        // 1) Profile-level assignment has highest priority
-        const assignedCashierId = (requesterProfile as any)?.assigned_cashier_id || null;
-        if (assignedCashierId) {
-          targetUserId = assignedCashierId;
-        }
-
         // Helper to ensure selected user is an active cashier in the same org
         const pickActiveCashier = async (candidateIds: string[]): Promise<string | null> => {
           if (!candidateIds.length) return null;
@@ -712,6 +840,35 @@ export default function Dashboard() {
           }
           return memberships?.[0]?.user_id || null;
         };
+
+        // 1) Profile-level assignment has highest priority -- but only when
+        // that cashier/admin is still an active member of the requester's
+        // organization. assigned_cashier_id is never cleared when a cashier
+        // is deactivated or reassigned (the lifecycle-impact preflight in
+        // 20261009000000_user_lifecycle_reactivation_and_impact.sql only
+        // reports this as an orphaned reference, it doesn't clear it), so
+        // trusting it blindly used to hard-fail the whole return-money flow
+        // for any employee whose assigned cashier had since left, even
+        // though the fallbacks below (2-4) could resolve a valid one.
+        const assignedCashierId = (requesterProfile as any)?.assigned_cashier_id || null;
+        if (assignedCashierId) {
+          let assignedMembershipQuery = supabase
+            .from("organization_memberships")
+            .select("user_id")
+            .eq("user_id", assignedCashierId)
+            .in("role", ["cashier", "admin"])
+            .eq("is_active", true);
+          if (requesterOrgId) {
+            assignedMembershipQuery = assignedMembershipQuery.eq("organization_id", requesterOrgId);
+          }
+          const { data: assignedMembership, error: assignedMembershipError } = await assignedMembershipQuery.maybeSingle();
+          if (assignedMembershipError) {
+            console.error("Error validating assigned cashier membership:", assignedMembershipError);
+          } else if (assignedMembership?.user_id) {
+            targetUserId = assignedMembership.user_id;
+          }
+          // else: stale/invalid assignment -- fall through to steps 2-4.
+        }
 
         // 2) Preferred existing RPC flow
         if (!targetUserId && managerId) {
@@ -863,29 +1020,43 @@ export default function Dashboard() {
     }
   };
 
+  // ── Month scope of the numbers currently ON SCREEN ──
+  const monthScoped = displayedMonth !== ALL_MONTHS;
+  const monthLabel = formatExpenseMonthLabel(displayedMonth);
+  const balanceIsMonthEnd = monthScoped && stats.balanceBasis === "month_end" && Boolean(stats.balanceAsOf);
+  const balanceAsOfLabel = stats.balanceAsOf ? formatBalanceAsOfDate(stats.balanceAsOf) : "";
+
   const statCards: Array<{
     id: string;
     title: string;
     value: string | number;
     icon: any;
     description: string;
+    /** Longer explanation shown as a native tooltip on the description line. */
+    tooltip?: string;
     highlight: boolean;
     onClick?: () => void;
   }> = [
     {
       id: "currentBalance",
       title: t("currentBalance"),
+      // A month-end balance is a point-in-time value from the server: it is
+      // NOT the live balance, so the live auth-context balance must not replace it.
       value: formatINR(
-        userRole === "admin"
+        balanceIsMonthEnd || userRole === "admin"
           ? stats.currentBalance
           : (userBalance ?? stats.currentBalance)
       ),
       icon: Wallet,
-      description: balanceHistoryEnabled
+      description: balanceIsMonthEnd
+        ? t("monthCards.balanceAsOf", { date: balanceAsOfLabel, defaultValue: "Balance as of {{date}}" })
+        : monthScoped
+        ? t("monthCards.balanceToday", { defaultValue: "Balance as of today" })
+        : balanceHistoryEnabled
         ? tTransfers("balanceHistory.viewBalanceHistory")
         : t("availableBalance"),
       highlight: true,
-      ...(balanceHistoryEnabled
+      ...(balanceHistoryEnabled && !monthScoped
         ? { onClick: () => navigate("/balance-history") }
         : {}),
     },
@@ -894,7 +1065,14 @@ export default function Dashboard() {
       title: t("totalExpenses"),
       value: userRole === "admin" ? formatINR(stats.totalExpenses as number) : stats.totalExpenses,
       icon: Coins,
-      description: userRole === "admin" ? t("totalAmountAllExpenses") : t("allTimeExpenses"),
+      description: monthScoped
+        ? userRole === "admin"
+          ? t("monthCards.amountIn", { month: monthLabel, defaultValue: "Expense amount · {{month}}" })
+          : t("monthCards.expensesIn", { month: monthLabel, defaultValue: "Expenses · {{month}}" })
+        : userRole === "admin" ? t("totalAmountAllExpenses") : t("allTimeExpenses"),
+      tooltip: monthScoped
+        ? t("monthCards.expenseDateTip", { month: monthLabel, defaultValue: "Expenses whose expense date falls in {{month}}" })
+        : undefined,
       highlight: false,
     },
     ...(userRole === "engineer" && stats.pendingReviews !== undefined
@@ -928,7 +1106,15 @@ export default function Dashboard() {
       title: t("pendingAmount"),
       value: formatINR(stats.pendingAmount),
       icon: Clock,
-      description: t("awaitingApproval"),
+      description: monthScoped
+        ? t("monthCards.pendingIn", { month: monthLabel, defaultValue: "Pending in {{month}}" })
+        : t("awaitingApproval"),
+      tooltip: monthScoped
+        ? t("monthCards.pendingTip", {
+            month: monthLabel,
+            defaultValue: "Amount of expenses dated in {{month}} that are pending right now (current status, not the status on the last day of the month)",
+          })
+        : undefined,
       highlight: false,
     },
     ...(userRole === "admin" && stats.totalEmployeeBalance !== undefined
@@ -938,7 +1124,9 @@ export default function Dashboard() {
             title: t("totalEmployeeBalance"),
             value: formatINR(stats.totalEmployeeBalance),
             icon: Wallet,
-            description: t("allEmployees"),
+            description: balanceIsMonthEnd
+              ? `${t("allEmployees")} · ${t("monthCards.asOf", { date: balanceAsOfLabel, defaultValue: "as of {{date}}" })}`
+              : t("allEmployees"),
             highlight: true,
           },
         ]
@@ -950,7 +1138,9 @@ export default function Dashboard() {
             title: t("totalManagerBalance"),
             value: formatINR(stats.totalEngineerBalance),
             icon: Wallet,
-            description: t("allManagers"),
+            description: balanceIsMonthEnd
+              ? `${t("allManagers")} · ${t("monthCards.asOf", { date: balanceAsOfLabel, defaultValue: "as of {{date}}" })}`
+              : t("allManagers"),
             highlight: true,
           },
         ]
@@ -962,7 +1152,9 @@ export default function Dashboard() {
             title: t("totalCashierBalance"),
             value: formatINR(stats.totalCashierBalance),
             icon: Wallet,
-            description: t("allCashiers"),
+            description: balanceIsMonthEnd
+              ? `${t("allCashiers")} · ${t("monthCards.asOf", { date: balanceAsOfLabel, defaultValue: "as of {{date}}" })}`
+              : t("allCashiers"),
             highlight: true,
           },
         ]
@@ -1077,8 +1269,59 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Dashboard period: ONE combined Month + Year selector. All time = today's Dashboard exactly. */}
+      <div
+        className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+        data-testid="dashboard-month-filter"
+      >
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{t("monthFilter.period", { defaultValue: "Dashboard period" })}</p>
+          <p className="text-xs text-muted-foreground" aria-live="polite" data-testid="dashboard-month-scope">
+            {monthScoped
+              ? t("monthFilter.showing", { month: monthLabel, defaultValue: "Showing {{month}}" })
+              : t("monthFilter.showingAll", { defaultValue: "Showing all time" })}
+            {statsRefreshing ? ` · ${t("monthFilter.updating", { defaultValue: "Updating…" })}` : ""}
+          </p>
+          {monthScoped ? (
+            <p className="text-xs text-muted-foreground/80 mt-0.5">
+              {t("monthFilter.scopeNote", {
+                defaultValue:
+                  "Expense cards use the expense date. Pending items show their status right now. Balances are as of month end.",
+              })}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <Label htmlFor="dashboard-month-select" className="text-sm text-muted-foreground whitespace-nowrap">
+            {t("monthFilter.label", { defaultValue: "Month" })}:
+          </Label>
+          <Select value={selectedMonth} onValueChange={handleMonthChange}>
+            <SelectTrigger
+              id="dashboard-month-select"
+              className="w-full sm:w-[200px]"
+              aria-label={t("monthFilter.aria", { defaultValue: "Dashboard month" })}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-[320px]">
+              {monthOptions.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.value === ALL_MONTHS ? t("monthFilter.allTime", { defaultValue: "All time" }) : o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
       {/* Mobile-optimized Stats Grid */}
-      <div className="grid gap-3 sm:gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div
+        className={cn(
+          "grid gap-3 sm:gap-4 md:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 transition-opacity",
+          statsRefreshing && selectedMonth !== displayedMonth && "opacity-60",
+        )}
+        aria-busy={statsRefreshing}
+      >
         {statCards.map((card) => {
           const Icon = card.icon;
           const isPendingReviews = card.id === "pendingReviews";
@@ -1175,7 +1418,7 @@ export default function Dashboard() {
                 }`}>
                   {card.value}
                 </div>
-                <p className={`text-xs sm:text-sm mt-1 truncate ${
+                <p title={card.tooltip ?? card.description} className={`text-xs sm:text-sm mt-1 truncate ${
                   card.highlight 
                     ? isPendingReviews || isPendingApprovals ? 'text-blue-600' : 'text-green-600'
                     : 'text-muted-foreground'

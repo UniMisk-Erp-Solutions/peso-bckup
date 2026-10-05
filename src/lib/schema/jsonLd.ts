@@ -64,13 +64,7 @@ function softwareApplicationNode(): Record<string, unknown> {
     operatingSystem: "Web",
     url: SITE_ORIGIN,
     description:
-      "PesoWise helps organizations manage employee expenses, hierarchy approvals, custom category fields, balances, and audit-ready records—designed to complement your ERP and finance systems.",
-    offers: {
-      "@type": "Offer",
-      price: "0",
-      priceCurrency: "INR",
-      availability: "https://schema.org/InStock",
-    },
+      "PesoWise is operations expense management software: configurable expense forms, multi-level approvals, employee cash balances, month-aware dashboards and audit-ready reporting, designed to complement your ERP and finance systems.",
     publisher: { "@id": `${SITE_ORIGIN}/#organization` },
     image: DEFAULT_OG_IMAGE,
     featureList: [...SCHEMA_FEATURE_LIST],

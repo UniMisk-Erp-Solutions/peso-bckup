@@ -2,6 +2,7 @@
   "dashboard": "डैशबोर्ड",
   "myExpenses": "मेरे व्यय",
   "allExpenses": "सभी व्यय",
+  "submitForEmployee": "कर्मचारी हेतु सबमिट करें",
   "reviewExpenses": "व्यय समीक्षा",
   "debugReviewExpenses": "डीबग व्यय समीक्षा",
   "balances": "शेष राशि",
@@ -68,6 +69,5 @@
   "sectionWorkspace": "कार्यक्षेत्र",
   "sectionAdministration": "प्रशासन",
   "sectionAccount": "खाता",
-  "balanceHistory": "बैलेंस इतिहास",
-  "submitForEmployee": "कर्मचारी हेतु व्यय जमा करें"
+  "balanceHistory": "बैलेंस इतिहास"
 }

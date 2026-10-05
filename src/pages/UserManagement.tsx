@@ -41,7 +41,7 @@ import { UserHierarchySubordinates } from "@/components/UserHierarchySubordinate
 import { useOrganizationRoleLabels } from "@/hooks/useOrganizationRoleLabels";
 import { invokeAdminEdgeFunction } from "@/lib/invokeAdminEdgeFunction";
 import { runBulkUsersImportInChunks } from "@/lib/bulkUsersImportClient";
-import { fetchUserManagementList } from "@/lib/orgUsers";
+import { fetchUserManagementList, type UserManagementListRow } from "@/lib/orgUsers";
 import { fetchProfilesByUserIds } from "@/lib/supabaseInQuery";
 import { formatApiError } from "@/lib/formatApiError";
 import { useOrgMembershipRoles } from "@/hooks/useOrgMembershipRoles";
@@ -131,7 +131,7 @@ export default function UserManagement() {
   const [listLoading, setListLoading] = useState(false);
   const [engineers, setEngineers] = useState<{ id: string; name: string; email: string }[]>([]);
   const [cashiers, setCashiers] = useState<{ id: string; name: string; email: string }[]>([]);
-  const [users, setUsers] = useState<{ user_id: string; name: string; email: string; employee_id?: string | null; balance: number; role: string; assigned_engineer_name?: string; cashier_assigned_engineer_name?: string; cashier_assigned_location_id?: string; cashier_assigned_location_name?: string; assigned_cashier_name?: string; cashier_assigned_engineer_id?: string; reporting_engineer_id?: string }[]>([]);
+  const [users, setUsers] = useState<UserManagementListRow[]>([]);
   const [locations, setLocations] = useState<{ id: string; name: string }[]>([]);
   const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
   const [engineerLocations, setEngineerLocations] = useState<Record<string, string>>({}); // engineer_id -> location_id (single location only)
@@ -176,6 +176,10 @@ export default function UserManagement() {
   );
   const [updating, setUpdating] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deactivationImpact, setDeactivationImpact] = useState<{
+    reports_count: number; pending_reviews_assigned: number; pending_expense_assignments: number; is_only_active_admin: boolean;
+  } | null>(null);
+  const [deactivationImpactLoading, setDeactivationImpactLoading] = useState(false);
 
   const getSupervisorOptions = useCallback(
     (subordinateRole: OrgRole, excludeUserId?: string) => {
@@ -250,10 +254,13 @@ export default function UserManagement() {
     activeMembers: number;
   } | null>(null);
   const [orgSeatSummaryLoading, setOrgSeatSummaryLoading] = useState(false);
+  const [userStatusFilter, setUserStatusFilter] = useState<"all" | "active" | "deactivated">("active");
 
   const filteredUsers = useMemo(
     () =>
       users.filter(u => {
+        if (userStatusFilter === "active" && !u.is_active) return false;
+        if (userStatusFilter === "deactivated" && u.is_active) return false;
         if (teamFilter !== "all") {
           if (teamFilter === "none") { if (u.team_id) return false; }
           else if (u.team_id !== teamFilter) return false;
@@ -261,7 +268,7 @@ export default function UserManagement() {
         if (!searchTerm) return true;
         return userMatchesManagementSearch(u, searchTerm, roleLabels, identityPolicy);
       }),
-    [users, searchTerm, teamFilter, roleLabels, identityPolicy],
+    [users, searchTerm, teamFilter, roleLabels, identityPolicy, userStatusFilter],
   );
 
   const clampedUsersPage = useMemo(
@@ -1127,7 +1134,26 @@ export default function UserManagement() {
 
   const openDeleteDialog = (u: { user_id: string; name: string; email: string }) => {
     setUserToDelete(u);
+    setDeactivationImpact(null);
     setDeleteDialogOpen(true);
+    if (organizationId) {
+      setDeactivationImpactLoading(true);
+      // src/integrations/supabase/types.ts predates this RPC (same
+      // narrow, commented escape src/lib/backupExportJobs.ts already
+      // uses for the same reason).
+      void (async () => {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data, error } = await (supabase as any).rpc("get_user_deactivation_impact_v1", {
+            p_organization_id: organizationId,
+            p_user_id: u.user_id,
+          });
+          if (!error && data) setDeactivationImpact(data as typeof deactivationImpact);
+        } finally {
+          setDeactivationImpactLoading(false);
+        }
+      })();
+    }
   };
 
   const handleUpdateUser = async () => {
@@ -1586,16 +1612,22 @@ export default function UserManagement() {
     try {
       setDeleting(true);
 
-      const { error } = await supabase.rpc("deactivate_organization_member", {
-        p_organization_id: organizationId,
-        p_user_id: userToDelete.user_id,
+      // Routes through the Edge Function so the Supabase Auth account is
+      // also suspended (ban_duration), not just the DB-side is_active
+      // flags -- a deactivated user's existing JWT can otherwise remain
+      // valid until it naturally expires.
+      const { data, error } = await supabase.functions.invoke("admin-set-user-auth-status", {
+        body: { organization_id: organizationId, target_user_id: userToDelete.user_id, action: "deactivate" },
       });
 
       if (error) throw error;
+      if (data && (data as { success?: boolean }).success === false) {
+        throw new Error((data as { error?: string }).error || "Failed to deactivate user");
+      }
 
       toast({
         title: "User deactivated",
-        description: `${userToDelete.name} was removed from active users. Their expenses and audit history are preserved.`,
+        description: `${userToDelete.name} can no longer sign in. Their expenses, approvals, audit history and attachments are preserved.`,
       });
 
       if (organizationId) {
@@ -1604,7 +1636,7 @@ export default function UserManagement() {
 
       setDeleteDialogOpen(false);
       setUserToDelete(null);
-      
+
       // Reload users list
       if (organizationId) {
         setListLoading(true);
@@ -1617,16 +1649,46 @@ export default function UserManagement() {
         }
       }
     } catch (error: any) {
-      console.error("Error deleting user:", error);
+      console.error("Error deactivating user:", error);
       toast({
         variant: "destructive",
         title: "Error",
-        description: error.message || "Failed to delete user",
+        description: error.message || "Failed to deactivate user",
       });
     } finally {
       setDeleting(false);
     }
   };
+
+  const [reactivatingUserId, setReactivatingUserId] = useState<string | null>(null);
+
+  const handleReactivateUser = async (user: UserManagementListRow) => {
+    if (!organizationId) return;
+    try {
+      setReactivatingUserId(user.user_id);
+      const { data, error } = await supabase.functions.invoke("admin-set-user-auth-status", {
+        body: { organization_id: organizationId, target_user_id: user.user_id, action: "reactivate" },
+      });
+      if (error) throw error;
+      if (data && (data as { success?: boolean }).success === false) {
+        throw new Error((data as { error?: string }).error || "Failed to reactivate user");
+      }
+      toast({ title: "User reactivated", description: `${user.name} can sign in again. Their history is unchanged.` });
+      void queryClient.invalidateQueries({ queryKey: ["org-membership-roles", organizationId] });
+      setListLoading(true);
+      try {
+        setUsers(await fetchUserManagementList(organizationId, cachedRolesById));
+      } finally {
+        setListLoading(false);
+      }
+    } catch (error: any) {
+      console.error("Error reactivating user:", error);
+      toast({ variant: "destructive", title: "Error", description: error.message || "Failed to reactivate user" });
+    } finally {
+      setReactivatingUserId(null);
+    }
+  };
+
 
   if (userRole !== "admin") {
     return (
@@ -1779,6 +1841,20 @@ export default function UserManagement() {
                 </Select>
               )}
             </div>
+            <div className="mb-4 flex gap-1" role="tablist" aria-label="Filter users by status">
+              {(["active", "deactivated", "all"] as const).map((status) => (
+                <Button
+                  key={status}
+                  type="button"
+                  variant={userStatusFilter === status ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setUserStatusFilter(status)}
+                  className="text-xs sm:text-sm capitalize"
+                >
+                  {status === "active" ? "Active" : status === "deactivated" ? "Deactivated" : "All"}
+                </Button>
+              ))}
+            </div>
           </CardContent>
           <CardContent className="p-0 pt-0">
             {viewMode === "table" ? (
@@ -1875,7 +1951,14 @@ export default function UserManagement() {
                       {pagedUsers.map(u => (
                       <tr key={u.user_id} className="border-t hover:bg-slate-50 cursor-pointer" onClick={() => openUserDrawer(u)}>
                         <td className="px-2 sm:px-4 py-2 sm:py-3">
-                          <div className="font-medium">{u.name || "-"}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{u.name || "-"}</span>
+                            {!u.is_active && (
+                              <span className="inline-flex items-center rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                                Deactivated
+                              </span>
+                            )}
+                          </div>
                           <div className="text-xs text-muted-foreground sm:hidden mt-1">{u.email || "-"}</div>
                         </td>
                         <td className="px-2 sm:px-4 py-2 sm:py-3 hidden sm:table-cell">{u.email || "-"}</td>
@@ -1921,9 +2004,22 @@ export default function UserManagement() {
                               <Button variant="outline" size="sm" onClick={() => openEditDialog(u)} className="px-2 sm:px-3">
                                 <Edit className="h-3 w-3 sm:h-4 sm:w-4" />
                               </Button>
-                              <Button variant="destructive" size="sm" onClick={() => openDeleteDialog(u)} className="px-2 sm:px-3">
-                                <Trash2 className="h-3 w-3 sm:h-4 sm:w-4" />
-                            </Button>
+                              {u.is_active ? (
+                                <Button variant="destructive" size="sm" onClick={() => openDeleteDialog(u)} className="px-2 sm:px-3" title="Deactivate user">
+                                  <Trash2 className="h-3 w-3 sm:h-4 sm:w-4" />
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleReactivateUser(u)}
+                                  disabled={reactivatingUserId === u.user_id}
+                                  className="px-2 sm:px-3 text-xs sm:text-sm"
+                                  title="Reactivate user"
+                                >
+                                  {reactivatingUserId === u.user_id ? "..." : "Reactivate"}
+                                </Button>
+                              )}
                             </div>
                           </div>
                         </td>
@@ -3424,15 +3520,41 @@ export default function UserManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete User Confirmation Dialog */}
+      {/* Deactivate User Confirmation Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will deactivate {userToDelete?.name} ({userToDelete?.email}). They cannot sign in, but
-              all past expenses, attachments, and audit logs stay in the system for reporting. 
-              This action cannot be undone. All associated expenses and data will be removed.
+            <AlertDialogTitle>Deactivate {userToDelete?.name}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  Deactivating this user prevents future access while preserving their expenses,
+                  approvals, audit history, attachments, and other historical records.
+                </p>
+                <p>
+                  {userToDelete?.name} ({userToDelete?.email}) will no longer be able to sign in.
+                  Nothing is deleted, and you can reactivate this account at any time.
+                </p>
+                {deactivationImpactLoading ? (
+                  <p className="text-xs text-muted-foreground italic">Checking current responsibilities…</p>
+                ) : deactivationImpact ? (
+                  deactivationImpact.is_only_active_admin ? (
+                    <p className="text-sm font-medium text-red-700" data-testid="deactivation-blocked-only-admin">
+                      This user is the organization&apos;s only active administrator. Assign another admin before deactivating this account.
+                    </p>
+                  ) : (deactivationImpact.reports_count > 0 || deactivationImpact.pending_reviews_assigned > 0 || deactivationImpact.pending_expense_assignments > 0) ? (
+                    <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800" data-testid="deactivation-impact-warning">
+                      <p className="font-medium mb-1">This person currently has:</p>
+                      <ul className="list-disc list-inside space-y-0.5">
+                        {deactivationImpact.reports_count > 0 ? <li>{deactivationImpact.reports_count} employee{deactivationImpact.reports_count === 1 ? "" : "s"} reporting to them</li> : null}
+                        {deactivationImpact.pending_reviews_assigned > 0 ? <li>{deactivationImpact.pending_reviews_assigned} pending review{deactivationImpact.pending_reviews_assigned === 1 ? "" : "s"} assigned</li> : null}
+                        {deactivationImpact.pending_expense_assignments > 0 ? <li>{deactivationImpact.pending_expense_assignments} pending expense assignment{deactivationImpact.pending_expense_assignments === 1 ? "" : "s"}</li> : null}
+                      </ul>
+                      <p className="mt-1">Consider reassigning these before deactivating, or reassign afterward from each item.</p>
+                    </div>
+                  ) : null
+                ) : null}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -3440,9 +3562,9 @@ export default function UserManagement() {
             <AlertDialogAction
               onClick={handleDeleteUser}
               className="bg-red-600 hover:bg-red-700"
-              disabled={deleting}
+              disabled={deleting || deactivationImpactLoading || deactivationImpact?.is_only_active_admin === true}
             >
-              {deleting ? "Deleting..." : "Delete User"}
+              {deleting ? "Deactivating..." : "Deactivate User"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
