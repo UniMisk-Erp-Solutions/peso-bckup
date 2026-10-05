@@ -1,56 +1,60 @@
-# PesoWise — branch `priyanshu` (local lab + production L7 **reference**)
+# PesoWise — branch `priyanshu`
 
-This folder is a **full copy** of the app for local testing. **GitHub `main`, Vercel, and production React code paths are unchanged** (still one public Supabase URL in prod).
+Ops-focused work on this branch: **PITR/recovery**, **manual HA** docs/scripts, and production proxy reference under `tools/prod-reference/`.
 
-## Architecture docs
-
-| Doc | Purpose |
-|-----|---------|
-| **`ARCHITECTURE-L7-DUAL.md`** | Local PC lab (`8787`, optional Redis/PgBouncer Docker) |
-| **`ARCHITECTURE-PRODUCTION-L7-REFERENCE.md`** | Live **L7 HAProxy** on `.46`/`.68` (reference only) |
-| **`tools/prod-reference/`** | Example HAProxy / Traefik configs (not auto-deployed) |
-
-## Architecture
+## Production (normal path)
 
 ```text
-Browser (:5174)
-  → http://127.0.0.1:8787/lab/l7-dual
-  → writes / auth / storage / realtime → .46 Kong → primary
-  → REST reads ~50% .46 (primary) / ~50% .68 (replica)
+App (Vercel) → https://pesowise-backup-supabase.unimisk.com
+            → Traefik → HAProxy :8088 → Kong on .46 → PostgreSQL primary (.46)
 ```
 
-(Replaces the old **greatest** all-reads-to-.68 lab model.)
+**`.68`** is a PostgreSQL replica for HA/failover planning — not an application read target.
 
-## Run (two terminals)
+## Local development
 
-**Terminal 1 — gateway**
+Copy `.env.local.example` → `.env.local` and set:
+
+- `VITE_SUPABASE_URL=https://pesowise-backup-supabase.unimisk.com` (or your documented self-hosted URL from root `.env.example`)
+
+Do **not** use the removed localhost L7 lab gateway (`8787`, `/lab/l7-dual`).
+
+### HA lab (local, safe)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/ha/lab/run-priyanshu-ha-e2e.ps1
+```
+
+Or double-click / cmd:
+
+```bat
+scripts\ha\lab\run-priyanshu-ha-e2e.bat
+```
+
+Or:
 
 ```bash
-cd tools/localhost-arch-lab
-# or: cd ../localhost-arch-lab  (sibling folder on your PC)
-node server.cjs
+node scripts/ha/lab/ha-e2e.mjs
 ```
 
-**Terminal 2 — app**
+See `docs/ha/PRIYANSHU_HA_E2E_SYSTEM.md` (full end-to-end) and `docs/ha/HA_AUTOMATIC_FAILOVER_FAILBACK.md`.
 
-```bash
-npm install
-npm run dev
-```
+## Key folders
 
-Open **http://localhost:5174**
+| Path | Purpose |
+|------|---------|
+| `docs/recovery/` | PITR runbooks and audits |
+| `docs/ha/` | Manual failover (not automatic) |
+| `docs/architecture/` | Architecture change notes (e.g. L7 removal) |
+| `scripts/recovery/` | PITR scripts |
+| `scripts/ha/` | Manual HA scripts |
+| `scripts/ha/lab/` | **Local HA simulator + tests (safe)** |
+| `tools/priyanshu-ha-lab/` | Optional Docker HAProxy dual-app lab |
+| `tools/prod-reference/` | HAProxy/Traefik **examples** for `.46` |
+| `docs/migration/` | Supabase → Postgres/MinIO migration (Coolify, cutover, pgAdmin) |
+| `scripts/migration/` | Runnable `.46` migration scripts (no `tmp-*`) |
+| `backend/` | Fastify migration API (when using `VITE_API_URL`) |
 
-Config: **`.env.local`** → `VITE_SUPABASE_URL=http://127.0.0.1:8787/lab/l7-dual`
+## Removed
 
-## Git (this branch vs `main`)
-
-**Only** these paths differ from **`main`** — same app code as production:
-
-- `ARCHITECTURE-PRODUCTION-L7-REFERENCE.md`
-- `ARCHITECTURE-L7-DUAL.md`
-- `README-PRIYANSHU.md`
-- `.env.local.example` (local lab URL only)
-- `tools/prod-reference/` (example HAProxy / Traefik)
-- `tools/localhost-arch-lab/` (gateway + optional Docker sidecars + bench examples)
-
-No duplicate app copy, no `vite.config` changes, no SQL/script churn on this branch.
+The **L7 dual-read experiment** (local `localhost-arch-lab`, production HAProxy read→`.68`) has been removed from this repo. See `docs/architecture/L7_REMOVAL_FINAL.md`.

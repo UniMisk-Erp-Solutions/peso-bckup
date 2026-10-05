@@ -148,3 +148,13 @@ tmp/
 tmp/**
 *.xlsx
 !Documentations MD/**/*.xlsx
+
+# Migration / PITR artifacts (server copies only — do not commit)
+*.tar.gz
+backend-staging.tar.gz
+tools/pitr-*.json
+tools/pitr-restore-*.csv
+tools/pitr-restore-*.sql
+scripts/migration/tmp-*
+scripts/migration/tmp-*.php
+scripts/migration/tmp-*.sh

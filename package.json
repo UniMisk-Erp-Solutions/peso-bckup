@@ -12,6 +12,8 @@
     "security:secrets": "node scripts/security/check-sensitive-files.mjs",
     "preview": "vite preview",
     "test": "vitest",
+    "test:ha-lab": "bash scripts/ha/lab/run-ha-lab-tests.sh",
+    "test:ha-e2e": "node scripts/ha/lab/ha-e2e.mjs",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "security:audit": "npm audit --audit-level=moderate",
@@ -37,6 +39,8 @@
     "i18n:check": "node scripts/i18n-check-keys.ts",
     "i18n:help": "node scripts/generate-help-locale.mjs",
     "migrations:check": "node scripts/check-migration-duplicates.mjs",
+    "recovery:validate": "node scripts/recovery/recovery-validate.mjs",
+    "recovery:e2e": "bash scripts/recovery/run-e2e-pitr-test.sh",
     "sourcemaps:upload": "node scripts/glitchtip-sourcemaps.mjs",
     "sourcemaps:dry-run": "node scripts/glitchtip-sourcemaps.mjs --dry-run",
     "build:release": "npm run build"
