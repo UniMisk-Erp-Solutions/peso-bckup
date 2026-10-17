@@ -179,7 +179,7 @@ export function BalanceCreditHistory({ organizationId, refreshKey = 0 }: Props) 
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="whitespace-nowrap">Date</TableHead>
+                  <TableHead className="whitespace-nowrap">Date & Time</TableHead>
                   <TableHead className="whitespace-nowrap">Employee</TableHead>
                   <TableHead className="whitespace-nowrap">Amount</TableHead>
                   <TableHead className="whitespace-nowrap">Kind</TableHead>
@@ -194,8 +194,8 @@ export function BalanceCreditHistory({ organizationId, refreshKey = 0 }: Props) 
                   return (
                     <TableRow key={r.id} data-testid="credit-history-row" data-origin={o}>
                       <TableCell className="whitespace-nowrap">
-                        <div>{voucherDay(r.effective_at)}</div>
-                        <div className="text-xs text-muted-foreground">recorded {format(new Date(r.created_at), "MMM d, h:mm a")}</div>
+                        <div>{format(new Date(r.created_at), "MMM d, yyyy h:mm a")}</div>
+                        <div className="text-xs text-muted-foreground">{o === "tally" ? "voucher date" : "effective date"} {voucherDay(r.effective_at)}</div>
                       </TableCell>
                       <TableCell className="font-medium">{nameOf(r.user_id)}</TableCell>
                       <TableCell className={`font-semibold ${r.amount_delta < 0 ? "text-destructive" : ""}`}>{formatINR(r.amount_delta)}</TableCell>
