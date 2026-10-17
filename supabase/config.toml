@@ -35,3 +35,6 @@ verify_jwt = false
 
 [functions.pwt-connector]
 verify_jwt = false
+
+[functions.pwt-inbound]
+verify_jwt = false

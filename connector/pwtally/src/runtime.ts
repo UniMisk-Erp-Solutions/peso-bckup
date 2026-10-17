@@ -76,8 +76,9 @@ export function tallyHttp(url: string, timeoutMs = 120_000): TallyIO {
 export class Api {
   constructor(private cfg: Pick<ConnectorConfig, "apiBase" | "apiKey" | "deviceToken">) {}
 
-  async call<T = Record<string, unknown>>(body: Record<string, unknown>): Promise<T> {
-    const url = `${this.cfg.apiBase.replace(/\/+$/, "")}/functions/v1/pwt-connector`;
+  /** `fn` selects the backend function; the default is the PesoWise -> Tally delivery API (unchanged). */
+  async call<T = Record<string, unknown>>(body: Record<string, unknown>, fn = "pwt-connector"): Promise<T> {
+    const url = `${this.cfg.apiBase.replace(/\/+$/, "")}/functions/v1/${fn}`;
     if (!/^https:\/\//i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)/i.test(url)) {
       throw new Error("PesoWise API must use HTTPS");
     }

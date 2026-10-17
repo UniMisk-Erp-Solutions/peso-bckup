@@ -37,6 +37,11 @@ import { addFunds, adjustBalance, validateImportBatchV2, applyImportBatchV2 } fr
 import { createImportBatch, insertImportRows, type StagedImportRow } from "@/services/BalanceImportService";
 import { ImportBalancesDialog } from "@/components/balances/ImportBalancesDialog";
 import { ImportHistoryDialog } from "@/components/balances/ImportHistoryDialog";
+import { SyncFromTallyDialog } from "@/components/balances/SyncFromTallyDialog";
+import { BalanceCreditHistory } from "@/components/balances/BalanceCreditHistory";
+
+/** Employee payments entered in TallyPrime -> balances. Shown only when the Tally integration is enabled (VITE_PWT_SYNC=1). */
+const TALLY_SYNC_ENABLED = import.meta.env.VITE_PWT_SYNC === "1";
 
 interface ProfileRow {
   user_id: string;
@@ -143,6 +148,7 @@ export default function Balances() {
   // component/parser/services, never two separate implementations.
   const [importDialogInitialSource, setImportDialogInitialSource] = useState<"template" | "tally">("template");
   const [importHistoryDialogOpen, setImportHistoryDialogOpen] = useState(false);
+  const [syncFromTallyOpen, setSyncFromTallyOpen] = useState(false);
 
   const {
     progress: loadProgress,
@@ -1268,6 +1274,15 @@ export default function Balances() {
                       Import from Tally
                     </Button>
                   )}
+                  {userRole === 'admin' && TALLY_SYNC_ENABLED && (
+                    <Button
+                      variant="outline"
+                      onClick={() => setSyncFromTallyOpen(true)}
+                      data-testid="sync-from-tally-button"
+                    >
+                      Sync from Tally
+                    </Button>
+                  )}
                   {userRole === 'admin' && (
                     <Button
                       variant="outline"
@@ -2108,6 +2123,14 @@ export default function Balances() {
               initialSource={importDialogInitialSource}
             />
           )}
+          {userRole === 'admin' && organizationId && TALLY_SYNC_ENABLED && (
+            <SyncFromTallyDialog
+              open={syncFromTallyOpen}
+              onOpenChange={setSyncFromTallyOpen}
+              organizationId={organizationId}
+              onSynced={fetchProfiles}
+            />
+          )}
           {userRole === 'admin' && organizationId && (
             <ImportHistoryDialog
               open={importHistoryDialogOpen}
@@ -2386,6 +2409,10 @@ export default function Balances() {
               )}
             </CardContent>
           </Card>
+
+          {userRole === "admin" && organizationId ? (
+            <BalanceCreditHistory organizationId={organizationId} refreshKey={Number(syncFromTallyOpen)} />
+          ) : null}
 
           {/* Edit transfer date (backdate) modal - admin only */}
           <Dialog open={editTransferModalOpen} onOpenChange={(open) => { if (!open) { setEditTransferModalOpen(false); setEditTransferRow(null); setEditTransferNewDate(""); } }}>

@@ -1,11 +1,11 @@
 # PesoWise → TallyPrime: the complete guide
 
-**Doc ID:** DOC-144  
+**Doc ID:** DOC-146  
 **Status:** in progress  
 **Last updated:** 2026-10-17  
 **Owner / area:** Tally integration (architecture, operation, user manual, reuse)  
 
-> This is the **only document** for the PesoWise → TallyPrime integration. Part A explains how the system works, Part B is the user manual, Part C is for whoever deploys and runs it, Part D explains how to reuse the design for another project, and Part E is the engineering log (what was built, found and fixed).
+> This is the **only document** for the PesoWise → TallyPrime integration. Part A explains how the system works, Part B is the user manual, Part C is for whoever deploys and runs it, Part D explains how to reuse the design for another project, and Part E is the engineering log (what was built, found and fixed), Part F covers Sync from Tally, and **Part G is the accountant's mapping reference**.
 
 ---
 
@@ -20,6 +20,8 @@
 
 with a Grand Total. These five columns are exactly the accountant's workbook "Import Sheet" (the spelling "Employe" is the workbook's).
 
+**Two directions.** *PesoWise → Tally* (this guide's Parts A-E): reports and expense vouchers. *Tally → PesoWise* (Part F): employee payments entered in Tally become employee balance credits. The second direction is separate code and tables and does not change the first.
+
 **Four reports, one engine**
 
 | Report | Shows aggregated rows | Creates vouchers |
@@ -28,6 +30,122 @@ with a Grand Total. These five columns are exactly the accountant's workbook "Im
 | Claim Approval | yes | **yes**, only for expenses not already posted |
 | Claim Verification | yes | never |
 | Daily Project | yes | never |
+
+---
+
+# PART G: Accountant's mapping reference (start here if you are the accountant)
+
+Everything the system creates or reads in TallyPrime, and exactly how each value is derived. The technical parts (A-F) explain how it works; this part tells you **what to expect in the books** and **what to confirm before using a real company**.
+
+## G1) What appears in Tally
+
+| What | Tally object | Where you see it | Touches the books? |
+|---|---|---|---|
+| Employee | Ledger `<name>-<employee code>` under **Sundry Debtors** | Chart of Accounts | yes (it is the employee advance account) |
+| Expense category | Ledger (see G3) under **Indirect Expenses** | Chart of Accounts | yes |
+| Approved expenses | **Journal** voucher, one per month and category | Day Book, Journal Register | yes |
+| Report rows | Ledgers `PWT-…` in group **PesoWise Report Data** (under Suspense A/c), zero balance | Only feeds Gateway → PesoWise Reports | no (never carry an amount) |
+| Employee payments typed in Tally | Voucher type **PESO Wise Payment** (Payment type; exact name is a setting) | Day Book | yes (you create these) |
+
+All amounts are in the company currency. No GST, TDS, bill-wise allocations, cost centres or stock are created.
+
+## G2) The two directions and the effect on the employee account
+
+| Event | Tally entry | Employee ledger in Tally | Employee balance in PesoWise |
+|---|---|---|---|
+| Expense approved in PesoWise (synced to Tally) | **Dr** expense ledger, **Cr** employee ledger | advance reduced (Dr balance falls) | **decreases** (expense deduction) |
+| Payment/advance to the employee (entered in Tally, synced to PesoWise) | **Dr** employee ledger, **Cr** cash or bank | advance increased (Dr balance rises) | **increases** (Balance/Tally Credit) |
+| Refund from the employee (Cr on the employee ledger in a payment-type voucher) | n/a | n/a | **not imported**; reported as skipped |
+
+So a **positive PesoWise balance corresponds to a Dr (advance outstanding) balance on that employee's Tally ledger**, provided both started from the same opening position and no other entries were posted outside these syncs.
+
+## G3) Expense category → ledger map (PesoWise → Tally)
+
+Default map (editable per organisation on **Admin → Tally connector → ledger mapping**). The serial is the last part of the Voucher ID.
+
+| Serial | PesoWise expense type | Tally expense ledger |
+|---|---|---|
+| 1 | Travelling (Public and Private Transport) | Travelling Expenses |
+| 2 | Material Purchase | Consumable Stores - URD |
+| 3 | Other ( Xerox, Printing, Courier, Stationery & Medical ) **and** the spellings "Other ( Xerox, Printing, Courier & Stationery )" and "other" | Site Expenses |
+| 4 | Laptop Rent | Rent Expenses - Equipment |
+| 5 | Hotel/Guest House | Lodging Expenses |
+| 6 | Petrol Expense (Bike and Car) | Conveyance Expenses |
+| 7 | Local Manpower | Labour Charges Expenses-URD |
+| 8 | Mobile Recharges | Telephone Expenses |
+| 9 | Food | Travelling Expenses (shares ledger 1; separate voucher) |
+| 10 | Incentive | Incentive Expenses |
+
+Notes: the reference workbook spells serial 6's ledger "Conveyance Exepsnes"; the system uses the corrected "Conveyance Expenses". Ledgers that do not exist are created automatically. A category that is **not in this table** (including a blank one) is **never guessed**: that expense is left out and listed as "needs attention".
+
+## G4) Employee ledger (both directions)
+
+- Name = `<employee name>-<employee code>`, for example `Employee A-1234`. Parent group **Sundry Debtors** (configurable). Not bill-wise. Created automatically on the first expense voucher.
+- **Matching a Tally ledger back to a PesoWise employee** (Tally → PesoWise): the text after the last hyphen is the employee code; it must match **exactly one active employee of the same organisation**, **and** the name before the hyphen must equal that employee's name (case and spacing ignored). Otherwise the payment is reported ("not matched" or "ambiguous"), never applied.
+
+## G5) Expense voucher map (PesoWise → Tally)
+
+| Voucher field | Value |
+|---|---|
+| Voucher type | **Journal** |
+| Voucher date | **Last day of the month** of the expense date (the transaction's `effective_date` for Detailed Expense, trip start date for claims) |
+| Voucher number | Tally auto-numbers Journals (1, 2, 3…) |
+| **Voucher ID (reference)** | `PESO/<MM>/<serial>`, stored in the **narration** as `PWT PESO/08/02`. Later postings into an already-used month and serial get `-S1`, `-S2` |
+| Debit line | the expense ledger, amount = total of all employees in the voucher |
+| Credit lines | one per employee ledger, amount = that employee's total for the month and category |
+| Grouping | one voucher per (month, category serial); all employees of that category share it |
+| Amount | sum of the amounts, exact to 2 decimals |
+| Which rows | **Detailed Expense**: expense deductions with a debit above zero (credits and opening balances are skipped). **Claim Approval**: claims that are approved and HO-approved. **Claim Verification** and **Daily Project** never create vouchers |
+| Posted once | each PesoWise expense is posted once ever, even if it appears in several reports or is synced again |
+| Never changed later | a posted voucher is not edited or deleted by a later sync; corrections are manual |
+
+Worked example (anonymised): five Material Purchase expenses of one employee in August 2026 (60 + 120 + 500 + 20 + 50 = **750.00**) become one Credit line of 750.00 on `Employee A-1234` inside the voucher dated **31-08-2026** with Dr **Consumable Stores - URD** and narration `PWT PESO/08/02`.
+
+## G6) Employee payment map (Tally → PesoWise)
+
+| Tally field | Becomes in PesoWise |
+|---|---|
+| Voucher type must equal the configured name (default `PesoWise Payment`; this company uses `PESO Wise Payment`) | accepted; any other type is ignored |
+| **Dr** entry on the employee ledger, amount | **Balance credit** (+ amount) for that employee |
+| Cr entries | must all be **Cash-in-Hand** or **Bank Accounts** ledgers; otherwise the voucher is skipped |
+| Voucher date | effective date of the credit |
+| Voucher number, GUID, narration | kept in the audit record; the number appears in the balance-history note |
+| Several entries for the same employee in one voucher | summed into one payment |
+| Several employees in one voucher | one payment each |
+
+Skipped or flagged (never applied): cancelled or optional vouchers; unbalanced vouchers; amount zero or at or above 1,000,000,000; non-employee ledgers; vouchers whose narration starts with `PWT ` (they came from the expense sync); employees not matched. A voucher **edited** after import (amount changed or an employee added) or **cancelled/deleted** after import is **flagged for reconciliation**; its balance is not changed automatically.
+
+Worked example: Payment voucher dated 16-Oct-2026, Dr `Employee A-1234` 500.00, Cr Cash 500.00 gives the employee a **+500.00** "Balance/Tally Credit" dated 16-Oct-2026, shown in the balance history and in Import History as a "Tally sync" batch (reversible there).
+
+## G7) Reconciling the books to PesoWise
+
+| Check | Where | Should equal |
+|---|---|---|
+| Expenses posted for a month | Tally Journal Register (voucher narration `PWT …`) | PesoWise Detailed Expense total for that month (the report in Tally also shows its Grand Total) |
+| Voucher count | Day Book | one voucher per category per month (plus `-S` supplements) |
+| Employee advance | Tally employee ledger closing (Dr) | PesoWise Current Balance, if the opening balances matched and nothing else was posted to that ledger |
+| Payments imported | PesoWise Import History ("Tally sync" batches) | the PESO Wise Payment vouchers in the Day Book |
+| Items needing review | Sync from Tally result list | nothing flagged, or each item explained |
+
+## G8) Decisions the accountant must confirm before a real company
+
+1. **Direction and type:** expenses as Journal Dr expense / Cr employee, and payments as Dr employee / Cr cash-bank.
+2. **Dating:** expense vouchers dated at month-end (the reference workbook used one chosen date per run).
+3. **Ledger names and groups:** the table in G3, the parent groups (Sundry Debtors, Indirect Expenses) and whether "Food" belongs with Travelling Expenses.
+4. **"Other" variants:** that "other" and "Other ( Xerox, Printing, Courier & Stationery )" belong under Site Expenses.
+5. **Voucher prefix** (`PESO`) and serial numbers, which become part of every reference.
+6. **Voucher type name** used for payments and that its type is Payment.
+7. **Financial year:** voucher dates must fall inside the Tally company's books.
+8. **Cash/bank ledgers** are directly under Cash-in-Hand or Bank Accounts (a custom sub-group is skipped).
+
+## G9) Where each mapping is changed
+
+| Mapping | Where |
+|---|---|
+| Expense type → ledger, serial, voucher prefix | **Admin → Tally connector → Check the ledger mapping** (web) |
+| Voucher type name for payments | **Balances → Sync from Tally → Tally voucher type** (web) |
+| Debit/credit side, Journal type, parent groups, month-end vs fixed date | developer-only settings (not in the web screens yet); saving the web mapping resets these to the defaults above |
+| Employee ledger name format and matching rule | fixed in the system |
 
 ---
 
@@ -81,6 +199,7 @@ Design rules that hold everywhere:
 | Installer script | `connector/pwtally/installer/install.ps1` | one-click setup (no admin rights) |
 | TDL (generated) | `connector/pwtally/tdl/PesoWise-Tally.tdl` | the four Tally reports |
 | Website | `src/lib/pwt/pwtSync.ts`, `src/components/PwtSyncControl.tsx`, `src/pages/AdminPwTally.tsx` | Sync control, setup page, mapping editor |
+| Reverse sync (Tally → PesoWise balances) | see Part F | `pwt-inbound`, `connector/pwtally/src/inbound.ts`, `SyncFromTallyDialog.tsx` |
 | Switch | `VITE_PWT_SYNC=1` | shows the new Sync control instead of the legacy one |
 
 The integration is self-contained: every database object is prefixed `pwt_` and no other Tally code is needed.
@@ -176,21 +295,21 @@ Reference: the accountant's workbook, *Original Data → Base Data for Working �
 | BAD_ROW | an expense row without any identity |
 | AMOUNT_MISMATCH | already posted with a different amount; **not** re-posted or altered |
 
-**Worked example** (August 2026 Detailed Expense rows of one employee, taken from live data and anonymised)
+**Worked example** (real August 2026 Detailed Expense rows of one employee; name and ID masked)
 
-| Row | Employee | Category | Date | Debit |
+| Txn | Employee | Category | Date | Debit |
 |---|---|---|---|---|
-| 1 | Employee A | Material Purchase | 07-08-2026 | 60 |
-| 2 | Employee A | Material Purchase | 11-08-2026 | 120 |
-| 3 | Employee A | Material Purchase | 18-08-2026 | 500 |
-| 4 | Employee A | Material Purchase | 19-08-2026 | 20 |
-| 5 | Employee A | Material Purchase | 19-08-2026 | 50 |
+| 10005 | A. P. (…80) | Material Purchase | 07-08-2026 | 60 |
+| 10950 | A. P. | Material Purchase | 11-08-2026 | 120 |
+| 12909 | A. P. | Material Purchase | 18-08-2026 | 500 |
+| 13614 | A. P. | Material Purchase | 19-08-2026 | 20 |
+| 13615 | A. P. | Material Purchase | 19-08-2026 | 50 |
 
 Category → rule serial 2, ledger *Consumable Stores - URD*; all five fall in August ⇒ date 31-08-2026; one group; total 60+120+500+20+50 = **750.00** ⇒
 
 | Voucher Date (Tally) | Expense Ledger | Employe Ledger | Voucher ID | Total |
 |---|---|---|---|---|
-| 31-08-2026 | Consumable Stores - URD | Employee A-1234 | PESO/08/02 | 750.00 |
+| 31-08-2026 | Consumable Stores - URD | A. P.-**80 | PESO/08/02 | 750.00 |
 
 ## A6) Duplicate prevention
 
@@ -315,7 +434,7 @@ npx tsc --noEmit --strict --target es2022 --module esnext --moduleResolution bun
 ## C3) Evidence (2026-10)
 
 - 54 engine / connector / client tests; existing panel suite 48/48 unchanged; migration lifecycle 20/20 and config RPCs 14/14 in an isolated Postgres.
-- Live August 2026 data (one live organisation), per report, aggregated total = independent source total:
+- Live August 2026 data (MicroLink organisation), per report, aggregated total = independent source total:
 
 | Report | Source lines | Five-column rows | Aggregated total | Independent source total |
 |---|---|---|---|---|
@@ -402,6 +521,88 @@ If your target is not Tally, keep the pipeline (jobs, registry, connector loop, 
 
 ---
 
+# PART F: Tally → PesoWise: Sync from Tally (employee payments → balances)
+
+## F1) What it does
+
+An accountant saves a voucher of the Tally type **PesoWise Payment** (Dr employee ledger, Cr cash or bank). In PesoWise, an admin opens **Balances → Sync from Tally**. The connector reads those vouchers from the paired company; the database validates them, finds each employee, and adds the amount to that employee's balance **through the existing balance engine**. The Current Balance column and the employee's balance history update, and Import History shows a "Tally sync" batch.
+
+## F2) Direction rule (taken from the existing accounting, not assumed)
+
+| Meaning in PesoWise | Effect on Current Balance |
+|---|---|
+| Credit: money advanced to the employee (cash transfer, bank transfer, manual add, Tally credit) | increases |
+| Deduction: an approved expense | decreases |
+
+Tally side: **Dr on the employee ledger** (a Payment voucher: Dr employee, Cr cash/bank) means money paid to the employee, so it is a PesoWise **credit**. This matches the existing "Import from Tally", which treats a Tally debit on the employee ledger as a Balance Credit. A **Cr** on an employee ledger is a refund and is **never imported** (skipped and reported). The PesoWise → Tally sync posts expenses as Cr on the employee ledger, so the two directions are consistent.
+
+## F3) How a payment is recorded
+
+`_balance_apply_credit_core_v3` (the same function the existing Tally/file imports use) with kind `balance_credit`: it locks the profile row, adds the amount, and writes an immutable `balance_ledger` row ("Balance/Tally Credit", dated the voucher date, note "Tally payment voucher N (company)"). Nothing writes `profiles.balance` directly and there is no second balance engine. Each sync that imports something also creates one `balance_import_batches` row (mode `balance_credit`, "Tally sync: <company> <time>") with one row per payment, so it appears in **Import History** and can be reversed there with the existing reversal.
+
+## F4) Flow
+
+```
+Balances page → "Sync from Tally"
+  → pwt-inbound (start): admin check, creates job (needs a paired connector)
+  → connector (polls every ~10 s when no outbound work is pending): verifies the ACTIVE company is the paired one,
+    reads ledger parents and all vouchers of the exact type, uploads in chunks of 100 (idempotent), then "finish"
+  → database (one transaction, per-payment sub-transactions): validate → match employee → dedupe → credit → audit
+  → page: progress, result tiles, reasons for anything not imported; the balances table reloads once
+```
+
+## F5) Rules applied to every voucher (checked again in the database; the connector is not trusted)
+
+| Check | Result if it fails |
+|---|---|
+| Type equals the organisation's configured exact name (default `PesoWise Payment`) | skipped |
+| Narration starts with `PWT ` (created by the PesoWise → Tally sync) | skipped (prevents loops) |
+| Cancelled or optional voucher; invalid date | skipped |
+| Debits equal credits, and every credit is a cash/bank ledger (parent Cash-in-Hand / Bank Accounts) | skipped |
+| Ledger is not "name-code", or amount is zero/negative/at or above 1,000,000,000 | skipped / failed with reason |
+| Employee: code matches exactly one **active** employee of this organisation **and** the ledger name equals that employee's name (case/space-insensitive) | otherwise reported as *not matched* or *ambiguous*; never guessed, never another organisation |
+
+Several entries for the same employee ledger in one voucher are summed. A voucher with several employees creates one payment per employee.
+
+## F6) Duplicates, edits and deletes
+
+- **Identity:** company + voucher GUID + employee ledger, unique in `pwt_inbound_payments`. The ledger entry also carries the idempotency key `tally:<company>:<guid>:<ledger>` (unique per organisation), so even a lost registry row cannot double-credit.
+- Clicking Sync again, connector retries, repeated chunks and a crash in the middle are all safe. A failed payment does not block the others.
+- **Edited after import** (an imported entry's amount changed or disappeared, or a new employee entry was added): flagged *changed after import*; the balance is not touched. **Cancelled** after import: flagged. **Deleted** in Tally: flagged *deleted in Tally* (only when the fetch was complete); the credit is **not** reversed automatically. Reverse it deliberately in Import History if needed. An identical voucher that reappears clears its flag.
+- An entry that was skipped, unmatched or failed earlier is not an "edit" and is retried on later syncs (for example after the employee is added).
+
+## F7) Setup (once per Tally company)
+
+1. In TallyPrime create the voucher type: **Gateway of Tally → Create → Voucher Type**, name **PesoWise Payment** (the exact name), *Type of voucher* **Payment**.
+2. Enter a payment: voucher type PesoWise Payment; the cash/bank ledger on the credit side; the employee ledger (named `<name>-<employee code>`, as created by the expense sync) on the debit side; amount; date.
+3. The exact type name is an organisation setting: **Balances → Sync from Tally → Tally voucher type (exact name)**. Change it there if the company uses a different spelling.
+
+## F8) Where it lives
+
+| Area | Path |
+|---|---|
+| Migration (separate tables, calls the existing engine) | `supabase/migrations/20261017100000_pwt_inbound_payments.sql`: `pwt_inbound_jobs / vouchers / payments / settings`, `pwt_inbound_*_v1`, `_pwt_inbound_process_v1` |
+| Edge function | `supabase/functions/pwt-inbound` (start, claim, submit, finish) |
+| Connector | `connector/pwtally/src/inbound.ts` (read-only fetch and parse), loop hook in `main.ts` |
+| Website | `src/lib/pwt/pwtInbound.ts`, `src/components/balances/SyncFromTallyDialog.tsx`, button in `src/pages/Balances.tsx` (shown when `VITE_PWT_SYNC=1`) |
+| Tests | `supabase/tests/pwt_inbound/inbound_acceptance.mjs` (47 checks against the real balance migrations), connector and client tests |
+
+## F9) Deployment
+
+Apply the migration to the project's database, deploy `pwt-inbound` next to the other `pwt-*` functions, upgrade the connector EXE (older connectors keep working; they simply never poll for reverse-sync jobs). The existing functions and tables are not modified.
+
+## F10) Known limits
+
+- The cash/bank check uses the ledger's immediate parent group (Cash-in-Hand, Bank Accounts); a custom sub-group under Bank Accounts is skipped with a reason.
+- Edited or deleted vouchers are flagged, not auto-corrected; there is no in-app "resolve" action yet.
+- Only the voucher type configured for the organisation is read; Receipt-type refunds are not imported.
+
+## F-extra) Balance credit history (Balances → Transfer History)
+
+Admins now see a **Balance credit history** card under the transfer table on **Balances → Transfer History**. It lists every balance credit from the immutable balance ledger (opening credits, balance credits and their reversals) with a **Source** label: **Manual entry** (typed by an admin), **Tally sync** (imported by Sync from Tally; recognised by its `tally:` idempotency key) or **Import** (file import), plus employee, amount, date, who entered it and the note. It can be filtered by source and searched by employee or note, and is read-only: it never changes a balance. Files: `src/components/balances/BalanceCreditHistory.tsx` (+ test), mounted in `src/pages/Balances.tsx`. The Date column shows the Tally voucher date (the stored UTC calendar day, not shifted by the viewer timezone); the line under it shows when the sync ran. No migration (admins already have read access to the ledger by RLS).
+
+---
+
 # PART E: Engineering log
 
 ## E1) Build history
@@ -446,3 +647,7 @@ Test vouchers created while verifying were deleted before the owner's own tests.
 | Date | Change |
 |------|--------|
 | 2026-10-17 | Created as the single document for the whole integration (architecture, calculation, user manual, operations, reuse, engineering log). |
+| 2026-10-17 | Added Part F: Sync from Tally (employee payments entered in Tally become balance credits through the existing balance engine). Separate tables, function and connector module; the PesoWise → Tally path is unchanged. |
+| 2026-10-17 | Added Part G: accountant's mapping reference (every ledger, voucher, date, reference and Dr/Cr rule in both directions, reconciliation checks, and the decisions to confirm before a real company). |
+| 2026-10-17 | Balances → Transfer History now shows a Balance credit history (Manual entry / Tally sync / Import). |
+| 2026-10-17 | Credit history shows the voucher date, not a timezone-shifted day. |

@@ -11,6 +11,7 @@ import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { activeCompany, processBatch, TallyOfflineError, type ClaimedBatch } from "./engine.ts";
 import { Api, APP_VERSION, dataDir, loadConfig, log, saveConfig, tallyHttp, type ConnectorConfig } from "./runtime.ts";
+import { runInboundJob, type InboundJob } from "./inbound.ts";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -59,6 +60,7 @@ async function run() {
   const tally = tallyHttp(cfg.tallyUrl);
   log(`PesoWise Tally connector ${APP_VERSION} started. Authorised company: "${cfg.tallyCompany}"`);
 
+  let inboundRetryAt = 0;
   for (;;) {
     let busy = false;
     try {
@@ -89,6 +91,25 @@ async function run() {
               action: "ack", batch_id: batch.batch_id, verified: false, permanent: out.permanent,
               error: out.error, response: { ...(out.response ?? {}), offline: out.offline === true },
             });
+          }
+        }
+
+        // Reverse sync (Tally -> PesoWise employee balances): only when there is no outbound work pending.
+        if (!busy && Date.now() >= inboundRetryAt) {
+          try {
+            const { job } = await api.call<{ job: (InboundJob & { blocked?: string }) | null }>(
+              { action: "claim", active_company: active }, "pwt-inbound",
+            );
+            if (job && !job.blocked && job.job_id) {
+              busy = true;
+              log(`Reverse sync job ${job.job_id} for "${job.tally_company}"`);
+              const r = await runInboundJob(job, tally, { call: (body) => api.call(body, "pwt-inbound") }, log);
+              log(r.ok ? `  reverse sync done: ${JSON.stringify(r.summary ?? {})}` : `  reverse sync failed: ${r.error}`);
+            }
+          } catch (e) {
+            // e.g. the backend has no inbound function yet: back off instead of logging every cycle
+            inboundRetryAt = Date.now() + 5 * 60_000;
+            log(`reverse sync poll error (retry in 5 min): ${(e as Error).message}`);
           }
         }
       } else if (active) {
