@@ -39,6 +39,10 @@ import {
   type ColumnFilterSpec,
   type SortDirection,
 } from "@/lib/reportExportJobs";
+import { PwtSyncControl } from "@/components/PwtSyncControl";
+
+/** PesoWise -> TallyPrime "Sync to Tally" control on the four reports; off unless VITE_PWT_SYNC=1. */
+const PWT_SYNC_ENABLED = import.meta.env.VITE_PWT_SYNC === "1";
 
 const HISTORY_PAGE_SIZE = 5;
 const PREVIEW_PAGE_SIZE = 50;
@@ -324,6 +328,12 @@ interface ServerReportExportPanelProps {
   selectedYear?: string;
   selectedMonth?: string;
   selectedWeek?: string;
+  /** Admin only: show Sync to Tally (never on team-scoped reports). Needs VITE_PWT_SYNC=1. */
+  enableTallySync?: boolean;
+  /** Claim Approval: HO status filter value passed to the sync. */
+  hoStatus?: string | null;
+  /** Claim reports: custom-field filters passed to the sync. */
+  syncCustomFieldFilters?: Record<string, string>;
 }
 
 const POLL_MS = 2000;
@@ -345,6 +355,9 @@ export function ServerReportExportPanel({
   selectedYear,
   selectedMonth,
   selectedWeek,
+  enableTallySync = false,
+  hoStatus,
+  syncCustomFieldFilters,
 }: ServerReportExportPanelProps) {
   const { toast } = useToast();
   const [job, setJob] = useState<ExportJob | null>(null);
@@ -754,6 +767,27 @@ export function ServerReportExportPanel({
       <p className="text-sm text-muted-foreground">
         The report is built on the server. When it is ready, download it as a CSV.
       </p>
+
+      {enableTallySync && PWT_SYNC_ENABLED && (
+        <PwtSyncControl
+          organizationId={organizationId}
+          disabled={disabled}
+          params={{
+            reportType: reportType ?? "daily_project",
+            category,
+            userId,
+            userIds,
+            engineerStatus,
+            hoStatus,
+            dateFrom,
+            dateTo,
+            customFieldFilters: syncCustomFieldFilters ?? customFieldFilters,
+            selectedYear,
+            selectedMonth,
+            selectedWeek,
+          }}
+        />
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <Button onClick={() => void generate()} disabled={disabled || busy || !organizationId}>

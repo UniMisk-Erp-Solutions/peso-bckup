@@ -1,0 +1,11 @@
+{
+  "name": "@pesowise/pwtally-connector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PesoWise TallyPrime connector (pwt): outbound HTTPS to PesoWise, local XML to TallyPrime",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "node scripts/build.mjs",
+    "installer": "node scripts/build-installer.mjs"
+  }
+}

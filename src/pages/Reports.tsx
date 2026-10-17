@@ -2002,6 +2002,8 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                 reportType="claim_verification"
                 category={selectedCategory}
                 engineerStatus={engineerStatus}
+                enableTallySync={userRole === "admin" && !teamScoped}
+                syncCustomFieldFilters={customFieldFilters}
               />
             </CardContent>
           </Card>
@@ -2102,6 +2104,8 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                 reportType="claim_approval"
                 category={selectedCategory}
                 engineerStatus={engineerStatus}
+                enableTallySync={userRole === "admin" && !teamScoped}
+                syncCustomFieldFilters={customFieldFilters}
               />
             </CardContent>
           </Card>
@@ -2271,6 +2275,7 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                 selectedYear={selectedYear}
                 selectedMonth={selectedMonth}
                 selectedWeek={selectedWeek}
+                enableTallySync={userRole === "admin" && !teamScoped}
               />
             </CardContent>
           </Card>
@@ -2414,6 +2419,7 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                   userIds={teamScoped ? teamMemberUserIds : null}
                   teamScoped={teamScoped}
                   disabled={!dailyConfigReady}
+                  enableTallySync={userRole === "admin" && !teamScoped}
                 />
 
                 {/* A failed export must never look like an empty-but-successful

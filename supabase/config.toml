@@ -26,3 +26,12 @@ verify_jwt = false
 # can return its own typed error rather than an opaque gateway 401.
 [functions.run-report-export-job]
 verify_jwt = false
+
+[functions.pwt-start-sync]
+verify_jwt = false
+
+[functions.pwt-run-job]
+verify_jwt = false
+
+[functions.pwt-connector]
+verify_jwt = false

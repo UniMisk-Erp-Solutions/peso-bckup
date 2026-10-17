@@ -148,3 +148,6 @@ tmp/
 tmp/**
 *.xlsx
 !Documentations MD/**/*.xlsx
+
+# PesoWise Tally connector build outputs published for the setup page
+public/downloads/
