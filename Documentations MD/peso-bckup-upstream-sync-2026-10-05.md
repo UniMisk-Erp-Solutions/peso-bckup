@@ -203,9 +203,27 @@ guard again on any DB that still has those rows.
 7. Optional: `REVOKE EXECUTE ... FROM anon` on the two date-lock RPCs (§6); decide what to do with the 1,998 lab-deleted rows now visible in the Recycle Bin.
 8. Retention: delete the rollback dump under `~/pesowise-pre-sync-20261005/` (the SSH user's home on the host) (contains real data, mode 700) once the sync is accepted.
 
+## 9) Operational note — Vercel blocks commits by non-team authors (2026-10-19)
+
+After `feature/tally-integration` (author `priyanshubyte`) was fast-forwarded into `main` (`47f3d0f`), the
+live domain kept serving the previous build. GitHub showed Vercel's status for that commit — and for all four
+earlier preview builds of the same branch — as **"Deployment was blocked"**, while the earlier sync commit
+(authored by the team's own identity) deployed normally. The pattern fits Vercel's rule that the author of the
+newest commit must be a member of the Vercel team. Consequences and handling:
+
+- Merging a collaborator's commits does **not** by itself deploy them; the *newest* commit on `main` decides.
+  A follow-up commit authored by a team identity (this one) makes Vercel build the whole tree, including the
+  collaborator's earlier commits, whose history stays attributed to them.
+- Durable fix (owner, in Vercel): add the collaborator to the team, or change the project's Git author setting.
+- Tally UI visibility is a **build-time** flag: `VITE_PWT_SYNC=1` must be set in the Vercel project's
+  environment variables *before* the build, otherwise only `/admin/pwtally` (by URL) and the Balances credit
+  history are visible. Backend state on the `pesowise` stack was verified read-only the same day: all `pwt_*`
+  tables, 38 `pwt_*` functions and the five Tally edge functions are present.
+
 ## Revision log
 
 | Date | Notes |
 |---|---|
 | 2026-10-05 | Created. Explicit-base merge prepared on `sync/mithil-main-20261005`; DB 28/45 applied, halted on the Recycle Bin guard (WAL-lab data collision); push held. |
 | 2026-10-05 (later) | Owner authorized a minimal adjustment of the Recycle Bin guard (compare before/after deleted count). Applied it plus the remaining 16 migrations (45/45). Verified: counts/checksums, 115/115 function bodies in sync, anon-exec audit (185 -> 175), lab dry runs (rolled back), PostgREST reload, container health. Push and edge-function deploy still held. |
+| 2026-10-19 | Added §9: Vercel blocked every deployment of the Tally branch's commits (author not a Vercel team member); merged code was not live. Handled with a team-authored follow-up commit; flag and backend state documented. |
