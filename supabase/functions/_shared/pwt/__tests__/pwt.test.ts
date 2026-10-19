@@ -207,6 +207,8 @@ describe("job planner", () => {
     const plan = await buildJobPlan({ ...base, report: "detailed_expense", rows: [detailed({ expense_id: "a" }), detailed({ expense_id: "b", debit: 60 })] });
     expect(plan.batches.map((b) => [b.seq, b.kind])).toEqual([[1, "masters"], [2, "report_rows"], [3, "vouchers"]]);
     expect(plan.reservations).toHaveLength(2);
+    // each reservation records the ledgers it hit, so a later deletion of that expense can be corrected in Tally exactly
+    expect(plan.reservations[0]).toMatchObject({ employee_ledger: "Test Person-1001", expense_ledger: "Travelling Expenses", serial: 1, voucher_number: "PESO/08/01" });
     expect(plan.summary).toMatchObject({ row_count: 2, posted_count: 2, voucher_count: 1, blocking_count: 0 });
     expect(plan.batches[2].xml).toContain("<VOUCHERNUMBER>PESO/08/01</VOUCHERNUMBER>");
     expect(plan.vouchers["3"][0]).toMatchObject({ number: "PESO/08/01", total: 200 });

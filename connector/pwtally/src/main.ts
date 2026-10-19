@@ -12,6 +12,8 @@ import { dirname, join } from "node:path";
 import { activeCompany, processBatch, TallyOfflineError, type ClaimedBatch } from "./engine.ts";
 import { Api, APP_VERSION, dataDir, loadConfig, log, saveConfig, tallyHttp, type ConnectorConfig } from "./runtime.ts";
 import { runInboundJob, type InboundJob } from "./inbound.ts";
+import { runDeletionJob, type DeletionJob } from "./deletion.ts";
+import { ensurePaymentVoucherType } from "./voucherType.ts";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -61,6 +63,9 @@ async function run() {
   log(`PesoWise Tally connector ${APP_VERSION} started. Authorised company: "${cfg.tallyCompany}"`);
 
   let inboundRetryAt = 0;
+  let deletionRetryAt = 0;
+  let voucherTypeDone = ""; // "<company>|<name>" once the payment voucher type is known to exist
+  let voucherTypeRetryAt = 0;
   for (;;) {
     let busy = false;
     try {
@@ -71,10 +76,23 @@ async function run() {
       } catch (e) {
         tallyErr = e instanceof TallyOfflineError ? "tally_offline" : (e as Error).message;
       }
-      await api.call({ action: "heartbeat", active_company: active, tally_version: APP_VERSION, error: tallyErr });
+      const hb = await api.call<{ voucher_type?: string }>({ action: "heartbeat", active_company: active, tally_version: APP_VERSION, error: tallyErr });
 
       // Only ask for work while the AUTHORISED company is the active one.
       if (active === cfg.tallyCompany) {
+        // The payment voucher type used by "Sync from Tally" is created in the paired company automatically if it is missing.
+        const vtName = hb.voucher_type ?? "PesoWise Payment";
+        if (voucherTypeDone !== `${active}|${vtName}` && Date.now() >= voucherTypeRetryAt) {
+          const r = await ensurePaymentVoucherType(tally, active, vtName).catch((e) => ({ ok: false as const, reason: (e as Error).message }));
+          if (r.ok) {
+            voucherTypeDone = `${active}|${vtName}`;
+            if (r.state === "created") log(`Created the "${vtName}" voucher type in Tally (used by Sync from Tally).`);
+          } else {
+            voucherTypeRetryAt = Date.now() + 10 * 60_000;
+            log(`Could not prepare the "${vtName}" voucher type (retry in 10 min): ${r.reason}`);
+          }
+        }
+
         const { batch } = await api.call<{ batch: (ClaimedBatch & { blocked?: string }) | null }>({
           action: "claim", active_company: active,
         });
@@ -91,6 +109,24 @@ async function run() {
               action: "ack", batch_id: batch.batch_id, verified: false, permanent: out.permanent,
               error: out.error, response: { ...(out.response ?? {}), offline: out.offline === true },
             });
+          }
+        }
+
+        // Deletion sync (an expense deleted in PesoWise -> corrected in Tally): automatic, after any pending delivery.
+        if (!busy && Date.now() >= deletionRetryAt) {
+          try {
+            const { job } = await api.call<{ job: (DeletionJob & { blocked?: string }) | null }>(
+              { action: "claim", active_company: active }, "pwt-deletion",
+            );
+            if (job && !job.blocked && job.job_id) {
+              busy = true;
+              log(`Deletion correction job ${job.job_id}: voucher ${job.voucher_number} (${job.voucher_date}), amount ${job.amount}`);
+              await runDeletionJob(job, tally, { call: (body) => api.call(body, "pwt-deletion") }, log);
+            }
+          } catch (e) {
+            // e.g. the backend has no deletion function yet: back off instead of logging every cycle
+            deletionRetryAt = Date.now() + 5 * 60_000;
+            log(`deletion sync poll error (retry in 5 min): ${(e as Error).message}`);
           }
         }
 

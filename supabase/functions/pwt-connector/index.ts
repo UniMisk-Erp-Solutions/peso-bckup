@@ -50,7 +50,9 @@ Deno.serve(async (req) => {
         p_version: b.tally_version ?? null,
         p_error: b.error ?? null,
       });
-      return jsonResponse({ ok: true, paired_company: c.tally_company });
+      // The exact name of the payment voucher type used by "Sync from Tally" (organisation setting), so the connector can create it in Tally.
+      const { data: st } = await svc.from("pwt_inbound_settings").select("voucher_type").eq("organization_id", c.organization_id).maybeSingle();
+      return jsonResponse({ ok: true, paired_company: c.tally_company, voucher_type: st?.voucher_type ?? "PesoWise Payment" });
     }
     case "claim": {
       const { data, error } = await svc.rpc("pwt_claim_batch_v1", {

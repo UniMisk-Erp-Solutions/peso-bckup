@@ -16,6 +16,7 @@ import {
   CircleHelp,
   ArrowDownToLine,
   UserRoundSearch,
+  Plug,
 } from "lucide-react";
 import {
   Sidebar,
@@ -115,6 +116,7 @@ export function AppSidebar() {
     { titleKey: "manageUsers", url: "/admin/users", icon: Users },
     { titleKey: "categories", url: "/admin/categories", icon: Tag },
     { titleKey: "reports", url: "/admin/reports", icon: FileText },
+    ...(import.meta.env.VITE_PWT_SYNC === "1" ? [{ titleKey: "tallyIntegration", url: "/admin/pwtally", icon: Plug }] : []),
     { titleKey: "analytics", url: "/analytics", icon: BarChart3 },
     { titleKey: "notifications", url: "/notifications", icon: Bell },
     { titleKey: "settings", url: "/settings", icon: SettingsIcon },

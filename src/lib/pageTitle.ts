@@ -6,6 +6,7 @@ export const PAGE_TITLES: Record<string, string> = {
   "/admin/expenses": "All Expenses",
   "/admin/users": "User Management",
   "/admin/reports": "Reports",
+  "/admin/pwtally": "Tally integration setup",
   "/admin/categories": "Categories",
   "/accountant/expenses": "Approved Expenses",
   "/my-teams": "My Teams",

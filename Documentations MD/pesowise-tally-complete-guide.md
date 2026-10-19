@@ -5,7 +5,7 @@
 **Last updated:** 2026-10-17  
 **Owner / area:** Tally integration (architecture, operation, user manual, reuse)  
 
-> This is the **only document** for the PesoWise → TallyPrime integration. Part A explains how the system works, Part B is the user manual, Part C is for whoever deploys and runs it, Part D explains how to reuse the design for another project, and Part E is the engineering log (what was built, found and fixed), Part F covers Sync from Tally, and **Part G is the accountant's mapping reference**.
+> This is the **only document** for the PesoWise → TallyPrime integration. Part A explains how the system works, Part B is the user manual, Part C is for whoever deploys and runs it, Part D explains how to reuse the design for another project, and Part E is the engineering log (what was built, found and fixed), Part F covers Sync from Tally, **Part G is the accountant's mapping reference**, and Part H covers deleted-expense corrections.
 
 ---
 
@@ -97,7 +97,7 @@ Notes: the reference workbook spells serial 6's ledger "Conveyance Exepsnes"; th
 | Amount | sum of the amounts, exact to 2 decimals |
 | Which rows | **Detailed Expense**: expense deductions with a debit above zero (credits and opening balances are skipped). **Claim Approval**: claims that are approved and HO-approved. **Claim Verification** and **Daily Project** never create vouchers |
 | Posted once | each PesoWise expense is posted once ever, even if it appears in several reports or is synced again |
-| Never changed later | a posted voucher is not edited or deleted by a later sync; corrections are manual |
+| Never changed by a later sync | a later *sync* never edits or deletes a posted voucher. The only automatic change is the deletion correction (Part H): when a synced expense is deleted in PesoWise, its entry is removed from the voucher |
 
 Worked example (anonymised): five Material Purchase expenses of one employee in August 2026 (60 + 120 + 500 + 20 + 50 = **750.00**) become one Credit line of 750.00 on `Employee A-1234` inside the voucher dated **31-08-2026** with Dr **Consumable Stores - URD** and narration `PWT PESO/08/02`.
 
@@ -573,7 +573,7 @@ Several entries for the same employee ledger in one voucher are summed. A vouche
 
 ## F7) Setup (once per Tally company)
 
-1. In TallyPrime create the voucher type: **Gateway of Tally → Create → Voucher Type**, name **PesoWise Payment** (the exact name), *Type of voucher* **Payment**.
+1. The voucher type **PesoWise Payment** (type of voucher: Payment) is **created automatically** in the paired company by the connector (version 1.2.0 and later) when it is missing; nothing is created by hand. The backend sends the organisation's configured name in the connector's regular check-in; an existing voucher type is never changed, and nothing is written unless the paired company is the one open in Tally.
 2. Enter a payment: voucher type PesoWise Payment; the cash/bank ledger on the credit side; the employee ledger (named `<name>-<employee code>`, as created by the expense sync) on the debit side; amount; date.
 3. The exact type name is an organisation setting: **Balances → Sync from Tally → Tally voucher type (exact name)**. Change it there if the company uses a different spelling.
 
@@ -600,6 +600,78 @@ Apply the migration to the project's database, deploy `pwt-inbound` next to the 
 ## F-extra) Balance credit history (Balances → Transfer History)
 
 Admins now see a **Balance credit history** card under the transfer table on **Balances → Transfer History**. It lists every balance credit from the immutable balance ledger (opening credits, balance credits and their reversals) with a **Source** label: **Manual entry** (typed by an admin), **Tally sync** (imported by Sync from Tally; recognised by its `tally:` idempotency key) or **Import** (file import), plus employee, amount, date, who entered it and the note. It can be filtered by source and searched by employee or note, and is read-only: it never changes a balance. Files: `src/components/balances/BalanceCreditHistory.tsx` (+ test), mounted in `src/pages/Balances.tsx`. The Date column shows the Tally voucher date (the stored UTC calendar day, not shifted by the viewer timezone); the line under it shows when the sync ran. No migration (admins already have read access to the ledger by RLS).
+
+---
+
+# PART H: Deleted expenses are corrected in Tally automatically
+
+## H1) What it does
+
+When an expense that was **already posted to Tally** is deleted in PesoWise, the system removes that expense's accounting effect from TallyPrime by itself: no button, no approval. An expense that was never synced is never touched in Tally.
+
+| Situation in Tally | What happens | Result in Tally |
+|---|---|---|
+| The voucher holds **only that expense** | the voucher is **deleted** | the voucher disappears from the Day Book |
+| The voucher holds **other expenses too** | the voucher is **altered**: only this expense's amount is taken off its two ledgers (the expense ledger and the employee's ledger); an employee's line disappears when it reaches zero | the voucher stays, with a smaller total; its reference (narration `PWT PESO/08/02`) does not change |
+| Tally **refuses** the delete or alter (for example the period is locked) | a **compensating reversal** Journal is posted on the same date, narration `PWT REV <voucher ID> <expense number>` (mirror image of the original: employee Dr, expense ledger Cr) | the original voucher stays and the reversal cancels the amount; an audit-friendly trail |
+| The voucher was **changed in Tally by hand**, appears twice, is of another type, is unbalanced, or the ledgers of the expense are not known | **blocked**: nothing in Tally is changed | the correction shows "Needs attention" on **Admin → Tally connector → Deleted-expense corrections** with the reason, and has a Retry button for after it was sorted out |
+
+The correction is only reported done after **TallyPrime itself shows the corrected state** (read back), never on the strength of a request being accepted.
+
+## H2) How PesoWise deletes expenses (audit findings)
+
+- A user's "Delete" is a **soft delete**: `trash_expense_v1` sets `expenses.deleted_at` (30-day Recycle Bin) and only works on **drafts**. A draft has never been approved, so it has never been synced.
+- A row is physically removed only by the daily purge (also drafts), a database clean-up, or removing a user or organisation.
+- An **approved** expense (the only kind that is synced) cannot be deleted by an ordinary user: the system refuses ("balance deduction on record"). So in daily use a correction is rare: it covers an admin or database delete, a restore from a backup, or a future change that allows deleting approved expenses. The feature is built to be correct for all of them.
+
+## H3) How it works
+
+1. **Detection (database).** Two triggers on `public.expenses`: one when `deleted_at` changes from empty to set, one when a row is deleted. Each looks the expense up in `pwt_registry` (the record of what was posted). Not found, or not yet delivered: nothing happens. Found: one row is added to `pwt_deletion_jobs`. The trigger can never block or fail the deletion itself (errors are swallowed and logged).
+2. **Safety net.** About every 5 minutes (when the connector asks for work) a scan queues any synced expense that is deleted or gone but has no correction (a missed trigger, a restored backup). Idempotent.
+3. **One correction per expense, ever.** `UNIQUE (organization_id, source_id)` makes a repeated delete, a double trigger or a scan unable to queue a second one.
+4. **The connector claims the job** through the new `pwt-deletion` edge function (same device token as the rest), only while Tally's active company is the paired one. Before handing it out the database checks the expense is still deleted (a **restored** expense cancels the job). Two corrections to the same voucher never run at once.
+5. **The connector finds the voucher in Tally** by date and exact narration, decides delete / alter / reversal / blocked (`connector/pwtally/src/deletion.ts`, a pure function plus read-back), applies it, then reads Tally again to prove it.
+6. **The outcome is acknowledged.** `completed` stamps `pwt_registry.removed_at`, updates the recorded voucher total, and writes the step to the append-only `pwt_correction_log`.
+7. **Offline or failing.** Tally closed or the wrong company open: the job stays queued and is retried automatically (a Tally outage does not use up attempts). A real failure is retried with a growing delay, and after 5 attempts is **blocked**, never retried forever.
+
+**Repeating is safe.** A job run twice never deletes or reverses twice: a voucher already gone is "already gone"; an alteration already applied is recognised (PesoWise's recorded total minus this amount) and not applied again; a reversal already in Tally is found by its own reference and not posted again. After a reversal has been used on a voucher it is flagged and that voucher is never deleted or altered again.
+
+## H4) What needed to change in the existing sync
+
+Each posting now also records the **employee ledger, expense ledger and serial** it hit (new columns on `pwt_registry`); without them one expense could not be taken out of a shared voucher. For expenses posted **before** this feature the migration backfills them from the stored job snapshot (best effort). Anything it cannot resolve is handled safely: a voucher holding only that expense can still be deleted; anything else is blocked, never guessed. Nothing in PesoWise → Tally or Tally → PesoWise changed otherwise.
+
+## H5) For the accountant
+
+- A deleted synced expense **disappears from the Day Book** (single-expense voucher), **reduces the voucher** (shared voucher) or is **offset by a reversal** (only if Tally refuses). Voucher IDs are never reused.
+- The five-column **report rows** shown in the Tally reports refresh on the next sync of that report (a deleted expense is then no longer in the data); the correction itself does not wait for that.
+- A correction is never made to a voucher whose total is no longer what PesoWise recorded; that is flagged for you instead.
+
+## H6) Key files and migration
+
+| Piece | File |
+|---|---|
+| Migration (tables, triggers, scan, claim/ack, admin RPCs, registry backfill) | `supabase/migrations/20261019100000_pwt_deletion_sync.sql` |
+| Connector API | `supabase/functions/pwt-deletion/index.ts` (+ `[functions.pwt-deletion]` in `supabase/config.toml`) |
+| Planner records ledgers | `supabase/functions/_shared/pwt/aggregate.ts`, `prepare.ts`, `types.ts` |
+| Tally logic | `connector/pwtally/src/deletion.ts`; polled from `main.ts` after delivery |
+| Website | `src/lib/pwt/pwtDeletion.ts`, `src/components/PwtDeletionHistory.tsx` (on `/admin/pwtally`) |
+| Tests | `supabase/tests/pwt_deletion/deletion_acceptance.mjs` (Postgres), `connector/pwtally/src/__tests__/deletion.test.ts`, `src/components/__tests__/PwtDeletionHistory.test.tsx` |
+
+**Deploy (needs the owner's approval, PesoWise stack only, in this order):** apply the migration; deploy `pwt-deletion` **and redeploy `pwt-run-job`** (so new postings record their ledgers); replace the connector on the Tally PC with the new build. Until the connector is replaced, deletions queue safely and wait.
+
+## H7) Test evidence (2026-10-19)
+
+- **Postgres acceptance test** (in-process Postgres, real migrations): unsynced delete queues nothing; soft and hard delete queue exactly one correction; reserved (still being delivered) is picked up by the scan; a failing trigger never blocks a delete; wrong company is blocked; claims are exclusive; same-voucher corrections are serialised; offline retries refund the attempt; 5 real failures block; restore cancels; only admins of the organisation can list or retry; browser roles are denied the connector functions; the registry backfill resolves legacy rows. All pass.
+- **Live TallyPrime** (`PesoWise Integration Demo`, throw-away `ZZ Del Test` ledgers and `PWT PESO/09/9x` vouchers, all removed afterwards): single-expense voucher deleted and verified gone; a shared voucher reduced from 350 to 300 (employee line 150 to 100, others unchanged, reference unchanged); an employee's last expense removes that line; the last remaining expense deletes the voucher; the reversal voucher posted with the mirrored lines and the original untouched; repeating each job changed nothing; a voucher whose total differed was blocked and left untouched; Tally offline queued the retry. The real PesoWise vouchers (PESO/07/xx, 08/xx) were verified unchanged afterwards.
+- **Deployed 2026-10-19 (owner-approved, PesoWise stack only):** migration applied (2 triggers; all 12,586 existing registry rows backfilled with employee ledger, expense ledger and serial; first scan queued 0 corrections), `pwt-deletion` and `pwt-run-job` deployed (both answer 401 without credentials), local connector replaced and polling. **End-to-end on the deployed stack (2026-10-19, run by the agent with throw-away test records, all removed afterwards):** a single-expense voucher was deleted and a shared voucher reduced from 200 to 140 by the real connector within 12 s of detection, both read back from TallyPrime; the real `expenses` trigger queued a job on a soft delete (inside a rolled-back transaction); a job queued while the connector was stopped stayed queued and was completed 2 s after the connector restarted; a second full scan changed nothing; the production tables returned to their exact baseline (12,586 registry rows, 19 vouchers, 0 corrections).
+- **Regression note:** the full existing suite has failures only in the legacy Tally metadata/delivery tests (`tallyMetadata*`, `tallyMappingMetadataLedger`, `tallyDeliveryUpdates`, `tallyPhase53Delivery`) and one maintenance-admin test; none of them import the pwt code.
+
+## H8) Known limits
+
+- Only **vouchers** are corrected. Deleted expenses are not removed from report rows until that report is synced again.
+- An **edited amount** of a synced expense is not corrected (not a deletion); it is reported as a mismatch by the next sync, as before.
+- Ledgers created for an employee or category are not removed when their last voucher goes.
+- A correction waits while TallyPrime is closed or the wrong company is open; it needs the same connector as the rest.
 
 ---
 
@@ -651,3 +723,8 @@ Test vouchers created while verifying were deleted before the owner's own tests.
 | 2026-10-17 | Added Part G: accountant's mapping reference (every ledger, voucher, date, reference and Dr/Cr rule in both directions, reconciliation checks, and the decisions to confirm before a real company). |
 | 2026-10-17 | Balances → Transfer History now shows a Balance credit history (Manual entry / Tally sync / Import). |
 | 2026-10-17 | Credit history shows the voucher date, not a timezone-shifted day. |
+| 2026-10-19 | Added Part H: automatic correction in Tally when a synced expense is deleted in PesoWise (audit, design, rules, tests, deploy order, limits). Updated G5. |
+| 2026-10-19 | Connector and setup installer rebuilt as version 1.1.0 (includes deletion sync). `/downloads/PesoWise-Tally-Setup.exe` and `PesoWise-Tally.tdl` serve the new files; the setup page states the version and how to update an installed PC (run the new setup, answer No to keep the pairing). |
+| 2026-10-19 | `/admin/pwtally` redesigned as the dedicated Tally integration setup page: live status banner with a 4-point checklist, the three things it automates, four numbered step cards (downloads, prepare Tally, pairing code with copy and 15-minute countdown plus connected PCs, ledger mapping), first-sync card, and tabs for sync history, deleted-expense corrections and troubleshooting. Admin sidebar link "Tally integration" added (shown only when `VITE_PWT_SYNC=1`). |
+| 2026-10-19 | `/admin/pwtally` simplified: status line, three short steps (Download, Connect with a code, Set up TallyPrime) and three tabs (History, Deleted expenses, Ledger mapping). The explanatory tiles, checklist and troubleshooting text were removed. |
+| 2026-10-19 | Connector 1.2.0: creates the payment voucher type used by Sync from Tally in the paired company automatically (heartbeat now returns the configured name). F7 updated. Unit-tested and verified live in TallyPrime (a throwaway voucher type was created as a Payment type, a repeat run changed nothing, the existing "PESO Wise Payment" was left alone, a wrong company was refused, and the test type was removed). |

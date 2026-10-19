@@ -113,7 +113,9 @@ export function planPosting(
     const vno = voucherNumber(cfg, b.date, b.rule.serial, state);
     rows.push({ voucherDate: b.date, expenseLedger: b.rule.expenseLedger, employeeLedger: b.ledger,
       voucherId: vno, total: b.total, sourceIds: b.ids });
-    for (const it of b.items) postings.push({ ...it, voucherNumber: vno, voucherDate: b.date, serial: b.rule.serial });
+    for (const it of b.items) {
+      postings.push({ ...it, voucherNumber: vno, voucherDate: b.date, serial: b.rule.serial, employeeLedger: b.ledger, expenseLedger: b.rule.expenseLedger });
+    }
     const vk = `${b.date}|${b.rule.serial}`;
     let v = vmap.get(vk);
     if (!v) {

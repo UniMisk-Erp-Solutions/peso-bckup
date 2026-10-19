@@ -38,7 +38,11 @@ export interface PlannedBatch {
 
 export interface JobPlan {
   batches: PlannedBatch[];
-  reservations: { source_id: string; amount: number; voucher_number: string; voucher_date: string; content_hash: string }[];
+  reservations: {
+    source_id: string; amount: number; voucher_number: string; voucher_date: string; content_hash: string;
+    /** Recorded so a later deletion of the expense can be corrected in Tally exactly. */
+    employee_ledger: string; expense_ledger: string; serial: number;
+  }[];
   /** batch seq (string) -> voucher registry rows for pwt_vouchers */
   vouchers: Record<string, { date: string; number: string; serial: number; total: number }[]>;
   summary: {
@@ -171,6 +175,7 @@ export async function buildJobPlan(inp: PlanInput): Promise<JobPlan> {
     reservations: plan.postings.map((p) => ({
       source_id: p.sourceId, amount: p.amount, voucher_number: p.voucherNumber,
       voucher_date: p.voucherDate, content_hash: p.contentHash,
+      employee_ledger: p.employeeLedger, expense_ledger: p.expenseLedger, serial: p.serial,
     })),
     vouchers: vouchersByBatch,
     rowRecords,

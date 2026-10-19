@@ -137,7 +137,7 @@ export interface AggregationResult {
   expenseLedgers: string[];
   postedSourceIds: string[];
   /** Per-expense posting facts for the registry reservation. */
-  postings: { sourceId: string; amount: number; contentHash: string; voucherNumber: string; voucherDate: string; serial: number }[];
+  postings: { sourceId: string; amount: number; contentHash: string; voucherNumber: string; voucherDate: string; serial: number; employeeLedger: string; expenseLedger: string }[];
 }
 
 export interface PosterState {
