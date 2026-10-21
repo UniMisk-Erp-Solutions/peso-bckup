@@ -9,6 +9,7 @@ import {
   parseVoucherReadback, pruneMasters, reconcile, voucherReadbackRequest,
   type PlannedVoucher,
 } from "../../../supabase/functions/_shared/pwt/index.ts";
+import { ensureCompanyPeriod } from "./period.ts";
 
 export class TallyOfflineError extends Error {
   constructor(msg = "TallyPrime is not reachable") {
@@ -175,7 +176,13 @@ async function processVouchers(b: ClaimedBatch, io: TallyIO): Promise<Outcome> {
 
   // 2) Import only what is missing.
   let created = 0;
+  let periodExtendedTo: string | undefined;
   if (toImport.length) {
+    // The company's books must cover every voucher date, or Tally refuses with "Voucher date is missing".
+    const earliest = planned.filter((p) => toImport.includes(p.voucherNumber)).map((p) => p.date).sort()[0];
+    const per = await ensureCompanyPeriod(io, b.tally_company, earliest);
+    if (!per.ok) return fail(per.reason, true);
+    if (per.action === "extended") periodExtendedTo = per.to;
     const open = "<REQUESTDATA>";
     const head = b.xml.slice(0, b.xml.indexOf(open) + open.length);
     const tail = b.xml.slice(b.xml.indexOf("</REQUESTDATA>"));
@@ -198,5 +205,8 @@ async function processVouchers(b: ClaimedBatch, io: TallyIO): Promise<Outcome> {
       false, { ...rec },
     );
   }
-  return { verified: true, response: { created, already_present: planned.length - toImport.length, verified_vouchers: planned.length } };
+  return {
+    verified: true,
+    response: { created, already_present: planned.length - toImport.length, verified_vouchers: planned.length, ...(periodExtendedTo ? { company_start_moved_to: periodExtendedTo } : {}) },
+  };
 }

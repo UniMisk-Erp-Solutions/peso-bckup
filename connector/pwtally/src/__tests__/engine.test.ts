@@ -13,10 +13,28 @@ class FakeTally implements TallyIO {
   vouchers: { number: string; date: string; amounts: number[]; narration: string }[] = [];
   imports: string[] = [];
   breakReadback = false;
+  /** The company's period as TallyPrime shows it (start of books); vouchers before it are refused like the real thing. */
+  periodStart = "2020-01-01";
+  foreignVouchers = 0;
+  periodAlters: string[] = [];
 
   async post(xml: string): Promise<string> {
     if (this.offline) throw new TallyOfflineError();
     if (xml.includes("<ID>PWTCur</ID>")) return `<ENVELOPE><COMPANY NAME="x"><PWTCURCO TYPE="String">${this.active}</PWTCURCO></COMPANY></ENVELOPE>`;
+    if (xml.includes("<ID>PWTPer</ID>")) {
+      const [y, m, d] = this.periodStart.split("-");
+      const disp = `${Number(d)}-${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m) - 1]}-${y.slice(2)}`;
+      return `<ENVELOPE><PWTPERFLD>${COMPANY}|${disp}|${disp}</PWTPERFLD></ENVELOPE>`;
+    }
+    if (xml.includes("<ID>PWTPerV</ID>")) {
+      return `<ENVELOPE>${Array.from({ length: this.foreignVouchers }, () => "<VOUCHER REMOTEID=\"x\"><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME><NARRATION>rent</NARRATION></VOUCHER>").join("")}${this.vouchers.map(() => "<VOUCHER REMOTEID=\"y\"><VOUCHERTYPENAME>Journal</VOUCHERTYPENAME><NARRATION>PWT PESO/06/01</NARRATION></VOUCHER>").join("")}</ENVELOPE>`;
+    }
+    if (xml.includes("<COMPANY NAME=") && xml.includes('ACTION="Alter"')) {
+      const d = /<STARTINGFROM>(\d{8})</.exec(xml)![1];
+      this.periodStart = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+      this.periodAlters.push(this.periodStart);
+      return `<RESPONSE><CREATED>0</CREATED><ALTERED>1</ALTERED><ERRORS>0</ERRORS></RESPONSE>`;
+    }
     if (xml.includes("<ID>PWTLedgerNames</ID>")) {
       const set = xml.includes("<TYPE>Group</TYPE>") ? this.groups : this.ledgers;
       const tag = xml.includes("<TYPE>Group</TYPE>") ? "GROUP" : "LEDGER";
@@ -51,6 +69,9 @@ class FakeTally implements TallyIO {
       const narration = /<NARRATION>(.*?)<\/NARRATION>/.exec(m[0])![1];
       const date = /<DATE>(\d{8})<\/DATE>/.exec(m[0])![1];
       const names = [...m[0].matchAll(/<LEDGERNAME>(.*?)<\/LEDGERNAME>/g)].map((x) => x[1].replace(/&amp;/g, "&"));
+      if (`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}` < this.periodStart) {
+        return `<RESPONSE><CREATED>0</CREATED><ALTERED>0</ALTERED><ERRORS>1</ERRORS><LINEERROR>Voucher date is missing for: 'Journal' voucher</LINEERROR></RESPONSE>`;
+      }
       const unknown = names.find((n) => !this.ledgers.has(n));
       if (unknown) return `<RESPONSE><CREATED>0</CREATED><ALTERED>0</ALTERED><ERRORS>1</ERRORS><LINEERROR>Ledger '${unknown}' does not exist</LINEERROR></RESPONSE>`;
       this.vouchers.push({
@@ -214,5 +235,36 @@ describe("duplicate vouchers in Tally", () => {
     const r = await processBatch(batches[2], t);
     expect(r).toMatchObject({ verified: false, permanent: true });
     expect((r as { error: string }).error).toMatch(/more than once/);
+  });
+});
+
+describe("company period (no more 'Voucher date is missing')", () => {
+  it("moves a PesoWise-only company's start earlier so every month posts, then verifies", async () => {
+    const t = new FakeTally();
+    t.periodStart = "2026-09-01"; // the vouchers are dated 31-Aug-2026, before the books begin
+    const out = await deliverAll(t, await plan());
+    expect(out.map((o) => o.verified)).toEqual([true, true, true]);
+    expect(t.periodAlters).toEqual(["2025-09-01"]); // same day and month, covering year
+    expect(t.vouchers).toHaveLength(1);
+    const last = out[out.length - 1] as { verified: true; response: Record<string, unknown> };
+    expect(last.response.company_start_moved_to).toBe("2025-09-01");
+  });
+  it("never touches a company that has its own entries: permanent, with a plain instruction", async () => {
+    const t = new FakeTally();
+    t.periodStart = "2026-09-01";
+    t.foreignVouchers = 3;
+    const out = await deliverAll(t, await plan());
+    const last = out[out.length - 1];
+    expect(last.verified).toBe(false);
+    expect((last as { permanent: boolean }).permanent).toBe(true);
+    expect((last as { error: string }).error).toMatch(/Alt\+F3/);
+    expect(t.periodAlters).toEqual([]);
+    expect(t.vouchers).toHaveLength(0);
+  });
+  it("leaves a company alone when its books already cover the dates", async () => {
+    const t = new FakeTally();
+    t.periodStart = "2026-04-01";
+    await deliverAll(t, await plan());
+    expect(t.periodAlters).toEqual([]);
   });
 });
