@@ -150,4 +150,6 @@ tmp/**
 !Documentations MD/**/*.xlsx
 
 # PesoWise Tally connector build outputs published for the setup page
-public/downloads/
+public/downloads/*
+# the connector installer is a public download (embeds only the public API URL + publishable key)
+!public/downloads/PesoWise-Tally-Setup.exe
