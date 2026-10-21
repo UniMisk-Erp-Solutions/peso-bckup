@@ -51,7 +51,7 @@ export async function normalizeRow(orgId: string, report: PwtReportType, row: Ro
     transactionNumber: txnNo,
     employeeId: s(pick(row, ["employee_code", "employee_id", "Employee ID", "Employee Code"])),
     employeeName: s(pick(row, ["employee_name", "user_name", "Employee", "User"])),
-    expenseType: s(pick(row, ["category", "expense_type", "Expense Type"])),
+    expenseType: s(pick(row, ["category", "expense_type", "Expense Type"])) || "N/A",
     amount: Number.isFinite(amount) ? round2(amount) : NaN,
     billDate: toIsoDate(pick(row, ["effective_date", "bill_date", "trip_start", "Bill Date (DD-MM-YYYY)", "Date", "expense_date"])),
     origin: report,

@@ -115,8 +115,8 @@ export function describePwtJob(j: PwtJob, connectorOnline?: boolean): string {
       return "Prepared. The Windows connector delivers it to TallyPrime and verifies it; keep TallyPrime open on the paired company.";
     case "completed":
       return j.voucher_count
-        ? `Verified in TallyPrime: ${j.voucher_count} voucher(s) for ${j.posted_count} expense(s); ${j.row_count} report row(s) stored.`
-        : `Verified in TallyPrime: ${j.row_count} report row(s) stored. No new vouchers were needed.`;
+        ? `Verified in TallyPrime: ${j.voucher_count} voucher(s) for ${j.posted_count} expense(s).`
+        : `Verified in TallyPrime. No new vouchers were needed.`;
     case "needs_attention": {
       if (j.blocking_count > 0) {
         const first = j.issues.find((i) => i.blocking);
@@ -147,6 +147,22 @@ export async function startPwtSync(
   const p = data as { accepted?: boolean; job_id?: string; deduplicated?: boolean; error?: string } | null;
   if (!p?.accepted || !p.job_id) throw new Error(p?.error ?? "Unable to start Tally sync");
   return { jobId: p.job_id, deduplicated: p.deduplicated === true };
+}
+
+/** One short preparation slice of a running sync. Large syncs are prepared in several slices; the page keeps asking until done. */
+export interface PwtSliceResult {
+  claimed: boolean;
+  done: boolean;
+  status?: string;
+  phase?: "read" | "plan";
+  progress?: { current: number; total: number | null };
+  error?: string;
+}
+
+export async function continuePwtJob(organizationId: string, jobId: string): Promise<PwtSliceResult> {
+  const { data, error } = await supabase.functions.invoke("pwt-start-sync", { body: { action: "continue", organization_id: organizationId, job_id: jobId } });
+  if (error) throw new Error(error.message || "Could not continue the sync");
+  return (data ?? { claimed: false, done: false }) as PwtSliceResult;
 }
 
 export async function listPwtJobs(organizationId: string, limit = 10): Promise<PwtJob[]> {
@@ -203,6 +219,8 @@ export interface PwtConfig {
   voucherPrefix?: string;
   expenseSide?: "debit" | "credit";
   voucherType?: string;
+  /** Also store the report rows in Tally (hidden ledgers for the PesoWise Reports screens). Off by default. */
+  reportRowsInTally?: boolean;
 }
 
 /** Mirrors the database validation so the user gets the message before saving. Returns "" when valid. */
@@ -222,6 +240,70 @@ export function validatePwtConfig(c: PwtConfig): string {
   }
   if (c.voucherPrefix !== undefined && !/^[A-Za-z0-9]{1,10}$/.test(c.voucherPrefix)) return "Voucher prefix must be 1-10 letters or digits.";
   return "";
+}
+
+/** Best-guess Tally ledger for an expense type name (keywords); anything unrecognised goes to Miscellaneous Expenses. */
+export function suggestLedger(expenseType: string): string {
+  const t = expenseType.toLowerCase();
+  const has = (...w: string[]) => w.some((x) => t.includes(x));
+  if (has("hotel", "guest house", "lodg", "stay", "accommodation")) return "Lodging Expenses";
+  if (has("petrol", "fuel", "diesel", "conveyance", "cab", "taxi")) return "Conveyance Expenses";
+  if (has("travel", "bus", "train", "flight", "ticket", "metro", "food", "meal")) return "Travelling Expenses";
+  if (has("mobile", "phone", "recharge", "telephone", "internet", "data card")) return "Telephone Expenses";
+  if (has("material", "stores", "consumable", "purchase")) return "Consumable Stores - URD";
+  if (has("manpower", "labour", "labor", "contra")) return "Labour Charges Expenses-URD";
+  if (has("laptop", "rent", "equipment")) return "Rent Expenses - Equipment";
+  if (has("xerox", "printing", "courier", "stationery", "medical", "site", "other")) return "Site Expenses";
+  if (has("incentive", "bonus")) return "Incentive Expenses";
+  return "Miscellaneous Expenses";
+}
+
+/** Adds a row (with a suggested ledger and the next free number) for every PesoWise expense type that has no mapping yet, and fills blank ledgers. */
+export function autoMapRules(rules: PwtCategoryRule[], expenseTypes: string[]): { rules: PwtCategoryRule[]; added: number; filled: number } {
+  const known = (n: string) => rules.some((r) => [r.expenseType, ...(r.aliases ?? [])].some((x) => x.trim().toLowerCase() === n.trim().toLowerCase()));
+  let next = Math.max(0, ...rules.filter((r) => r.serial < 99).map((r) => r.serial));
+  const out = rules.map((r) => ({ ...r }));
+  let filled = 0;
+  for (const r of out) if (!r.expenseLedger.trim() && r.expenseType.trim()) { r.expenseLedger = suggestLedger(r.expenseType); filled += 1; }
+  let added = 0;
+  for (const name of [...new Set(expenseTypes.map((n) => n.trim()).filter(Boolean))]) {
+    if (known(name) || next >= 98) continue;
+    next += 1;
+    out.push({ serial: next, expenseType: name, expenseLedger: suggestLedger(name) });
+    added += 1;
+  }
+  return { rules: out, added, filled };
+}
+
+/** Expense types (already saved) whose Tally ledger the admin has now changed. */
+export function changedLedgers(saved: PwtCategoryRule[], now: PwtCategoryRule[]): string[] {
+  return now
+    .filter((r) => {
+      const old = saved.find((x) => x.expenseType.trim().toLowerCase() === r.expenseType.trim().toLowerCase());
+      return !!old && old.expenseLedger.trim() !== r.expenseLedger.trim();
+    })
+    .map((r) => r.expenseType);
+}
+
+/** Expense types (already saved) whose voucher number was changed. */
+export function changedSerials(saved: PwtCategoryRule[], now: PwtCategoryRule[]): string[] {
+  return now
+    .filter((r) => {
+      const old = saved.find((x) => x.expenseType.trim().toLowerCase() === r.expenseType.trim().toLowerCase());
+      return !!old && old.serial !== r.serial;
+    })
+    .map((r) => r.expenseType);
+}
+
+/** Ledgers that more than one expense type posts to (allowed, but the accountant should know: Tally shows them together). */
+export function sharedLedgers(rules: PwtCategoryRule[]): { ledger: string; types: string[] }[] {
+  const by = new Map<string, string[]>();
+  for (const r of rules) {
+    const k = r.expenseLedger.trim();
+    if (!k) continue;
+    by.set(k, [...(by.get(k) ?? []), r.expenseType]);
+  }
+  return [...by.entries()].filter(([, v]) => v.length > 1).map(([ledger, types]) => ({ ledger, types }));
 }
 
 /** Expense types the last syncs could not map (so the admin can add them in one click). */
@@ -262,7 +344,23 @@ export const DEFAULT_PWT_CATEGORIES: PwtCategoryRule[] = [
   { serial: 8, expenseType: "Mobile Recharges", expenseLedger: "Telephone Expenses" },
   { serial: 9, expenseType: "Food", expenseLedger: "Travelling Expenses" },
   { serial: 10, expenseType: "Incentive", expenseLedger: "Incentive Expenses" },
+  { serial: 99, expenseType: "N/A", expenseLedger: "Miscellaneous Expenses", aliases: ["na", "none", "-"] },
 ];
+
+/** Tally ledgers offered in the Ledger mapping drop-down (any other name can be typed with "New ledger…"). */
+export const PWT_LEDGER_CHOICES = [
+  "Travelling Expenses", "Consumable Stores - URD", "Site Expenses", "Rent Expenses - Equipment", "Lodging Expenses",
+  "Conveyance Expenses", "Labour Charges Expenses-URD", "Telephone Expenses", "Incentive Expenses", "Miscellaneous Expenses",
+];
+
+/** A saved mapping that predates the N/A rule gets it added (same as the server), unless N/A or serial 99 is already used. */
+export function withNaRow(rules: PwtCategoryRule[]): PwtCategoryRule[] {
+  const na = DEFAULT_PWT_CATEGORIES.find((r) => r.serial === 99)!;
+  const isNa = (r: PwtCategoryRule) => r.expenseType.trim().toLowerCase() === "n/a";
+  if (rules.some(isNa) && !rules.some((r) => r.serial === 99 && !isNa(r))) rules = rules.map((r) => (isNa(r) ? { ...r, serial: 99 } : r));
+  const has = rules.some((r) => [r.expenseType, ...(r.aliases ?? [])].some((n) => n.trim().toLowerCase() === "n/a"));
+  return has || rules.some((r) => r.serial === 99) ? rules : [...rules, na];
+}
 
 /** A connector counts as online if it reported in during the last minute. */
 export function anyConnectorOnline(cs: PwtConnector[]): boolean {

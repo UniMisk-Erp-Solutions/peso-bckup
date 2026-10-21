@@ -198,7 +198,29 @@ describe("readback + reconciliation gate", () => {
   });
 });
 
-import { buildJobPlan, FIVE_COLUMNS, REPORT_COLUMNS, viewFlat, formatIndian, planView } from "../index.ts";
+import { withNaRule } from "../index.ts";
+import { buildJobPlan, buildJobPlanFromNormalized, mergeNormalized, normalizeRows, FIVE_COLUMNS, REPORT_COLUMNS, viewFlat, formatIndian, planView } from "../index.ts";
+
+describe("planning in chunks gives exactly the one-shot plan", () => {
+  const rows = Array.from({ length: 25 }, (_, i) => detailed({ expense_id: "e" + i, event_id: "ev" + i, debit: 10 + i, employee_code: String(1000 + (i % 4)), employee_name: "Emp " + (i % 4) }));
+  const cfg = { ...DEFAULT_PWT_CONFIG };
+  const base = { organizationId: ORG, jobId: "job-1", company: "Co", cfg, state: { postedSourceIds: new Set<string>(), voucherCounts: {} }, revision: 1760000000 };
+
+  it("normalising 7 rows at a time and merging, then planning, equals planning the whole report at once", async () => {
+    const whole = await buildJobPlan({ ...base, report: "detailed_expense", rows });
+    const parts = [];
+    for (let i = 0; i < rows.length; i += 7) parts.push(await normalizeRows(ORG, "detailed_expense", rows.slice(i, i + 7), cfg));
+    const chunked = await buildJobPlanFromNormalized({ ...base, report: "detailed_expense" }, mergeNormalized(parts));
+    expect(chunked).toEqual(whole);
+    expect(chunked.summary.row_count).toBe(25);
+  });
+  it("the same holds for a display-only report and for rows that cannot be read", async () => {
+    const bad = [{ nothing: true }, ...rows.slice(0, 3)];
+    const whole = await buildJobPlan({ ...base, report: "claim_verification", rows: bad });
+    const parts = [await normalizeRows(ORG, "claim_verification", bad.slice(0, 2), cfg), await normalizeRows(ORG, "claim_verification", bad.slice(2), cfg)];
+    expect(await buildJobPlanFromNormalized({ ...base, report: "claim_verification" }, mergeNormalized(parts))).toEqual(whole);
+  });
+});
 
 describe("job planner", () => {
   const base = { organizationId: ORG, jobId: "job-1", company: "PesoWise Integration Demo", cfg: DEFAULT_PWT_CONFIG, state: EMPTY, revision: 1760000000 };
@@ -244,13 +266,35 @@ describe("job planner", () => {
     expect(c.rowRecords[0].key).toBe(a.rowRecords[0].key);
   });
 
-  it("every sync ends with a prune keep-list so a re-sync replaces the view exactly (even when empty)", async () => {
-    const a = await buildJobPlan({ ...base, report: "claim_verification", rows: [cvRow] });
+  it("with report rows ON, every sync ends with a prune keep-list so a re-sync replaces the view exactly (even when empty)", async () => {
+    const on = { ...DEFAULT_PWT_CONFIG, reportRowsInTally: true };
+    const a = await buildJobPlan({ ...base, cfg: on, report: "claim_verification", rows: [cvRow] });
     const last = a.batches[a.batches.length - 1];
     expect(last.expected).toMatchObject({ prune: { prefix: "PWT-CV-", keep: [a.rowRecords[0].name] } });
-    const empty = await buildJobPlan({ ...base, report: "claim_verification", rows: [] });
+    const empty = await buildJobPlan({ ...base, cfg: on, report: "claim_verification", rows: [] });
     expect(empty.batches).toHaveLength(1);
     expect(empty.batches[0].expected).toMatchObject({ prune: { prefix: "PWT-CV-", keep: [] } });
+  });
+
+  it("report rows are OFF by default: no report ledgers are written, only a prune-only batch that removes leftovers of that report", async () => {
+    expect(DEFAULT_PWT_CONFIG.reportRowsInTally).toBe(false);
+    const a = await buildJobPlan({ ...base, report: "claim_verification", rows: [cvRow] });
+    expect(a.batches).toHaveLength(1);
+    expect(a.batches[0].kind).toBe("report_rows");
+    expect(a.batches[0].item_count).toBe(0);
+    expect(a.batches[0].xml).not.toContain("<LEDGER");
+    expect(a.batches[0].xml).not.toContain("PesoWise Report Data");
+    expect(a.batches[0].expected).toEqual({ ledgers: [], prune: { prefix: "PWT-CV-", keep: [] } });
+  });
+
+  it("with report rows OFF a posting report still creates its vouchers, and no report ledgers", async () => {
+    const plan = await buildJobPlan({ ...base, report: "detailed_expense", rows: [detailed({ expense_id: "a" }), detailed({ expense_id: "b", debit: 60 })] });
+    expect(plan.batches.map((b) => b.kind)).toEqual(["masters", "report_rows", "vouchers"]);
+    const rr = plan.batches.find((b) => b.kind === "report_rows")!;
+    expect(rr.item_count).toBe(0);
+    expect(plan.summary).toMatchObject({ posted_count: 2, voucher_count: 1, blocking_count: 0 });
+    expect(plan.batches.find((b) => b.kind === "vouchers")!.xml).toContain("<VOUCHERNUMBER>PESO/08/01</VOUCHERNUMBER>");
+    expect(plan.batches.find((b) => b.kind === "masters")!.xml).not.toContain("PWT-DE-");
   });
 
   it("batches large vouchers sets and keeps blocking issues visible", async () => {
@@ -367,8 +411,22 @@ describe("Other-category spelling variants", () => {
     expect(r.rows).toHaveLength(1);
     expect(r.rows[0]).toMatchObject({ expenseLedger: "Site Expenses", voucherId: "PESO/08/03", total: 30 });
   });
-  it("a blank category is still never guessed", async () => {
+  it("a blank category is treated as N/A and posted to Miscellaneous Expenses (Voucher ID .../99), never left out", async () => {
     const r = planPosting(DEFAULT_PWT_CONFIG, await txns([detailed({ expense_id: "b", category: "" })]), EMPTY);
-    expect(r.issues.map((i) => i.code)).toEqual(["UNMAPPED_EXPENSE_TYPE"]);
+    expect(r.issues).toEqual([]);
+    expect(r.rows[0]).toMatchObject({ expenseLedger: "Miscellaneous Expenses", voucherId: "PESO/08/99" });
+    expect(r.postings[0]).toMatchObject({ expenseLedger: "Miscellaneous Expenses", serial: 99 });
+  });
+  it("an organisation mapping saved before N/A existed gets the N/A rule added, and a rule it already has is respected", async () => {
+    const old = { ...DEFAULT_PWT_CONFIG, categories: DEFAULT_PWT_CONFIG.categories.filter((c) => c.expenseType !== "N/A") };
+    expect(old.categories.some((c) => c.expenseType === "N/A")).toBe(false);
+    const withNa = withNaRule(old);
+    expect(withNa.categories.at(-1)).toMatchObject({ expenseType: "N/A", serial: 99, expenseLedger: "Miscellaneous Expenses" });
+    const r = planPosting(withNa, await txns([detailed({ expense_id: "b", category: "" }), detailed({ expense_id: "c", category: "n/a" })]), EMPTY);
+    expect(r.issues).toEqual([]);
+    expect(r.rows).toHaveLength(1);                                   // "", "N/A" and "n/a" all land in the same N/A voucher
+    const own = withNaRule({ ...old, categories: [...old.categories, { serial: 50, expenseType: "N/A", expenseLedger: "My Misc" }] });
+    expect(own.categories.filter((c) => c.expenseType === "N/A")).toHaveLength(1);
+    expect(planPosting(own, await txns([detailed({ expense_id: "d", category: "" })]), EMPTY).rows[0].expenseLedger).toBe("My Misc");
   });
 });

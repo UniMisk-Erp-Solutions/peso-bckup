@@ -85,6 +85,12 @@ export interface PwtAccountingConfig {
   /** Marker written into narration so readback can find our vouchers. */
   narrationTag: string;
   /**
+   * Also store each report row in TallyPrime (as hidden ledgers) so the "PesoWise Reports" screens can show it. OFF by default: those
+   * ledgers appear in every ledger picker. When off, a sync writes only real accounting (vouchers) and removes any report rows left by
+   * earlier syncs of that report.
+   */
+  reportRowsInTally?: boolean;
+  /**
    * Daily Project cost column key -> PesoWise expense type, so its cost columns aggregate through the same
    * category rules. Only unambiguous pairs are defaulted; any other non-zero cost column is reported, never guessed.
    */

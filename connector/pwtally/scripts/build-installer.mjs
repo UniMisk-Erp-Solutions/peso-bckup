@@ -85,5 +85,5 @@ console.log("Built", finalOut);
 const pub = join(repo, "public", "downloads");
 mkdirSync(pub, { recursive: true });
 copyFileSync(out, join(pub, "PesoWise-Tally-Setup.exe"));
-copyFileSync(join(root, "tdl", "PesoWise-Tally.tdl"), join(pub, "PesoWise-Tally.tdl"));
+// The .tdl is NOT published on the website (it ships inside the installer only).
 console.log("Published to", pub);

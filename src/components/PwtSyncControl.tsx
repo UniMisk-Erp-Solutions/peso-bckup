@@ -4,7 +4,7 @@ import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  anyConnectorOnline, describePwtJob, isPwtActive, listPwtConnectors, listPwtJobs, PWT_STATUS_LABEL, startPwtSync, toPwtReportType,
+  anyConnectorOnline, continuePwtJob, describePwtJob, isPwtActive, listPwtConnectors, listPwtJobs, PWT_STATUS_LABEL, startPwtSync, toPwtReportType,
   type PwtJob, type PwtJobStatus, type PwtSyncParams,
 } from "@/lib/pwt/pwtSync";
 
@@ -31,7 +31,7 @@ export function PwtSyncControl({ organizationId, disabled = false, params }: Pro
   const [jobs, setJobs] = useState<PwtJob[]>([]);
   const [connectorOnline, setConnectorOnline] = useState<boolean | undefined>(undefined);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
-
+  const driving = useRef(false);
   let report: ReturnType<typeof toPwtReportType> | null = null;
   try {
     report = toPwtReportType(params.reportType as string);
@@ -62,6 +62,42 @@ export function PwtSyncControl({ organizationId, disabled = false, params }: Pro
       if (timer.current) clearInterval(timer.current);
     };
   }, [active, refresh]);
+
+  // A large report is prepared in short slices; while a job is preparing, this page asks for the next slice until it is ready.
+  const preparing = jobs.find((j) => j.status === "queued" || j.status === "preparing");
+  const preparingId = preparing?.id ?? null;
+  const wantedJob = useRef<string | null>(null);
+  wantedJob.current = preparingId;
+  useEffect(() => {
+    if (!organizationId || !preparingId || driving.current) return;
+    driving.current = true;
+    void (async () => {
+      try {
+        // keep going while this job is still the one being prepared (one loop per page, never two at once). A slice that the server cut off
+        // (or a dropped connection) is simply asked for again; the job resumes from its last saved position.
+        let failures = 0;
+        const pause = (ms: number) => new Promise((res) => setTimeout(res, ms));
+        while (wantedJob.current === preparingId && failures < 40) {
+          try {
+            const r = await continuePwtJob(organizationId, preparingId);
+            if (r.done) break;
+            if (r.error) { failures += 1; await pause(2500); continue; }
+            failures = 0;
+            if (!r.claimed) await pause(1500); // another slice is running; check again shortly
+          } catch {
+            failures += 1;
+            await pause(2500);
+          }
+        }
+      } catch {
+        /* the normal status refresh shows any failure */
+      } finally {
+        driving.current = false;
+        void refresh();
+      }
+    })();
+  }, [organizationId, preparingId, refresh]);
+  useEffect(() => () => { wantedJob.current = null; }, []);
 
   const start = async () => {
     if (!organizationId || !report) return;

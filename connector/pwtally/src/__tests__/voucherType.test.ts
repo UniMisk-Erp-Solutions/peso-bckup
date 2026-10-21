@@ -3,20 +3,24 @@ import type { TallyIO } from "../engine.ts";
 import { createVoucherTypeXml, ensurePaymentVoucherType, parseVoucherTypes, voucherTypesRequest } from "../voucherType.ts";
 
 const COMPANY = "Demo Co";
-const typesXml = (m: Record<string, string>) =>
-  `<ENVELOPE>${Object.entries(m).map(([n, p]) => `<VOUCHERTYPE NAME="${n}" RESERVEDNAME=""><PARENT TYPE="String">${p}</PARENT><NAME TYPE="String">${n}</NAME></VOUCHERTYPE>`).join("")}</ENVELOPE>`;
+type T = { parent: string; active: boolean };
+const typesXml = (m: Record<string, string | T>) =>
+  `<ENVELOPE>${Object.entries(m).map(([n, v]) => { const t = typeof v === "string" ? { parent: v, active: true } : v; return `<VOUCHERTYPE NAME="${n}" RESERVEDNAME=""><PARENT TYPE="String">${t.parent}</PARENT><ISACTIVE TYPE="Logical">${t.active ? "Yes" : "No"}</ISACTIVE><NAME TYPE="String">${n}</NAME></VOUCHERTYPE>`; }).join("")}</ENVELOPE>`;
 
 class FakeTally implements TallyIO {
   active = COMPANY;
-  types: Record<string, string> = { Payment: "", Receipt: "", Journal: "" };
+  types: Record<string, string | T> = { Payment: "Payment", Receipt: "Receipt", Journal: "Journal" };
   rejectCreate = false;
   writes: string[] = [];
+  altered = false;
   async post(xml: string): Promise<string> {
     if (xml.includes("<ID>PWTCur</ID>")) return `<ENVELOPE><COMPANY NAME="x"><PWTCURCO TYPE="String">${this.active}</PWTCURCO></COMPANY></ENVELOPE>`;
     if (xml.includes("<ID>PWTVchTypes</ID>")) return typesXml(this.types);
     this.writes.push(xml);
     if (this.rejectCreate) return `<RESPONSE><CREATED>0</CREATED><ERRORS>1</ERRORS><LINEERROR>nope</LINEERROR></RESPONSE>`;
-    this.types[/NAME="([^"]*)" ACTION="Create"/.exec(xml)![1]] = /<PARENT>([^<]*)</.exec(xml)![1];
+    const m = /NAME="([^"]*)" ACTION="(Create|Alter)"/.exec(xml)!;
+    this.types[m[1]] = { parent: /<PARENT>([^<]*)</.exec(xml)![1], active: /<ISACTIVE>Yes</.test(xml) };
+    this.altered = m[2] === "Alter";
     return `<RESPONSE><CREATED>1</CREATED><ERRORS>0</ERRORS></RESPONSE>`;
   }
 }
@@ -25,10 +29,22 @@ describe("payment voucher type is created automatically", () => {
   it("creates a missing type as a Payment voucher type and verifies it", async () => {
     const t = new FakeTally();
     expect(await ensurePaymentVoucherType(t, COMPANY, "PesoWise Payment")).toEqual({ ok: true, state: "created" });
-    expect(t.types["PesoWise Payment"]).toBe("Payment");
+    expect(t.types["PesoWise Payment"]).toEqual({ parent: "Payment", active: true });
     expect(t.writes).toHaveLength(1);
   });
-  it("does nothing when it already exists (and never changes it)", async () => {
+  it("switches an existing but INACTIVE type on, so it shows in Tally's voucher type list", async () => {
+    const t = new FakeTally();
+    t.types["PESO Wise Payment"] = { parent: "Payment", active: false };
+    expect(await ensurePaymentVoucherType(t, COMPANY, "PESO Wise Payment")).toEqual({ ok: true, state: "activated" });
+    expect(t.altered).toBe(true);
+    expect(t.types["PESO Wise Payment"]).toEqual({ parent: "Payment", active: true });
+  });
+  it("creates it ACTIVE and auto-numbered", () => {
+    const x = createVoucherTypeXml(COMPANY, "PesoWise Payment");
+    expect(x).toContain("<ISACTIVE>Yes</ISACTIVE>");
+    expect(x).toContain("<NUMBERINGMETHOD>Automatic</NUMBERINGMETHOD>");
+  });
+  it("does nothing when it already exists and is active (and never changes it)", async () => {
     const t = new FakeTally();
     t.types["PESO Wise Payment"] = "Payment";
     expect(await ensurePaymentVoucherType(t, COMPANY, "PESO Wise Payment")).toEqual({ ok: true, state: "exists" });

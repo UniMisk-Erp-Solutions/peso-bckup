@@ -22,6 +22,8 @@ await db.exec(`
 await db.exec(readFileSync(M + "20261016120000_pwt_foundation.sql", "utf8"));
 await db.exec(readFileSync(M + "20261019100000_pwt_deletion_sync.sql", "utf8"));
 await db.exec(readFileSync(M + "20261019100000_pwt_deletion_sync.sql", "utf8")); // idempotent re-run
+await db.exec(readFileSync(M + "20261019140000_pwt_registry_per_company.sql", "utf8"));
+await db.exec(readFileSync(M + "20261019140000_pwt_registry_per_company.sql", "utf8")); // idempotent re-run
 
 const ORG = "11111111-1111-1111-1111-111111111111", OTHER = "99999999-9999-9999-9999-999999999999";
 const ADMIN = "22222222-2222-2222-2222-222222222222", EMPL = "33333333-3333-3333-3333-333333333333", OTHER_ADMIN = "44444444-4444-4444-4444-444444444444";
@@ -50,8 +52,8 @@ const ack = async (jobId, outcome, action, result = null, error = null) =>
 // a synced expense = an expense row + a posted registry row + its voucher
 async function synced(n, { amount = 100, voucher = "PESO/08/02", date = "2026-08-31", emp = "Amit Test-1001", state = "posted", total = null } = {}) {
   await db.query("insert into public.expenses(id, organization_id, transaction_number) values ($1,$2,$3) on conflict do nothing", [id(n), ORG, `TXN-${n}`]);
-  await db.query(`insert into public.pwt_registry(organization_id, source_id, state, job_id, amount, voucher_number, voucher_date, content_hash, employee_ledger, expense_ledger, serial)
-                  values ($1,$2,$3,$4,$5,$6,$7,'h',$8,'Consumable Stores - URD',2)`, [ORG, src(n), state, JOB, amount, voucher, date, emp]);
+  await db.query(`insert into public.pwt_registry(organization_id, tally_company, source_id, state, job_id, amount, voucher_number, voucher_date, content_hash, employee_ledger, expense_ledger, serial)
+                  values ($1,'Demo Co',$2,$3,$4,$5,$6,$7,'h',$8,'Consumable Stores - URD',2)`, [ORG, src(n), state, JOB, amount, voucher, date, emp]);
   if (total !== null) {
     const batch = (await one("insert into public.pwt_batches(job_id, seq, kind, xml) values ($1,$2,'vouchers','x') returning id", [JOB, 1000 + n])).id;
     await db.query(`insert into public.pwt_vouchers(organization_id, tally_company, voucher_date, voucher_number, serial, batch_id, total)
@@ -211,14 +213,15 @@ ok("M1 new postings record employee ledger, expense ledger and serial", reg50.em
 
 // legacy rows (posted before this migration): no ledgers recorded, but the job's row snapshot and voucher still exist
 const L = (n) => `${ORG}:expense:${id(n)}`;
-await db.query(`insert into public.pwt_registry(organization_id, source_id, state, job_id, amount, voucher_number, voucher_date, content_hash) values
-  ($1,$2,'posted',$3,5,'PESO/07/02','2026-07-31','h'), ($1,$4,'posted',$3,6,'PESO/07/02','2026-07-31','h')`, [ORG, L(60), JOB, L(61)]);
+await db.query(`insert into public.pwt_registry(organization_id, tally_company, source_id, state, job_id, amount, voucher_number, voucher_date, content_hash) values
+  ($1,'Demo Co',$2,'posted',$3,5,'PESO/07/02','2026-07-31','h'), ($1,'Demo Co',$4,'posted',$3,6,'PESO/07/02','2026-07-31','h')`, [ORG, L(60), JOB, L(61)]);
 const batch = (await one("insert into public.pwt_batches(job_id, seq, kind, xml) values ($1,2000,'vouchers','x') returning id", [JOB])).id;
 await db.query("insert into public.pwt_vouchers(organization_id, tally_company, voucher_date, voucher_number, serial, batch_id, total) values ($1,'Demo Co','2026-07-31','PESO/07/02',2,$2,11)", [ORG, batch]);
 await db.query("insert into public.pwt_job_rows(job_id, seq, source_key, content_hash, payload) values ($1,1,'a','a',$2::jsonb), ($1,2,'b','b',$3::jsonb)", [JOB,
   JSON.stringify({ expense_id: id(60), employee_name: "  Dina   Test ", employee_code: "1004", category: "Material Purchase" }),
   JSON.stringify({ id: id(61), user_name: "Ravi", employee_id: "9" })]);
 await db.exec(readFileSync(M + "20261019100000_pwt_deletion_sync.sql", "utf8")); // backfill runs on (re)apply
+await db.exec(readFileSync(M + "20261019140000_pwt_registry_per_company.sql", "utf8"));
 const l60 = await one("select employee_ledger, expense_ledger, serial from public.pwt_registry where source_id=$1", [L(60)]);
 const l61 = await one("select employee_ledger from public.pwt_registry where source_id=$1", [L(61)]);
 ok("M2 backfill resolves legacy rows (serial from voucher, expense ledger from the job's config, employee ledger from the row snapshot)",

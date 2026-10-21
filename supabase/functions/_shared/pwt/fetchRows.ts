@@ -94,16 +94,43 @@ export interface FetchOptions {
   pageSize?: number;
 }
 
+/** Where a page walk stopped, so the next slice can continue from exactly there. */
+export interface FetchResume {
+  cursor: unknown;
+  total: number | null;
+  pages: number;
+  seen: number;
+  delivered: number;
+  snapshotAt: string | null;
+}
+
+export const FRESH_FETCH: FetchResume = { cursor: null, total: null, pages: 0, seen: 0, delivered: 0, snapshotAt: null };
+
+export interface SliceResult {
+  done: boolean;
+  resume: FetchResume;
+}
+
 /** Returns the number of rows delivered to onRows. Throws if the page walk is incomplete. */
 export async function fetchReportRows(o: FetchOptions): Promise<number> {
+  const r = await fetchReportRowsSlice(o, FRESH_FETCH, Infinity);
+  return r.resume.delivered;
+}
+
+/**
+ * Walks pages from `resume` and stops cleanly (done=false) after the first page that finishes past `deadline` (epoch ms), so a short-lived
+ * worker never gets cut off mid-page. Call again with the returned `resume` to continue. The final slice (done=true) verifies the row count.
+ */
+export async function fetchReportRowsSlice(o: FetchOptions, from: FetchResume, deadline: number): Promise<SliceResult> {
   const params = parseParams(o.parameters);
   const size = o.pageSize ?? 250;
-  let cursor: unknown = null;
-  let total: number | null = null;
-  let pages = 0;
-  let seen = 0;
-  let delivered = 0;
-  let snapshotAt: string | null = null;
+  let cursor: unknown = from.cursor;
+  let total: number | null = from.total;
+  let pages = from.pages;
+  let seen = from.seen;
+  let delivered = from.delivered;
+  let snapshotAt: string | null = from.snapshotAt;
+  const state = (): FetchResume => ({ cursor, total, pages, seen, delivered, snapshotAt });
 
   for (;;) {
     let name: string;
@@ -186,8 +213,9 @@ export async function fetchReportRows(o: FetchOptions): Promise<number> {
     if (!p.has_more || !p.next_cursor) break;
     cursor = p.next_cursor;
     if (pages > 5000) throw new Error("pagination did not terminate");
+    if (Date.now() >= deadline) return { done: false, resume: state() };
   }
 
   if (total !== null && seen !== total) throw new Error(`Incomplete fetch: expected ${total} rows, read ${seen}`);
-  return delivered;
+  return { done: true, resume: state() };
 }

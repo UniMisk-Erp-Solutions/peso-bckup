@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PwtDeletionHistory } from "@/components/PwtDeletionHistory";
 import { useAuth } from "@/contexts/AuthContext";
+import { fetchExpenseCategoryNames } from "@/lib/fetchExpenseCategoryNames";
 import {
-  createPairingCode, DEFAULT_PWT_CATEGORIES, describePwtJob, getPwtConfig, listPwtConnectors, listPwtJobs, PWT_STATUS_LABEL,
+  createPairingCode, DEFAULT_PWT_CATEGORIES, describePwtJob, PWT_LEDGER_CHOICES, withNaRow, autoMapRules, getPwtConfig, listPwtConnectors, listPwtJobs, PWT_STATUS_LABEL,
   revokePwtConnector, savePwtConfig, unmappedTypesFromJobs, validatePwtConfig,
   type PwtCategoryRule, type PwtConnector, type PwtJob,
 } from "@/lib/pwt/pwtSync";
@@ -34,6 +35,32 @@ function Step({ n, title, done, children }: { n: number; title: string; done?: b
 }
 
 /** Tally integration setup: download, connect, done. Mapping and history are tucked into tabs below. */
+/** Drop-down of Tally ledgers; "New ledger…" lets the accountant type a name that is not in the list. */
+function LedgerSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [custom, setCustom] = useState(false);
+  const known = PWT_LEDGER_CHOICES.includes(value);
+  if (custom || (value && !known)) {
+    return (
+      <div className="flex gap-1">
+        <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder="Ledger name" aria-label="Tally ledger" autoFocus={custom} />
+        <Button size="sm" variant="ghost" type="button" onClick={() => { setCustom(false); onChange(PWT_LEDGER_CHOICES[0]); }}>List</Button>
+      </div>
+    );
+  }
+  return (
+    <select
+      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+      value={value}
+      aria-label="Tally ledger"
+      onChange={(e) => (e.target.value === "__new" ? (setCustom(true), onChange("")) : onChange(e.target.value))}
+    >
+      <option value="" disabled>Choose ledger</option>
+      {PWT_LEDGER_CHOICES.map((l) => <option key={l} value={l}>{l}</option>)}
+      <option value="__new">New ledger…</option>
+    </select>
+  );
+}
+
 export default function AdminPwTally() {
   const { organizationId } = useAuth() as { organizationId?: string | null };
   const [company, setCompany] = useState("");
@@ -47,8 +74,10 @@ export default function AdminPwTally() {
   const [busy, setBusy] = useState(false);
 
   const [rules, setRules] = useState<PwtCategoryRule[]>(DEFAULT_PWT_CATEGORIES);
+  const [savedRules, setSavedRules] = useState<PwtCategoryRule[]>([]);
   const [prefix, setPrefix] = useState("PESO");
   const [mapMsg, setMapMsg] = useState<string | null>(null);
+  const [reportRows, setReportRows] = useState(false);
 
   const load = useCallback(async () => {
     if (!organizationId) return;
@@ -76,9 +105,11 @@ export default function AdminPwTally() {
     if (!organizationId) return;
     void getPwtConfig(organizationId).then((c) => {
       if (c?.categories?.length) {
-        setRules(c.categories);
+        setRules(withNaRow(c.categories));
+        setSavedRules(c.categories);
         if (c.voucherPrefix) setPrefix(c.voucherPrefix);
       }
+      setReportRows(c?.reportRowsInTally === true);
     }).catch(() => undefined);
   }, [organizationId]);
 
@@ -118,18 +149,31 @@ export default function AdminPwTally() {
     } catch { /* the code is on screen */ }
   };
 
+
+  const [autoNote, setAutoNote] = useState("");
   const saveMapping = async () => {
     if (!organizationId) return;
     setMapMsg(null);
     try {
-      await savePwtConfig(organizationId, { categories: rules, voucherPrefix: prefix });
+      await savePwtConfig(organizationId, { categories: rules, voucherPrefix: prefix, reportRowsInTally: reportRows });
+      setSavedRules(rules);
       setMapMsg("Saved.");
     } catch (e) {
       setMapMsg(e instanceof Error ? e.message : "Could not save");
     }
   };
-
-  const nextSerial = () => Math.min(99, Math.max(0, ...rules.map((r) => r.serial)) + 1);
+  const autoMap = async () => {
+    if (!organizationId) return;
+    try {
+      const names = [...(await fetchExpenseCategoryNames(organizationId)), ...unmapped];
+      const r = autoMapRules(rules, names);
+      setRules(r.rules);
+      setAutoNote(r.added + r.filled === 0 ? "Everything is already mapped." : `Added ${r.added} and completed ${r.filled}. Check the ledgers, then press Save.`);
+    } catch {
+      setAutoNote("Could not load the expense types.");
+    }
+  };
+  const nextSerial = () => Math.min(98, Math.max(0, ...rules.filter((r) => r.serial < 99).map((r) => r.serial)) + 1);
   const update = (i: number, patch: Partial<PwtCategoryRule>) => setRules((rs) => rs.map((r, k) => (k === i ? { ...r, ...patch } : r)));
 
   const status = matching
@@ -158,7 +202,6 @@ export default function AdminPwTally() {
       <Step n={1} title="Download" done={!!active}>
         <div className="flex flex-wrap gap-2">
           <Button asChild><a href="/downloads/PesoWise-Tally-Setup.exe" download data-testid="pwt-download-exe"><Download className="mr-2 h-4 w-4" />Connector (.exe)</a></Button>
-          <Button asChild variant="outline"><a href="/downloads/PesoWise-Tally.tdl" download data-testid="pwt-download-tdl"><Download className="mr-2 h-4 w-4" />Tally file (.tdl)</a></Button>
         </div>
       </Step>
 
@@ -201,7 +244,7 @@ export default function AdminPwTally() {
       <Step n={3} title="Set up TallyPrime (once)" done={matching}>
         <ol className="list-decimal space-y-1 pl-5 text-sm">
           <li>Open your company, then <b>F1 → Settings → Connectivity → Client/Server</b>: turn on the port (9000).</li>
-          <li><b>F1 → Settings → Product &amp; Features → Manage Local TDLs</b>: add <code className="text-xs">%LOCALAPPDATA%\Programs\PesoWiseTally\PesoWise-Tally.tdl</code>, then restart Tally.</li>
+          <li>Add <code className="text-xs">PesoWise-Tally.tdl</code> in Tally.</li>
         </ol>
       </Step>
 
@@ -231,41 +274,40 @@ export default function AdminPwTally() {
         </TabsContent>
 
         <TabsContent value="mapping">
-          <Card><CardContent className="space-y-3 p-4">
+          <Card><CardContent className="space-y-4 p-4">
+            <p className="text-sm text-muted-foreground">Choose the Tally ledger each expense type is booked to. Not sure? Press <b>Auto map</b>.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => void autoMap()} data-testid="pwt-auto-map">Auto map</Button>
+              <Button size="sm" variant="outline" onClick={() => setRules((rs) => [...rs, { expenseType: "", expenseLedger: "", serial: nextSerial() }])}>Add row</Button>
+              <Button size="sm" variant="ghost" onClick={() => { setRules(DEFAULT_PWT_CATEGORIES); setPrefix("PESO"); }}>Reset</Button>
+              <Button size="sm" className="ml-auto" onClick={() => void saveMapping()} disabled={!!mappingError}>Save</Button>
+            </div>
+            {autoNote && <p className="text-xs text-muted-foreground" data-testid="pwt-auto-note">{autoNote}</p>}
+            {mappingError && <p className="text-xs text-destructive">{mappingError}</p>}
+            {mapMsg && <p className="text-xs">{mapMsg}</p>}
             {unmapped.length > 0 && (
               <p className="flex flex-wrap items-center gap-2 text-sm">
-                Not mapped:
+                Not mapped yet:
                 {unmapped.map((t) => (
                   <Button key={t} size="sm" variant="outline" onClick={() => setRules((rs) => [...rs, { expenseType: t, expenseLedger: "", serial: nextSerial() }])}>+ {t}</Button>
                 ))}
               </p>
             )}
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead><tr className="text-muted-foreground"><th className="p-1">Expense type</th><th className="p-1">Tally ledger</th><th className="p-1">No.</th><th /></tr></thead>
+              <table className="w-full text-left text-sm">
+                <thead><tr className="text-xs text-muted-foreground"><th className="p-1 font-medium">Expense type</th><th className="p-1 font-medium">Goes to Tally ledger</th><th className="p-1 font-medium">Voucher no.</th><th /></tr></thead>
                 <tbody>
                   {rules.map((r, i) => (
                     <tr key={i}>
                       <td className="p-1"><Input value={r.expenseType} onChange={(e) => update(i, { expenseType: e.target.value })} aria-label="Expense type" /></td>
-                      <td className="p-1"><Input value={r.expenseLedger} onChange={(e) => update(i, { expenseLedger: e.target.value })} aria-label="Tally ledger" /></td>
-                      <td className="w-20 p-1"><Input type="number" min={1} max={99} value={r.serial} onChange={(e) => update(i, { serial: Number(e.target.value) })} aria-label="Serial" /></td>
+                      <td className="p-1"><LedgerSelect value={r.expenseLedger} onChange={(v) => update(i, { expenseLedger: v })} /></td>
+                      <td className="w-24 p-1"><Input type="number" min={1} max={99} value={r.serial} onChange={(e) => update(i, { serial: Number(e.target.value) })} aria-label="Voucher number" title={`Last part of the Voucher ID, e.g. ${prefix || "PESO"}/07/${String(r.serial).padStart(2, "0")}`} /></td>
                       <td className="p-1"><Button size="sm" variant="ghost" onClick={() => setRules((rs) => rs.filter((_, k) => k !== i))}>Remove</Button></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <div className="flex flex-wrap items-end gap-2">
-              <Button size="sm" variant="outline" onClick={() => setRules((rs) => [...rs, { expenseType: "", expenseLedger: "", serial: nextSerial() }])}>Add row</Button>
-              <Button size="sm" variant="ghost" onClick={() => { setRules(DEFAULT_PWT_CATEGORIES); setPrefix("PESO"); }}>Reset</Button>
-              <div>
-                <label className="mb-1 block text-xs text-muted-foreground" htmlFor="pwt-prefix">Voucher prefix</label>
-                <Input id="pwt-prefix" className="w-24" value={prefix} onChange={(e) => setPrefix(e.target.value)} />
-              </div>
-              <Button size="sm" onClick={() => void saveMapping()} disabled={!!mappingError}>Save</Button>
-            </div>
-            {mappingError && <p className="text-xs text-destructive">{mappingError}</p>}
-            {mapMsg && <p className="text-xs">{mapMsg}</p>}
           </CardContent></Card>
         </TabsContent>
       </Tabs>

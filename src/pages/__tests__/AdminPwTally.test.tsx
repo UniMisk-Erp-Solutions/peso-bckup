@@ -3,7 +3,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import type { PwtConnector } from "@/lib/pwt/pwtSync";
 
-const state: { connectors: PwtConnector[] } = { connectors: [] };
+const state: { connectors: PwtConnector[]; jobs: unknown[]; config: unknown } = { connectors: [], jobs: [], config: null };
+const savePwtConfig = vi.fn(async () => undefined);
 const createPairingCode = vi.fn(async () => "ABCD2345");
 
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ organizationId: "org-1" }) }));
@@ -13,11 +14,11 @@ vi.mock("@/lib/pwt/pwtSync", async () => {
   return {
     ...actual,
     listPwtConnectors: vi.fn(async () => state.connectors),
-    listPwtJobs: vi.fn(async () => []),
-    getPwtConfig: vi.fn(async () => null),
+    listPwtJobs: vi.fn(async () => state.jobs),
+    getPwtConfig: vi.fn(async () => state.config),
     createPairingCode: (...a: unknown[]) => (createPairingCode as unknown as (...x: unknown[]) => Promise<string>)(...a),
     revokePwtConnector: vi.fn(async () => undefined),
-    savePwtConfig: vi.fn(async () => undefined),
+    savePwtConfig: (...a: unknown[]) => (savePwtConfig as unknown as (...x: unknown[]) => Promise<void>)(...a),
   };
 });
 
@@ -31,13 +32,12 @@ const conn = (over: Partial<PwtConnector> = {}): PwtConnector => ({
 const renderPage = () => render(<MemoryRouter><AdminPwTally /></MemoryRouter>);
 
 describe("Tally integration setup page", () => {
-  beforeEach(() => { state.connectors = []; createPairingCode.mockClear(); });
+  beforeEach(() => { state.connectors = []; state.jobs = []; state.config = null; createPairingCode.mockClear(); savePwtConfig.mockClear(); });
 
-  it("guides a first-time admin: not connected, two downloads, 3 steps", async () => {
+  it("guides a first-time admin: not connected, one download, 3 steps", async () => {
     renderPage();
     await waitFor(() => expect(screen.getByTestId("pwt-status-title").textContent).toBe("Not connected yet"));
     expect(screen.getByTestId("pwt-download-exe").getAttribute("href")).toBe("/downloads/PesoWise-Tally-Setup.exe");
-    expect(screen.getByTestId("pwt-download-tdl").getAttribute("href")).toBe("/downloads/PesoWise-Tally.tdl");
     for (const n of [1, 2, 3]) expect(screen.getByTestId(`pwt-step-${n}`)).toBeTruthy();
     expect((screen.getByText("Get code") as HTMLButtonElement).disabled).toBe(true);   // needs the company name first
   });
@@ -67,5 +67,21 @@ describe("Tally integration setup page", () => {
     state.connectors = [conn({ last_seen_at: new Date(Date.now() - 3600_000).toISOString() })];
     renderPage();
     await waitFor(() => expect(screen.getByTestId("pwt-status-title").textContent).toBe("Connector is offline"));
+  });
+
+  it("the mapping tab has no change warning or notes; Save saves straight away", async () => {
+    state.jobs = [{ id: "j1", report_type: "detailed_expense", status: "completed", posted_count: 5, voucher_count: 2, created_at: "2026-10-21T00:00:00Z", row_count: 5, issues: [] }];
+    state.config = { categories: [{ serial: 1, expenseType: "Food", expenseLedger: "Travelling Expenses" }], voucherPrefix: "PESO" };
+    renderPage();
+    const tab = await screen.findByText("Ledger mapping");
+    fireEvent.mouseDown(tab);
+    fireEvent.click(tab);
+    await waitFor(() => expect(screen.getAllByLabelText("Tally ledger").length).toBeGreaterThan(0));
+    fireEvent.change(screen.getAllByLabelText("Tally ledger")[0], { target: { value: "Lodging Expenses" } });
+    expect(screen.queryByTestId("pwt-change-warning")).toBeNull();
+    expect(screen.queryByTestId("pwt-shared-ledger")).toBeNull();
+    expect(screen.queryByText(/Voucher ID looks like/)).toBeNull();
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(savePwtConfig).toHaveBeenCalledTimes(1));
   });
 });

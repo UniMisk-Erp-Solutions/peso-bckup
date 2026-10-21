@@ -768,7 +768,7 @@ export function ServerReportExportPanel({
         The report is built on the server. When it is ready, download it as a CSV.
       </p>
 
-      {enableTallySync && PWT_SYNC_ENABLED && (
+      {enableTallySync && PWT_SYNC_ENABLED && reportType === "detailed_expense" && (
         <PwtSyncControl
           organizationId={organizationId}
           disabled={disabled}

@@ -1,4 +1,18 @@
-import type { PwtAccountingConfig } from "./types.ts";
+import type { ExpenseCategoryRule, PwtAccountingConfig } from "./types.ts";
+
+/**
+ * An expense with an EMPTY category is treated as "N/A" and posted to this ledger instead of being left out. Serial 99 keeps its Voucher ID
+ * (PESO/MM/99) clear of the numbered categories. The accountant can change the ledger on the Ledger mapping tab.
+ */
+export const NA_CATEGORY: ExpenseCategoryRule = { serial: 99, expenseType: "N/A", expenseLedger: "Miscellaneous Expenses", aliases: ["na", "none", "-"] };
+
+/** Adds the N/A rule to a saved mapping that predates it (never overrides a rule the organisation already has for N/A). */
+export function withNaRule(cfg: PwtAccountingConfig): PwtAccountingConfig {
+  const has = (cfg.categories ?? []).some((c) => [c.expenseType, ...(c.aliases ?? [])].some((n) => n.trim().toLowerCase() === "n/a"));
+  const serialTaken = (cfg.categories ?? []).some((c) => c.serial === NA_CATEGORY.serial);
+  if (has || serialTaken) return cfg;
+  return { ...cfg, categories: [...cfg.categories, NA_CATEGORY] };
+}
 
 /**
  * Default mapping, taken from the *methodology* of the "Expnese Categories" sheet in the
@@ -13,6 +27,7 @@ export const DEFAULT_PWT_CONFIG: PwtAccountingConfig = {
   employeeLedgerParent: "Sundry Debtors",
   expenseLedgerParent: "Indirect Expenses",
   narrationTag: "PWT",
+  reportRowsInTally: false,
   dailyCostCategories: {
     petrol_cost: "Petrol Expense (Bike and Car)",
     material_cost: "Material Purchase",
@@ -36,5 +51,6 @@ export const DEFAULT_PWT_CONFIG: PwtAccountingConfig = {
     { serial: 8, expenseType: "Mobile Recharges", expenseLedger: "Telephone Expenses" },
     { serial: 9, expenseType: "Food", expenseLedger: "Travelling Expenses" },
     { serial: 10, expenseType: "Incentive", expenseLedger: "Incentive Expenses" },
+    NA_CATEGORY,
   ],
 };

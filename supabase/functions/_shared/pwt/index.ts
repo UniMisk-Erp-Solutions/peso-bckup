@@ -7,3 +7,5 @@ export * from "./xml.ts";
 export * from "./reportRows.ts";
 export * from "./prepare.ts";
 export * from "./fetchRows.ts";
+export * from "./compact.ts";
+export * from "./slice.ts";

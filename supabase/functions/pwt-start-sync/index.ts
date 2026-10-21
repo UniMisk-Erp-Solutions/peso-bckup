@@ -15,14 +15,24 @@ const env = (n: string) => {
   return v;
 };
 
-async function dispatch(jobId: string) {
+/** Runs ONE short preparation slice of the job and returns its outcome ({ claimed, done, phase, progress }). */
+async function dispatch(jobId: string): Promise<Record<string, unknown>> {
   const key = env("SUPABASE_SERVICE_ROLE_KEY");
   const res = await fetch(`${env("SUPABASE_URL")}/functions/v1/pwt-run-job`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, apikey: key, "Content-Type": "application/json" },
     body: JSON.stringify({ job_id: jobId }),
   });
-  if (!res.ok) console.error("pwt-run-job dispatch failed", res.status, (await res.text()).slice(0, 300));
+  const text = await res.text();
+  if (!res.ok) {
+    console.error("pwt-run-job dispatch failed", res.status, text.slice(0, 300));
+    return { claimed: false, done: false, error: text.slice(0, 200) };
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { claimed: false, done: false };
+  }
 }
 
 Deno.serve(async (req) => {
@@ -31,13 +41,14 @@ Deno.serve(async (req) => {
   const auth = req.headers.get("Authorization");
   if (!auth?.startsWith("Bearer ")) return jsonResponse({ error: "Unauthorized" }, 401);
 
-  let body: { organization_id?: string; report_type?: string; parameters?: Record<string, unknown> };
+  let body: { action?: string; job_id?: string; organization_id?: string; report_type?: string; parameters?: Record<string, unknown> };
   try {
     body = await req.json();
   } catch {
     return jsonResponse({ error: "Invalid JSON" }, 400);
   }
   const org = body.organization_id;
+  if (body.action === "continue") return await continueJob(auth, org, body.job_id);
   const report = body.report_type;
   if (!org || !report || !(PWT_REPORT_TYPES as readonly string[]).includes(report)) {
     return jsonResponse({ error: "organization_id and a valid report_type are required" }, 400);
@@ -74,3 +85,22 @@ Deno.serve(async (req) => {
   }
   return jsonResponse({ accepted: true, job_id: jobId, deduplicated: dedup });
 });
+
+/**
+ * "continue": run the next slice of a job that is still preparing. Called repeatedly by the page while a sync is in progress; each call
+ * returns within a few seconds. The admin check is the same one that guards the job list (a non-admin or another organisation gets nothing).
+ */
+async function continueJob(auth: string, org: string | undefined, jobId: string | undefined): Promise<Response> {
+  if (!org || !jobId) return jsonResponse({ error: "organization_id and job_id are required" }, 400);
+  const anon = Deno.env.get("SUPABASE_ANON_KEY") ?? env("SUPABASE_SERVICE_ROLE_KEY");
+  // deno-lint-ignore no-explicit-any
+  const user = createClient<any>(env("SUPABASE_URL"), anon, { global: { headers: { Authorization: auth } }, auth: { persistSession: false } });
+  const { data: u, error: ue } = await user.auth.getUser();
+  if (ue || !u?.user) return jsonResponse({ error: "Unauthorized" }, 401);
+  const { data, error } = await user.rpc("pwt_list_jobs_v1", { p_organization_id: org, p_limit: 25 });
+  if (error) return jsonResponse({ error: /not permitted/i.test(error.message) ? "Forbidden" : error.message.slice(0, 200) }, /not permitted/i.test(error.message) ? 403 : 400);
+  const job = ((data ?? []) as { id: string; status: string }[]).find((j) => j.id === jobId);
+  if (!job) return jsonResponse({ error: "job not found" }, 404);
+  if (job.status !== "queued" && job.status !== "preparing") return jsonResponse({ claimed: false, done: true, status: job.status });
+  return jsonResponse({ ...(await dispatch(jobId)), status: job.status });
+}

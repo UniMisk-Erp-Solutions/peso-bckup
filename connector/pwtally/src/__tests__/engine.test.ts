@@ -63,14 +63,14 @@ class FakeTally implements TallyIO {
   }
 }
 
-async function plan() {
+async function plan(reportRows = true) {
   const rows = [
     { event_id: "1", expense_id: "a", event_type: "expense_deduction", employee_code: "1001", employee_name: "Test Person", category: "Travelling (Public and Private Transport)", debit: 140, effective_date: "2026-08-05" },
     { event_id: "2", expense_id: "b", event_type: "expense_deduction", employee_code: "1002", employee_name: "Other Person", category: "Travelling (Public and Private Transport)", debit: 60.5, effective_date: "2026-08-06" },
   ];
   const p = await buildJobPlan({
     organizationId: "o", jobId: "j", report: "detailed_expense", company: COMPANY, rows,
-    cfg: DEFAULT_PWT_CONFIG, state: { postedSourceIds: new Set(), voucherCounts: {} }, revision: 1,
+    cfg: { ...DEFAULT_PWT_CONFIG, reportRowsInTally: reportRows }, state: { postedSourceIds: new Set(), voucherCounts: {} }, revision: 1,
   });
   return p.batches.map((b) => ({ batch_id: `b${b.seq}`, kind: b.kind, xml: b.xml, tally_company: COMPANY, expected: b.expected }) as ClaimedBatch);
 }
@@ -82,14 +82,14 @@ async function deliverAll(t: FakeTally, batches: ClaimedBatch[]) {
 }
 
 describe("connector engine against a fake TallyPrime", () => {
-  it("delivers masters -> report rows -> vouchers, each verified by readback", async () => {
+  it("delivers masters -> (prune-only report batch) -> vouchers, each verified by readback; Detailed Expense stores no report rows", async () => {
     const t = new FakeTally();
     const out = await deliverAll(t, await plan());
     expect(out.map((o) => o.verified)).toEqual([true, true, true]);
     expect(t.vouchers).toHaveLength(1);
     expect(t.vouchers[0].narration).toBe("PWT PESO/08/01"); // Tally auto-numbers; the stable id lives in the narration
     expect(t.vouchers[0].amounts.reduce((s, x) => s + x, 0)).toBeCloseTo(0, 2); // balanced
-    expect(t.groups.has("PesoWise Report Data")).toBe(true);
+    expect(t.groups.has("PesoWise Report Data")).toBe(false);   // the Detailed Expense screen reads the real vouchers instead
   });
 
   it("is safe to redeliver: nothing is created twice (duplicate prevention at the Tally edge)", async () => {
@@ -99,7 +99,7 @@ describe("connector engine against a fake TallyPrime", () => {
     const again = await deliverAll(t, batches);
     expect(again.every((o) => o.verified)).toBe(true);
     expect(t.vouchers).toHaveLength(1);
-    expect(t.imports.length).toBe(3); // 3 imports from first run, none on replay
+    expect(t.imports.length).toBe(2); // masters + vouchers on the first run (the report batch only prunes), none on replay
   });
 
   it("recovers a crash after import but before ack (vouchers present, not re-imported)", async () => {
@@ -183,6 +183,24 @@ describe("report row revisions", () => {
     expect(r.verified).toBe(true);
     expect([...t.ledgers]).toEqual([v2]);
     void reportGroupMasterXml;
+  });
+});
+
+describe("report rows OFF (the default)", () => {
+  it("writes only vouchers, creates no report ledgers, and removes leftovers of that report from earlier syncs", async () => {
+    const t = new FakeTally();
+    t.groups.add("PesoWise Report Data");
+    t.ledgers.add("PWT-DE-aaaaaaaaaaaaaaaa-11111111");        // left by an earlier sync of the same report
+    t.ledgers.add("PWT-CA-bbbbbbbbbbbbbbbb-22222222");        // another report: untouched
+    t.ledgers.add("Travelling Expenses");                      // a real ledger: untouched
+    const batches = await plan(false);
+    expect(batches.map((b) => b.kind)).toEqual(["masters", "report_rows", "vouchers"]);
+    const out = await deliverAll(t, batches);
+    expect(out.every((o) => o.verified)).toBe(true);
+    expect(t.vouchers).toHaveLength(1);              // both employees share the one month/category voucher
+    expect([...t.ledgers].some((n) => n.startsWith("PWT-DE-"))).toBe(false);
+    expect(t.ledgers.has("PWT-CA-bbbbbbbbbbbbbbbb-22222222")).toBe(true);
+    expect(t.ledgers.has("Travelling Expenses")).toBe(true);
   });
 });
 
