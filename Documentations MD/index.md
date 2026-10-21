@@ -603,3 +603,4 @@ Use **DOC-113** for the next new document in `Documentations MD/`. DOC-111 [Repo
 | 2026-10-21 | DOC-146: fixed the connector installer download on the deployed site (the .exe is now committed in `public/downloads/`; it was git-ignored, so the site returned an HTML page). Still one document. Next ID: DOC-147. | Agent |
 | 2026-10-21 | DOC-146: "Voucher date is missing" from Tally is now explained on the page as a financial-year problem, with the fix. Still one document. Next ID: DOC-147. | Agent |
 | 2026-10-21 | DOC-146: connector 1.2.3 moves a PesoWise-only company's start date earlier automatically so every month posts (no more "Voucher date is missing"). Still one document. Next ID: DOC-147. | Agent |
+| 2026-10-21 | DOC-146: fixed re-sync failing with duplicate key on pwt_vouchers_pkey (migration 20261021160000, applied). Still one document. Next ID: DOC-147. | Agent |
