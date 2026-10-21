@@ -57,6 +57,29 @@ export function parsePeriods(xml: string): Map<string, CompanyPeriod> {
   return out;
 }
 
+/** Exact name first, then ignoring case and spaces; a single loaded company is taken as the paired one. */
+export function findPeriod(all: Map<string, CompanyPeriod>, company: string): CompanyPeriod | undefined {
+  const exact = all.get(company);
+  if (exact) return exact;
+  const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+  for (const [name, p] of all) if (norm(name) === norm(company)) return p;
+  return all.size === 1 ? [...all.values()][0] : undefined;
+}
+
+/** One plain sentence about the company's dates, appended to a date rejection so the real cause is visible. */
+export async function describePeriod(io: TallyIO, company: string, earliestIso: string): Promise<string> {
+  try {
+    const all = parsePeriods(await io.post(periodRequest()));
+    const p = findPeriod(all, company);
+    if (!p) return `Connector note: it could not read this company's dates (companies seen: ${[...all.keys()].join(", ") || "none"}).`;
+    const inside = earliestIso >= p.startingFrom && earliestIso >= p.booksFrom;
+    return `Connector note: company dates read: Financial year from ${isoToDisplay(p.startingFrom)}, Books from ${isoToDisplay(p.booksFrom)}; ` +
+      `earliest voucher ${isoToDisplay(earliestIso)}${inside ? " (inside the books, so Tally refused this date for another reason)" : " (before the books begin)"}.`;
+  } catch (e) {
+    return `Connector note: could not read the company's dates (${e instanceof Error ? e.message : String(e)}).`;
+  }
+}
+
 export function alterPeriodXml(company: string, startIso: string): string {
   const d = startIso.replace(/-/g, "");
   return `<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>All Masters</REPORTNAME>` +
@@ -99,7 +122,7 @@ export type PeriodResult =
   | { ok: false; reason: string };
 
 export async function ensureCompanyPeriod(io: TallyIO, company: string, earliestIso: string): Promise<PeriodResult> {
-  const p = parsePeriods(await io.post(periodRequest())).get(company);
+  const p = findPeriod(parsePeriods(await io.post(periodRequest())), company);
   if (!p) return { ok: true, action: "unknown" }; // cannot read it: let Tally decide, as before
   const start = p.startingFrom < p.booksFrom ? p.startingFrom : p.booksFrom;
   const covered = (s: CompanyPeriod) => earliestIso >= s.startingFrom && earliestIso >= s.booksFrom;
@@ -117,7 +140,7 @@ export async function ensureCompanyPeriod(io: TallyIO, company: string, earliest
   const errors = Number(/<ERRORS\b[^>]*>\s*(\d+)\s*</i.exec(res)?.[1] ?? 0);
   const line = /<LINEERROR>([^<]*)</i.exec(res)?.[1];
   if (errors > 0 || line) return { ok: false, reason: `Tally would not move the company start to ${isoToDisplay(newStart)}: ${line ?? `errors=${errors}`}` };
-  const after = parsePeriods(await io.post(periodRequest())).get(company);
+  const after = findPeriod(parsePeriods(await io.post(periodRequest())), company);
   if (!after || !covered(after)) return { ok: false, reason: `The company start date could not be moved to ${isoToDisplay(newStart)}. Set it in Tally (Alt+F3, Alter).` };
   return { ok: true, action: "extended", from: start, to: newStart };
 }

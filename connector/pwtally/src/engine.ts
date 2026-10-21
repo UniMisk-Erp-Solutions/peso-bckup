@@ -9,7 +9,7 @@ import {
   parseVoucherReadback, pruneMasters, reconcile, voucherReadbackRequest,
   type PlannedVoucher,
 } from "../../../supabase/functions/_shared/pwt/index.ts";
-import { ensureCompanyPeriod } from "./period.ts";
+import { describePeriod, ensureCompanyPeriod } from "./period.ts";
 
 export class TallyOfflineError extends Error {
   constructor(msg = "TallyPrime is not reachable") {
@@ -187,13 +187,26 @@ async function processVouchers(b: ClaimedBatch, io: TallyIO): Promise<Outcome> {
     const head = b.xml.slice(0, b.xml.indexOf(open) + open.length);
     const tail = b.xml.slice(b.xml.indexOf("</REQUESTDATA>"));
     const frags = voucherFragments(b.xml).filter((f) => toImport.includes(f.number));
-    const res = parseImportResponse(await io.post(head + frags.map((f) => f.fragment).join("") + tail));
+    const send = async (list: typeof frags) => parseImportResponse(await io.post(head + list.map((f) => f.fragment).join("") + tail));
+    let res = await send(frags);
+    let createdSoFar = res.created;
+    if (!res.ok && res.lineErrors.some((e) => /date is missing|out of range|outside/i.test(e))) {
+      // Second chance: read the company's dates again (they may have just been changed) and, if they do not cover the vouchers, fix and retry the rest once.
+      const again = await ensureCompanyPeriod(io, b.tally_company, earliest);
+      if (again.ok && again.action === "extended") {
+        periodExtendedTo = again.to;
+        const left = new Set((await readback(io, b, planned)).map((r) => r.number));
+        res = await send(frags.filter((f) => !left.has(f.number)));
+        createdSoFar += res.created;
+      }
+    }
     if (!res.ok) {
-      return fail(`Tally rejected vouchers: ${res.lineErrors.join("; ") || `errors=${res.errors}`}`, res.lineErrors.length > 0, {
-        created: res.created, errors: res.errors,
+      const note = res.lineErrors.some((e) => /date/i.test(e)) ? ` | ${await describePeriod(io, b.tally_company, earliest)}` : "";
+      return fail(`Tally rejected vouchers: ${res.lineErrors.join("; ") || `errors=${res.errors}`}${note}`, res.lineErrors.length > 0, {
+        created: createdSoFar, errors: res.errors,
       });
     }
-    created = res.created;
+    created = createdSoFar;
   }
 
   // 3) Verified readback gate: nothing is "done" until Tally shows every voucher balanced with the right total.

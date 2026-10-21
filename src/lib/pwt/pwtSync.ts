@@ -104,6 +104,14 @@ export function friendlyTallyError(error: string | null | undefined): string | n
   if (!error) return null;
   if (/voucher date is missing/i.test(error)) {
     const ids = [...error.matchAll(/voucher (PESO\/\d{2}\/\d{2})/gi)].map((m) => m[1]);
+    const note = /Connector note:[^]*$/.exec(error)?.[0];
+    if (note && /inside the books/.test(note)) {
+      return `Tally refused ${ids.length ? ids.join(", ") : "some vouchers"} because of their date, although the company's books cover it. ${note} ` +
+        `Check that the dates were saved in Tally (Alt+F3, Alter, Ctrl+A) and that TallyPrime is fully licensed; in Educational mode Tally limits which dates it accepts.`;
+    }
+    if (note && /could not read/.test(note)) {
+      return `Tally refused ${ids.length ? ids.join(", ") : "some vouchers"} because of their date. ${note} Make sure the paired company is the one open in TallyPrime, then sync again.`;
+    }
     return `Tally refused ${ids.length ? ids.join(", ") : "some vouchers"} because their date is outside this company's financial year. In Tally open Alter Company (Alt+F3) and set "Financial year beginning from" and "Books beginning from" to a date before the earliest expense month (for example 1-Apr-2026), then sync again. Vouchers already posted stay; only the rest are sent.`;
   }
   return error;

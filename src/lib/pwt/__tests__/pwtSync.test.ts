@@ -88,6 +88,12 @@ describe("friendlyTallyError", () => {
     expect(m).toMatch(/financial year/);
     expect(m).toContain("Alt+F3");
   });
+  it("shows what the connector read when the books already cover the date", () => {
+    const m = friendlyTallyError("Tally rejected vouchers: Voucher date is missing for: 'Journal' voucher PESO/06/05 | Connector note: company dates read: Financial year from 1-Jan-2026, Books from 1-Jan-2026; earliest voucher 30-Jun-2026 (inside the books, so Tally refused this date for another reason).");
+    expect(m).toContain("although the company's books cover it");
+    expect(m).toContain("Financial year from 1-Jan-2026");
+    expect(m).not.toContain("outside this company's financial year");
+  });
   it("leaves other messages unchanged", () => {
     expect(friendlyTallyError("Something else")).toBe("Something else");
     expect(friendlyTallyError(null)).toBeNull();

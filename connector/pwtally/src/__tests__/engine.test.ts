@@ -17,6 +17,7 @@ class FakeTally implements TallyIO {
   periodStart = "2020-01-01";
   foreignVouchers = 0;
   periodAlters: string[] = [];
+  refuseAlways = false; // Tally refuses the date although the books cover it (for example Educational mode)
 
   async post(xml: string): Promise<string> {
     if (this.offline) throw new TallyOfflineError();
@@ -69,7 +70,7 @@ class FakeTally implements TallyIO {
       const narration = /<NARRATION>(.*?)<\/NARRATION>/.exec(m[0])![1];
       const date = /<DATE>(\d{8})<\/DATE>/.exec(m[0])![1];
       const names = [...m[0].matchAll(/<LEDGERNAME>(.*?)<\/LEDGERNAME>/g)].map((x) => x[1].replace(/&amp;/g, "&"));
-      if (`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}` < this.periodStart) {
+      if (this.refuseAlways || `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}` < this.periodStart) {
         return `<RESPONSE><CREATED>0</CREATED><ALTERED>0</ALTERED><ERRORS>1</ERRORS><LINEERROR>Voucher date is missing for: 'Journal' voucher</LINEERROR></RESPONSE>`;
       }
       const unknown = names.find((n) => !this.ledgers.has(n));
@@ -266,5 +267,20 @@ describe("company period (no more 'Voucher date is missing')", () => {
     t.periodStart = "2026-04-01";
     await deliverAll(t, await plan());
     expect(t.periodAlters).toEqual([]);
+  });
+});
+
+describe("a date refusal that the books do not explain", () => {
+  it("says what the connector read, so the real cause is visible (no guessing)", async () => {
+    const t = new FakeTally();
+    t.periodStart = "2026-01-01"; // the books cover June
+    t.refuseAlways = true;       // ...but Tally still refuses the date
+    const out = await deliverAll(t, await plan());
+    const last = out[out.length - 1] as { verified: false; error: string };
+    expect(last.verified).toBe(false);
+    expect(last.error).toMatch(/Voucher date is missing/);
+    expect(last.error).toMatch(/Connector note: company dates read: Financial year from 1-Jan-2026/);
+    expect(last.error).toMatch(/inside the books, so Tally refused this date for another reason/);
+    expect(t.periodAlters).toEqual([]); // nothing was changed
   });
 });
