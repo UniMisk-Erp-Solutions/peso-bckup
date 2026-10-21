@@ -63,6 +63,19 @@ describe("five-column aggregation (Sumit methodology)", () => {
     expect(dr).toBe(cr);
   });
 
+  it("voucher date can be the FIRST day of the month (for Tally editions that refuse month-end dates); the voucher id is unchanged", async () => {
+    const t = await txns([
+      detailed({ expense_id: "a", debit: 100, effective_date: "2026-06-17" }),
+      detailed({ expense_id: "b", debit: 40.5, effective_date: "2026-06-29" }),
+    ]);
+    const end = planPosting(DEFAULT_PWT_CONFIG, t, EMPTY);
+    const start = planPosting({ ...DEFAULT_PWT_CONFIG, postingDatePolicy: "month_start" }, t, EMPTY);
+    expect(end.rows.map((r) => r.voucherDate)).toEqual(["2026-06-30"]);
+    expect(start.rows.map((r) => r.voucherDate)).toEqual(["2026-06-01"]);
+    expect(start.rows.map((r) => r.voucherId)).toEqual(end.rows.map((r) => r.voucherId));
+    expect(start.vouchers[0].total).toBe(140.5);
+  });
+
   it("is deterministic regardless of input order", async () => {
     const rows = [detailed({ expense_id: "a" }), detailed({ expense_id: "b", employee_code: "9", employee_name: "Z" })];
     const a = planPosting(DEFAULT_PWT_CONFIG, await txns(rows), EMPTY);

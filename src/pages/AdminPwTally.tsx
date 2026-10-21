@@ -78,6 +78,7 @@ export default function AdminPwTally() {
   const [prefix, setPrefix] = useState("PESO");
   const [mapMsg, setMapMsg] = useState<string | null>(null);
   const [reportRows, setReportRows] = useState(false);
+  const [datePolicy, setDatePolicy] = useState<"month_end" | "month_start">("month_end");
 
   const load = useCallback(async () => {
     if (!organizationId) return;
@@ -110,6 +111,7 @@ export default function AdminPwTally() {
         if (c.voucherPrefix) setPrefix(c.voucherPrefix);
       }
       setReportRows(c?.reportRowsInTally === true);
+      setDatePolicy(c?.postingDatePolicy === "month_start" ? "month_start" : "month_end");
     }).catch(() => undefined);
   }, [organizationId]);
 
@@ -155,7 +157,7 @@ export default function AdminPwTally() {
     if (!organizationId) return;
     setMapMsg(null);
     try {
-      await savePwtConfig(organizationId, { categories: rules, voucherPrefix: prefix, reportRowsInTally: reportRows });
+      await savePwtConfig(organizationId, { categories: rules, voucherPrefix: prefix, reportRowsInTally: reportRows, postingDatePolicy: datePolicy });
       setSavedRules(rules);
       setMapMsg("Saved.");
     } catch (e) {
@@ -282,6 +284,20 @@ export default function AdminPwTally() {
               <Button size="sm" variant="ghost" onClick={() => { setRules(DEFAULT_PWT_CATEGORIES); setPrefix("PESO"); }}>Reset</Button>
               <Button size="sm" className="ml-auto" onClick={() => void saveMapping()} disabled={!!mappingError}>Save</Button>
             </div>
+            <label className="flex flex-wrap items-center gap-2 text-sm">
+              Voucher date
+              <select
+                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                value={datePolicy}
+                onChange={(e) => setDatePolicy(e.target.value as "month_end" | "month_start")}
+                aria-label="Voucher date"
+                data-testid="pwt-date-policy"
+              >
+                <option value="month_end">Last day of the month</option>
+                <option value="month_start">First day of the month</option>
+              </select>
+              <span className="text-xs text-muted-foreground">Choose the first day if Tally refuses the last day.</span>
+            </label>
             {autoNote && <p className="text-xs text-muted-foreground" data-testid="pwt-auto-note">{autoNote}</p>}
             {mappingError && <p className="text-xs text-destructive">{mappingError}</p>}
             {mapMsg && <p className="text-xs">{mapMsg}</p>}

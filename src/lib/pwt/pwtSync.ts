@@ -239,6 +239,8 @@ export interface PwtConfig {
   voucherType?: string;
   /** Also store the report rows in Tally (hidden ledgers for the PesoWise Reports screens). Off by default. */
   reportRowsInTally?: boolean;
+  /** Voucher date inside the month: last day (default) or first day (for Tally editions that refuse month-end dates). */
+  postingDatePolicy?: "month_end" | "month_start";
 }
 
 /** Mirrors the database validation so the user gets the message before saving. Returns "" when valid. */

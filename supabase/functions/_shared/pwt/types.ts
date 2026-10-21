@@ -72,8 +72,8 @@ export interface PwtAccountingConfig {
    * This MUST be confirmed by the accountant before any real-company import.
    */
   expenseSide: "debit" | "credit";
-  /** "month_end" = last day of the bill month; "fixed" uses fixedPostingDate. */
-  postingDatePolicy: "month_end" | "fixed";
+  /** "month_end" = last day of the bill month; "month_start" = first day of the bill month; "fixed" uses fixedPostingDate. */
+  postingDatePolicy: "month_end" | "month_start" | "fixed";
   fixedPostingDate?: string;
   /** Parent group for auto-created employee ledgers. */
   employeeLedgerParent: string;

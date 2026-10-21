@@ -40,6 +40,11 @@ export function toIsoDate(v: unknown): string {
   return `${String(y).padStart(4, "0")}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
+export function monthStart(iso: string): string {
+  const [y, m] = iso.split("-").map(Number);
+  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-01`;
+}
+
 export function monthEnd(iso: string): string {
   const [y, m] = iso.split("-").map(Number);
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();

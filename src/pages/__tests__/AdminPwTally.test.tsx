@@ -84,4 +84,18 @@ describe("Tally integration setup page", () => {
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(savePwtConfig).toHaveBeenCalledTimes(1));
   });
+
+  it("the voucher date can be switched to the first day of the month and is saved", async () => {
+    state.config = { categories: [{ serial: 1, expenseType: "Food", expenseLedger: "Travelling Expenses" }], voucherPrefix: "PESO", postingDatePolicy: "month_end" };
+    renderPage();
+    const tab = await screen.findByText("Ledger mapping");
+    fireEvent.mouseDown(tab);
+    fireEvent.click(tab);
+    const sel = (await screen.findByTestId("pwt-date-policy")) as HTMLSelectElement;
+    await waitFor(() => expect(sel.value).toBe("month_end"));
+    fireEvent.change(sel, { target: { value: "month_start" } });
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(savePwtConfig).toHaveBeenCalledTimes(1));
+    expect(savePwtConfig.mock.calls[0][1]).toMatchObject({ postingDatePolicy: "month_start" });
+  });
 });

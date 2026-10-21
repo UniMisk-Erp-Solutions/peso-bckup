@@ -2,7 +2,7 @@ import type {
   AggregationResult, CanonicalTxn, ExpenseCategoryRule, ImportRow, PlannedVoucher,
   PosterState, PwtAccountingConfig, PwtIssue,
 } from "./types.ts";
-import { monthEnd, norm, round2 } from "./util.ts";
+import { monthEnd, monthStart, norm, round2 } from "./util.ts";
 
 export function employeeLedgerName(cfg: PwtAccountingConfig, t: Pick<CanonicalTxn, "employeeId" | "employeeName">): string {
   const o = cfg.employeeLedgerOverrides?.[t.employeeId];
@@ -86,13 +86,13 @@ export function planPosting(
       issues.push({ code: "NON_POSITIVE_AMOUNT", sourceId: t.sourceId, detail: `amount ${t.amount}`, blocking: true });
       continue;
     }
-    if (!t.billDate && cfg.postingDatePolicy === "month_end") {
+    if (!t.billDate && cfg.postingDatePolicy !== "fixed") {
       issues.push({ code: "BAD_DATE", sourceId: t.sourceId, detail: "missing/invalid bill date", blocking: true });
       continue;
     }
     const date = cfg.postingDatePolicy === "fixed" && cfg.fixedPostingDate
       ? cfg.fixedPostingDate
-      : monthEnd(t.billDate);
+      : cfg.postingDatePolicy === "month_start" ? monthStart(t.billDate) : monthEnd(t.billDate);
     const ledger = employeeLedgerName(cfg, t);
     const bk = `${date}|${rule.serial}|${ledger}`;
     const b = buckets.get(bk) ?? { date, rule, ledger, total: 0, ids: [], items: [] };
