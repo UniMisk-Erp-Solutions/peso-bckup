@@ -79,3 +79,17 @@ describe("sync parameters", () => {
     expect(buildPwtParameters({ reportType: "daily_project", userIds: ["u1", "u2"] })).toEqual({ user_ids: ["u1", "u2"] });
   });
 });
+
+import { friendlyTallyError } from "../pwtSync";
+describe("friendlyTallyError", () => {
+  it("explains Tally's 'Voucher date is missing' as a financial-year problem", () => {
+    const m = friendlyTallyError("Tally rejected vouchers: Voucher date is missing for: 'Journal' voucher PESO/06/05. Verify the data");
+    expect(m).toContain("PESO/06/05");
+    expect(m).toMatch(/financial year/);
+    expect(m).toContain("Alt+F3");
+  });
+  it("leaves other messages unchanged", () => {
+    expect(friendlyTallyError("Something else")).toBe("Something else");
+    expect(friendlyTallyError(null)).toBeNull();
+  });
+});

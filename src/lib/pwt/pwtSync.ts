@@ -99,6 +99,16 @@ export const PWT_STATUS_LABEL: Record<PwtJobStatus, string> = {
 
 export const isPwtActive = (s: PwtJobStatus) => s === "queued" || s === "preparing" || s === "delivering";
 
+/** Tally's "Voucher date is missing" means the date is outside the company's financial year; say so and how to fix it. */
+export function friendlyTallyError(error: string | null | undefined): string | null {
+  if (!error) return null;
+  if (/voucher date is missing/i.test(error)) {
+    const ids = [...error.matchAll(/voucher (PESO\/\d{2}\/\d{2})/gi)].map((m) => m[1]);
+    return `Tally refused ${ids.length ? ids.join(", ") : "some vouchers"} because their date is outside this company's financial year. In Tally open Alter Company (Alt+F3) and set "Financial year beginning from" and "Books beginning from" to a date before the earliest expense month (for example 1-Apr-2026), then sync again. Vouchers already posted stay; only the rest are sent.`;
+  }
+  return error;
+}
+
 /** One short, actionable line for a job (never raw stack traces). */
 export function describePwtJob(j: PwtJob, connectorOnline?: boolean): string {
   switch (j.status) {
@@ -122,10 +132,10 @@ export function describePwtJob(j: PwtJob, connectorOnline?: boolean): string {
         const first = j.issues.find((i) => i.blocking);
         return `${j.blocking_count} row(s) could not be posted${first ? `, e.g. ${first.detail}` : ""}. Fix the mapping or the data, then sync again.`;
       }
-      return j.error ?? "Delivery needs attention. Check the connector on the Tally PC.";
+      return friendlyTallyError(j.error) ?? "Delivery needs attention. Check the connector on the Tally PC.";
     }
     case "failed":
-      return j.error ?? "The sync failed before delivery.";
+      return friendlyTallyError(j.error) ?? "The sync failed before delivery.";
     default:
       return "";
   }
