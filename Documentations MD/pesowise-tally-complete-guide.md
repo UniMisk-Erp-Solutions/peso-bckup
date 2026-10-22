@@ -1,9 +1,11 @@
 # PesoWise → TallyPrime: the complete guide
 
 **Doc ID:** DOC-146  
-**Status:** in progress  
-**Last updated:** 2026-10-21  
+**Status:** superseded  
+**Last updated:** 2026-10-22  
 **Owner / area:** Tally integration (architecture, operation, user manual, reuse)  
+
+> **Superseded by: DOC-147** ([`pesowise-tally-system-document.md`](./pesowise-tally-system-document.md)), the fresh single reference. This guide is kept as the detailed, dated engineering log.
 
 > This is the **only document** for the PesoWise → TallyPrime integration. Part A explains how the system works, Part B is the user manual, Part C is for whoever deploys and runs it, Part D explains how to reuse the design for another project, and Part E is the engineering log (what was built, found and fixed), Part F covers Sync from Tally, **Part G is the accountant's mapping reference**, and Part H covers deleted-expense corrections.
 
@@ -820,3 +822,4 @@ The corrections appear on the Tally integration page, tab **Corrections** (previ
 | 2026-10-22 | **The payment voucher type is now simply "PesoWise Payment" (the built-in default).** The organisation setting had been saved as "PESO Wise Payment"; it was set back to the default in the database, and the guide uses the default name everywhere. Whenever a company is connected, the connector creates a voucher type with this name in that company automatically (active, Payment type, automatic numbering) within a minute; Sync from Tally reads exactly that type. A company that still has the older "PESO Wise Payment" type keeps it (unused); payments already imported stay credited. |
 | 2026-10-22 | **PART I added: edited expenses are corrected in Tally automatically.** An already-synced expense whose amount, month, employee or category changes is corrected in Tally (old posting deleted / reduced / reversed by the existing deletion engine) and then posted again with its new values by an automatic job limited to the edited expenses. Trigger + queue + comparison in the planner + heartbeat-driven job; no connector update needed. Migration `20261022100000_pwt_edit_sync.sql` (not yet applied). Verified against the real stored data read-only: 0 false edits over 12,601 expenses. Tab renamed Corrections. See Part I. |
 | 2026-10-22 | **Corrections tab: each row now names its Tally company and says what it is waiting for.** An expense synced to several companies shows one correction per company; they all looked identical ("waiting for the connector") and the old test company, which no longer exists, never finished. The list now shows the company and whether its connector is online ("waiting: its PC is offline ...") or not paired ("no Tally connector is paired for ..., so this will not run until one is"). Migration `20261022140000_pwt_corrections_company.sql` (replaces `pwt_list_deletions_v1`, applied). The correction for the removed company "Pesowise Testing" was cancelled (its Tally data and connector are gone); corrections for Practice and Pp stay queued because they run if those companies are paired again. `pwtDeletion.ts`. |
+| 2026-10-22 | Marked **superseded by DOC-147** (the fresh single system document). This guide stays as the detailed, dated engineering log; new changes are described in DOC-147. |
