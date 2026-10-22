@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,7 +24,7 @@ interface Props {
   params: PwtSyncParams;
 }
 
-/** "Sync to Tally" for one report: button, live status, recent history and actionable errors. */
+/** "Sync to Tally" for one report: button, live status, and actionable errors (no history list). */
 export function PwtSyncControl({ organizationId, disabled = false, params }: Props) {
   const [starting, setStarting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -116,34 +116,37 @@ export function PwtSyncControl({ organizationId, disabled = false, params }: Pro
 
   const latest = jobs[0];
   return (
-    <div className="space-y-2 rounded-md border border-border bg-muted/30 px-3 py-2" data-testid="pwt-sync">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => void start()}
-          disabled={disabled || starting || active || !organizationId || !report}
-          data-testid="sync-to-tally"
-        >
-          {starting || active ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-          {starting ? "Starting sync…" : active ? "Sync in progress" : "Sync to Tally"}
-        </Button>
-        {latest && <Badge variant={statusVariant(latest.status)}>{PWT_STATUS_LABEL[latest.status]}</Badge>}
-        <Link to="/admin/pwtally" className="text-xs text-primary hover:underline">
-          Tally connector &amp; setup
-        </Link>
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm" data-testid="pwt-sync">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="mt-0.5 rounded-md bg-primary/10 p-2 text-primary">
+            <RefreshCw className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 className="text-sm font-semibold">Tally sync</h4>
+              {latest && <Badge variant={statusVariant(latest.status)}>{PWT_STATUS_LABEL[latest.status]}</Badge>}
+            </div>
+            <p className="mt-0.5 text-xs text-muted-foreground">Post these expenses to TallyPrime as vouchers.</p>
+            {latest && <p className="mt-1 text-sm text-foreground" data-testid="pwt-latest">{describePwtJob(latest, connectorOnline)}</p>}
+            {message && <p className="mt-1 text-xs text-muted-foreground">{message}</p>}
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <Button
+            type="button"
+            onClick={() => void start()}
+            disabled={disabled || starting || active || !organizationId || !report}
+            data-testid="sync-to-tally"
+          >
+            {starting || active ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            {starting ? "Starting sync…" : active ? "Sync in progress" : "Sync to Tally"}
+          </Button>
+          <Link to="/admin/pwtally" className="text-xs text-primary hover:underline">
+            Tally connector &amp; setup
+          </Link>
+        </div>
       </div>
-      {message && <p className="text-xs text-muted-foreground">{message}</p>}
-      {latest && <p className="text-xs text-foreground" data-testid="pwt-latest">{describePwtJob(latest, connectorOnline)}</p>}
-      {jobs.length > 1 && (
-        <ul className="space-y-0.5 text-xs text-muted-foreground" aria-label="Recent Tally syncs">
-          {jobs.slice(1).map((j) => (
-            <li key={j.id}>
-              {new Date(j.created_at).toLocaleString()} · {PWT_STATUS_LABEL[j.status]} · {j.row_count.toLocaleString()} rows
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

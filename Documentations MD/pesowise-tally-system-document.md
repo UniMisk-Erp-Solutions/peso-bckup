@@ -427,6 +427,7 @@ supabase/tests/pwt_deletion/              database acceptance tests
 
 | Date | Revision | Author | Notes |
 |------|----------|--------|-------|
+| 2026-10-22 | 1.3 | Agent | "Sync to Tally" on the Detailed Expense report is now a clean card (icon, status, one button, connector link); the recent-syncs history list was removed from the report screen. |
 | 2026-10-22 | 1.2 | Agent | Sync from Tally: a previously imported payment is flagged "Deleted in Tally" only when the sync that last saw it read the same voucher type (switching Payment / PesoWise Payment no longer flags the other type's payments); the dialog now shows the server's real reason when a sync cannot start. Migration 20261022160000_pwt_inbound_deleted_same_type.sql (apply manually). |
 | 2026-10-22 | 1.1 | Agent | Connector 1.2.6: installer never closes silently (error shown, logged, waits for Enter), retries while the file is held, no-argument run = setup; troubleshooting row added. |
 | 2026-10-22 | 1.0 | Agent | Fresh single document: features, architecture, setup, sync, calculation, mapping, automatic corrections (delete and edit), Sync from Tally, connector and installer, data model, build history, operations, status and open items. |
