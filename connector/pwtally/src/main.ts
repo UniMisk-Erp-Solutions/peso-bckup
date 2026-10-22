@@ -6,7 +6,7 @@
  *   install-startup | uninstall-startup
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { activeCompany, processBatch, TallyOfflineError, type ClaimedBatch } from "./engine.ts";
@@ -14,6 +14,7 @@ import { Api, APP_VERSION, dataDir, loadConfig, log, saveConfig, tallyHttp, type
 import { runInboundJob, type InboundJob } from "./inbound.ts";
 import { runDeletionJob, type DeletionJob } from "./deletion.ts";
 import { ensurePaymentVoucherType } from "./voucherType.ts";
+import { realDeps, runSetup } from "./setup.ts";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -22,19 +23,45 @@ function arg(name: string): string | undefined {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+async function pairWith(api: string, key: string | undefined, tallyUrl: string, code: string) {
+  const res = await new Api({ apiBase: api, apiKey: key, deviceToken: "" }).call<{
+    connector_id: string; organization_id: string; tally_company: string; device_token: string;
+  }>({ action: "pair", code, device_name: hostname(), tally_version: "" });
+  saveConfig({
+    apiBase: api, apiKey: key, deviceToken: res.device_token, connectorId: res.connector_id,
+    organizationId: res.organization_id, tallyCompany: res.tally_company, tallyUrl, pollSeconds: 10,
+  });
+  log(`Paired. Organization ${res.organization_id}; authorised Tally company: "${res.tally_company}"`);
+}
+
 async function pair() {
   const api = arg("api");
   const code = arg("code");
   if (!api || !code) throw new Error("usage: pair --api <https://host> --code <CODE> [--key <anon key>] [--tally-url <url>]");
-  const tallyUrl = arg("tally-url") ?? "http://127.0.0.1:9000";
-  const res = await new Api({ apiBase: api, apiKey: arg("key"), deviceToken: "" }).call<{
-    connector_id: string; organization_id: string; tally_company: string; device_token: string;
-  }>({ action: "pair", code, device_name: hostname(), tally_version: "" });
-  saveConfig({
-    apiBase: api, apiKey: arg("key"), deviceToken: res.device_token, connectorId: res.connector_id,
-    organizationId: res.organization_id, tallyCompany: res.tally_company, tallyUrl, pollSeconds: 10,
+  await pairWith(api, arg("key"), arg("tally-url") ?? "http://127.0.0.1:9000", code);
+}
+
+/** What the installer runs: install, pair, start. No PowerShell or script host is involved. */
+async function setup() {
+  const base = process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Local");
+  const cfgFile = join(dirname(process.execPath), "setup-config.json");
+  const sc = existsSync(cfgFile) ? (JSON.parse(readFileSync(cfgFile, "utf-8").replace(/^﻿/, "")) as { apiBase: string; apiKey?: string; tallyUrl?: string }) : null;
+  const deps = realDeps({
+    destDir: join(base, "Programs", "PesoWiseTally"),
+    skipPair: process.argv.includes("--no-pair"),
+    isPaired: () => !!loadConfig(),
+    pair: async (code) => {
+      if (!sc?.apiBase) throw new Error("this installer has no server address; download it again from PesoWise");
+      await pairWith(sc.apiBase, sc.apiKey, sc.tallyUrl ?? "http://127.0.0.1:9000", code);
+    },
+    doctor,
   });
-  log(`Paired. Organization ${res.organization_id}; authorised Tally company: "${res.tally_company}"`);
+  const code = await runSetup(deps);
+  if (!process.argv.includes("--no-wait")) {
+    process.stdout.write("\nPress Enter to close this window.");
+    await new Promise<void>((r) => { process.stdin.resume(); process.stdin.once("data", () => r()); });
+  }
+  process.exit(code);
 }
 
 async function doctor() {
@@ -186,10 +213,10 @@ const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
 const cmd = process.argv[2];
 const table: Record<string, () => Promise<void> | void> = {
-  pair, run, doctor, "install-startup": installStartup, "uninstall-startup": uninstallStartup,
+  pair, run, doctor, setup, "install-startup": installStartup, "uninstall-startup": uninstallStartup,
 };
 if (!cmd || !table[cmd]) {
-  console.log("usage: PesoWiseTally.exe <pair|run|doctor|install-startup|uninstall-startup>");
+  console.log("usage: PesoWiseTally.exe <setup|pair|run|doctor|install-startup|uninstall-startup>");
   process.exit(cmd ? 2 : 0);
 }
 Promise.resolve(table[cmd]()).catch((e) => {

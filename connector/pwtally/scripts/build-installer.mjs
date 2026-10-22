@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * Builds dist/PesoWise-Tally-Setup.exe with Windows' built-in IExpress (no extra download).
+ * The installer runs `PesoWiseTally.exe setup` directly: no cmd, no PowerShell, no ExecutionPolicy Bypass, no VBScript.
  * Inputs: dist/PesoWiseTally.exe (npm run build), tdl/PesoWise-Tally.tdl (node scripts/gen-tdl.mjs).
  * The embedded setup-config.json carries ONLY the public API base URL and the publishable (anon) key.
  */
@@ -46,11 +47,9 @@ rmSync(work, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 copyFileSync(join(root, "dist", "PesoWiseTally.exe"), join(stage, "PesoWiseTally.exe"));
 copyFileSync(join(root, "tdl", "PesoWise-Tally.tdl"), join(stage, "PesoWise-Tally.tdl"));
-copyFileSync(join(root, "installer", "install.ps1"), join(stage, "install.ps1"));
 writeFileSync(join(stage, "setup-config.json"), JSON.stringify({ apiBase, apiKey, tallyUrl: "http://127.0.0.1:9000" }, null, 2));
-writeFileSync(join(stage, "setup.cmd"), '@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1"\r\n');
 
-const files = ["PesoWiseTally.exe", "PesoWise-Tally.tdl", "install.ps1", "setup-config.json", "setup.cmd"];
+const files = ["PesoWiseTally.exe", "PesoWise-Tally.tdl", "setup-config.json"];
 const sed = [
   "[Version]", "Class=IEXPRESS", "SEDVersion=3",
   "[Options]", "PackagePurpose=InstallApp", "ShowInstallProgressWindow=0", "HideExtractAnimation=1", "UseLongFileName=1",
@@ -61,7 +60,7 @@ const sed = [
   "SourceFiles=SourceFiles",
   "[Strings]",
   "InstallPrompt=", "DisplayLicense=", "FinishMessage=", "TargetName=" + out, "FriendlyName=PesoWise Tally Setup",
-  "AppLaunched=cmd /c setup.cmd", "PostInstallCmd=<None>", "AdminQuietInstCmd=", "UserQuietInstCmd=",
+  "AppLaunched=PesoWiseTally.exe setup", "PostInstallCmd=<None>", "AdminQuietInstCmd=", "UserQuietInstCmd=",
   ...files.map((f, i) => `FILE${i}="${f}"`),
   "[SourceFiles]", "SourceFiles0=" + stage + "\\",
   "[SourceFiles0]",
