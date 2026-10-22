@@ -609,3 +609,4 @@ Use **DOC-113** for the next new document in `Documentations MD/`. DOC-111 [Repo
 | 2026-10-22 | DOC-146: connector 1.2.5, installer without PowerShell (setup mode inside the exe). Still one document. Next ID: DOC-147. | Agent |
 | 2026-10-22 | DOC-146: optional code signing in the installer build; antivirus block explained. Still one document. Next ID: DOC-147. | Agent |
 | 2026-10-22 | **DOC-146 Part I added: edited expenses are corrected in Tally automatically** (migration 20261022100000, not yet applied or deployed; no connector update needed). Default payment voucher type name "PesoWise Payment" documented. Still one document. Next ID: DOC-147. | Agent |
+| 2026-10-22 | DOC-146: Corrections tab names the Tally company of each correction and what it waits for (migration 20261022140000, applied). Still one document. Next ID: DOC-147. | Agent |

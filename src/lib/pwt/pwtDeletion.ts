@@ -21,6 +21,10 @@ export interface PwtDeletion {
   detected_via: string;
   /** why the Tally entry is corrected: the expense was deleted, or edited after it was synced */
   reason?: "deleted" | "edited";
+  /** the Tally company this correction is for (one expense can be synced to several companies) */
+  tally_company?: string;
+  /** whether that company's connector is running now */
+  connector?: "online" | "offline" | "none";
   created_at: string;
   completed_at: string | null;
 }
@@ -43,14 +47,21 @@ export const PWT_DELETION_ACTION_LABEL: Record<PwtDeletionAction, string> = {
 /** One plain-language line for a correction. */
 export function describeDeletion(d: PwtDeletion): string {
   const kind = d.reason === "edited" ? "Edited expense" : "Expense";
-  const what = `${d.transaction_number ? `${kind} ${d.transaction_number}` : kind} · ${d.amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })} · voucher ${d.voucher_number}`;
+  const what = `${d.tally_company ? `${d.tally_company} · ` : ""}${d.transaction_number ? `${kind} ${d.transaction_number}` : kind} · ${d.amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })} · voucher ${d.voucher_number}`;
   switch (d.status) {
     case "completed":
       return `${what} — ${d.action ? PWT_DELETION_ACTION_LABEL[d.action] : "corrected"}${d.reason === "edited" ? "; the new version is posted next" : ""}.`;
     case "blocked":
       return `${what} — not changed in Tally: ${d.error ?? "needs a manual check"}`;
-    case "queued":
-      return `${what} — ${d.error ? `will retry (${d.error})` : "waiting for the connector; it runs by itself when TallyPrime is open."}`;
+    case "queued": {
+      const co = d.tally_company ? `"${d.tally_company}"` : "this company";
+      const wait = d.connector === "none"
+        ? `no Tally connector is paired for ${co}, so this will not run until one is.`
+        : d.connector === "offline"
+          ? `waiting for the connector of ${co}: its PC is offline. It runs by itself when that PC is on with TallyPrime open on ${co}.`
+          : "waiting for the connector; it runs by itself when TallyPrime is open.";
+      return `${what} — ${d.error ? `will retry (${d.error})` : wait}`;
+    }
     default:
       return what;
   }

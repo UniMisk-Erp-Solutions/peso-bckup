@@ -25,6 +25,8 @@ describe("describeDeletion", () => {
     expect(describeDeletion(d({ status: "blocked", action: null, error: "changed outside PesoWise" }))).toMatch(/not changed in Tally: changed outside PesoWise/);
     expect(describeDeletion(d({ reason: "edited", action: "alter_voucher" }))).toMatch(/Edited expense TXN-7.*Amount removed from voucher; the new version is posted next/);
     expect(describeDeletion(d({ status: "queued", action: null }))).toMatch(/waiting for the connector/);
+    expect(describeDeletion(d({ status: "queued", action: null, tally_company: "Practice", connector: "offline" }))).toMatch(/Practice · Expense TXN-7.*connector of "Practice": its PC is offline/);
+    expect(describeDeletion(d({ status: "queued", action: null, tally_company: "Old Co", connector: "none" }))).toMatch(/no Tally connector is paired for "Old Co"/);
   });
 });
 
