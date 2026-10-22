@@ -607,3 +607,4 @@ Use **DOC-113** for the next new document in `Documentations MD/`. DOC-111 [Repo
 | 2026-10-21 | DOC-146: connector 1.2.4 explains a Tally date refusal (company dates read) and retries once. Still one document. Next ID: DOC-147. | Agent |
 | 2026-10-21 | DOC-146: Voucher date setting (last day / first day of the month) for Tally editions that refuse month-end dates (migration 20261021180000 applied; edge files _shared/pwt/{types,util,aggregate}.ts deployed to the PesoWise functions container). Still one document. Next ID: DOC-147. | Agent |
 | 2026-10-22 | DOC-146: connector 1.2.5, installer without PowerShell (setup mode inside the exe). Still one document. Next ID: DOC-147. | Agent |
+| 2026-10-22 | DOC-146: optional code signing in the installer build; antivirus block explained. Still one document. Next ID: DOC-147. | Agent |

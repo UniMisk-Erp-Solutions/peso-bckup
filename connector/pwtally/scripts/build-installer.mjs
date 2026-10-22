@@ -77,6 +77,25 @@ if (!existsSync(out)) {
   console.error("IExpress did not produce the installer (exit", r.status, ")");
   process.exit(1);
 }
+// Optional code signing: the lasting fix for antivirus / SmartScreen "virus detected" warnings on an unsigned installer.
+// Set PWT_SIGN_PFX (path to a code-signing .pfx) and PWT_SIGN_PASSWORD; PWT_SIGN_TIMESTAMP is optional. Without them the installer stays unsigned.
+if (process.env.PWT_SIGN_PFX) {
+  const ps = [
+    "$ErrorActionPreference = 'Stop'",
+    "$c = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($env:PWT_SIGN_PFX, $env:PWT_SIGN_PASSWORD)",
+    "$ts = if ($env:PWT_SIGN_TIMESTAMP) { $env:PWT_SIGN_TIMESTAMP } else { 'http://timestamp.digicert.com' }",
+    "$r = Set-AuthenticodeSignature -FilePath $env:PWT_SIGN_FILE -Certificate $c -HashAlgorithm SHA256 -TimestampServer $ts",
+    "if (-not $r.SignerCertificate) { throw ('signing failed: ' + $r.StatusMessage) }",
+    "Write-Output ('signed by ' + $r.SignerCertificate.Subject + ' (' + $r.Status + ')')",
+  ].join("; ");
+  const s = spawnSync("powershell.exe", ["-NoProfile", "-Command", ps], { stdio: "inherit", env: { ...process.env, PWT_SIGN_FILE: out } });
+  if (s.status !== 0) {
+    console.error("Code signing failed; the installer was NOT published.");
+    process.exit(1);
+  }
+} else {
+  console.log("Note: the installer is NOT signed (set PWT_SIGN_PFX / PWT_SIGN_PASSWORD to sign it).");
+}
 copyFileSync(out, finalOut);
 console.log("Built", finalOut);
 
