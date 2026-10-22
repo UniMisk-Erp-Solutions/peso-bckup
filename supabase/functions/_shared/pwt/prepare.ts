@@ -42,7 +42,11 @@ export interface JobPlan {
     source_id: string; amount: number; voucher_number: string; voucher_date: string; content_hash: string;
     /** Recorded so a later deletion of the expense can be corrected in Tally exactly. */
     employee_ledger: string; expense_ledger: string; serial: number;
+    /** Recorded so a later edit of the expense can be detected. */
+    expense_type: string;
   }[];
+  /** Already-posted expenses edited since they were posted (queued for correction in Tally, then re-posted). */
+  edits: { source_id: string; changed: string[]; was: Record<string, unknown>; now: Record<string, unknown> }[];
   /** batch seq (string) -> voucher registry rows for pwt_vouchers */
   vouchers: Record<string, { date: string; number: string; serial: number; total: number }[]>;
   summary: {
@@ -226,8 +230,9 @@ export async function buildJobPlanFromNormalized(inp: Omit<PlanInput, "rows">, n
     reservations: plan.postings.map((p) => ({
       source_id: p.sourceId, amount: p.amount, voucher_number: p.voucherNumber,
       voucher_date: p.voucherDate, content_hash: p.contentHash,
-      employee_ledger: p.employeeLedger, expense_ledger: p.expenseLedger, serial: p.serial,
+      employee_ledger: p.employeeLedger, expense_ledger: p.expenseLedger, serial: p.serial, expense_type: p.expenseType,
     })),
+    edits: plan.edits.map((e) => ({ source_id: e.sourceId, changed: [...e.changed], was: { ...e.was }, now: { ...e.now } })),
     vouchers: vouchersByBatch,
     rowRecords,
     summary: {

@@ -45,7 +45,7 @@ Everything the system creates or reads in TallyPrime, and exactly how each value
 | Expense category | Ledger (see G3) under **Indirect Expenses** | Chart of Accounts | yes |
 | Approved expenses | **Journal** voucher, one per month and category | Day Book, Journal Register | yes |
 | Report rows | Ledgers `PWT-…` in group **PesoWise Report Data** (under Suspense A/c), zero balance | Only feeds Gateway → PesoWise Reports | no (never carry an amount) |
-| Employee payments typed in Tally | Voucher type **PESO Wise Payment** (Payment type; exact name is a setting) | Day Book | yes (you create these) |
+| Employee payments typed in Tally | Voucher type **PesoWise Payment** (Payment type; exact name is a setting) | Day Book | yes (you create these) |
 
 All amounts are in the company currency. No GST, TDS, bill-wise allocations, cost centres or stock are created.
 
@@ -105,7 +105,7 @@ Worked example (anonymised): five Material Purchase expenses of one employee in 
 
 | Tally field | Becomes in PesoWise |
 |---|---|
-| Voucher type must equal the configured name (default `PesoWise Payment`; this company uses `PESO Wise Payment`) | accepted; any other type is ignored |
+| Voucher type must equal the configured name (default `PesoWise Payment`; this company uses `PesoWise Payment`) | accepted; any other type is ignored |
 | **Dr** entry on the employee ledger, amount | **Balance credit** (+ amount) for that employee |
 | Cr entries | must all be **Cash-in-Hand** or **Bank Accounts** ledgers; otherwise the voucher is skipped |
 | Voucher date | effective date of the credit |
@@ -124,7 +124,7 @@ Worked example: Payment voucher dated 16-Oct-2026, Dr `Employee A-1234` 500.00, 
 | Expenses posted for a month | Tally Journal Register (voucher narration `PWT …`) | PesoWise Detailed Expense total for that month (the report in Tally also shows its Grand Total) |
 | Voucher count | Day Book | one voucher per category per month (plus `-S` supplements) |
 | Employee advance | Tally employee ledger closing (Dr) | PesoWise Current Balance, if the opening balances matched and nothing else was posted to that ledger |
-| Payments imported | PesoWise Import History ("Tally sync" batches) | the PESO Wise Payment vouchers in the Day Book |
+| Payments imported | PesoWise Import History ("Tally sync" batches) | the PesoWise Payment vouchers in the Day Book |
 | Items needing review | Sync from Tally result list | nothing flagged, or each item explained |
 
 ## G8) Decisions the accountant must confirm before a real company
@@ -714,6 +714,69 @@ Test vouchers created while verifying were deleted before the owner's own tests.
 
 ---
 
+# PART I: Edited expenses are corrected in Tally automatically
+
+## I1) What it does
+
+When an expense that was **already posted to Tally** is **edited** in PesoWise (in the app, in the database or from the backend) and its **amount, month, employee or category** changes, Tally follows by itself: no button, no approval.
+
+1. The **old posting** is corrected in Tally exactly like a deleted expense (Part H): the voucher is deleted, reduced by that expense's amount, or offset by a reversal if Tally refuses.
+2. The expense's **current version** is then posted again as a normal expense (a new voucher entry with the new amount, month, employee or ledger).
+
+| What was edited | Result in Tally |
+|---|---|
+| Amount | the old amount is taken out of its voucher, the expense is posted again with the new amount |
+| Bill date, to another month | the old posting is corrected, the expense is posted in the voucher of the new month |
+| Employee | the old posting is corrected on the old employee, the expense is posted on the new employee |
+| Category | the old posting is corrected, the expense is posted to the ledger of the new category |
+| Anything else (description, notes, attachments ...) | nothing: it does not change the accounting |
+
+Changing the **ledger mapping** or the **voucher date setting** is never treated as an edit of every expense: only the amount, month, employee code and expense type of each expense are compared.
+
+## I2) How it works
+
+1. **Detection (database).** A trigger on `public.expenses` marks a synced expense `dirty` in `pwt_edit_queue` whenever it is updated. It never blocks or fails the update.
+2. **Comparison (planner).** The planner compares every already-posted expense with what was recorded when it was posted (`pwt_registry`: amount, voucher month, employee code, and, since this feature, the expense type). A difference is an **edit**.
+3. **Correction of the old posting.** The edit queues a correction in `pwt_deletion_jobs` with `reason = 'edited'`. The **same connector and the same safety rules** as a deletion apply (the voucher is found by date and narration, changed only if it still matches what PesoWise recorded, read back afterwards). Because the correction engine is the one already running on the Tally PC, **no connector update is needed**.
+4. **Re-post.** When that correction completes, the old registry row is dropped and the expense is queued `repost`. An **automatic job** (below) then posts the new version.
+5. **Automatic job.** The connector heartbeat asks the server for work every few seconds. If edits are waiting (and no other sync of that company is running), the server creates one Detailed Expense job over the dates of the last sync, **limited to the queued expenses** (`only_source_ids`). It never posts other, unsynced expenses on its own: those still wait for **Sync to Tally**. A burst of edits is one job (20 s after the last edit, at most one job a minute).
+6. **Manual syncs notice edits too.** A normal **Sync to Tally** also reports "edited after posting", queues the correction and lets the automatic job re-post.
+
+The corrections appear on the Tally integration page, tab **Corrections** (previously "Deleted expenses"), marked "Edited expense".
+
+## I3) For the accountant
+
+- An edit shows in Tally as **two steps**: the old entry is corrected (voucher deleted / reduced / reversal) and the new one appears as a voucher entry for the same month with the next voucher number (`PESO/MM/NN-S1` when the plain number is already used).
+- A voucher is never rewritten silently: a voucher that was changed in Tally by hand, or whose total is no longer what PesoWise recorded, is **blocked** and shown under Corrections with the reason (Retry button), exactly as for deletions.
+- Expenses that are not in Tally yet are not affected by edits: they are simply posted with their current values at the next sync.
+
+## I4) Key files
+
+| Piece | File |
+|---|---|
+| Migration (queue, trigger, edit corrections, automatic job, registry facts) | `supabase/migrations/20261022100000_pwt_edit_sync.sql` |
+| Comparison | `supabase/functions/_shared/pwt/aggregate.ts` (`changedAfterPosting`), `types.ts`, `prepare.ts`, `slice.ts` (`only_source_ids`, edits passed to the database) |
+| Automatic job driver | `supabase/functions/pwt-connector/index.ts` (`driveEditJob`, runs on the heartbeat) |
+| Website | `src/lib/pwt/pwtDeletion.ts`, `src/components/PwtDeletionHistory.tsx` |
+| Tests | `supabase/tests/pwt_deletion/edit_acceptance.mjs` (Postgres), planner and slice tests in `supabase/functions/_shared/pwt/__tests__/` |
+
+## I5) Test evidence
+
+- Postgres acceptance (in-process, real migrations): trigger marks only synced expenses; edit queues a correction of the OLD posting with the old values; the connector claims it although the expense is active (a deletion would be cancelled as "restored"); completion drops the registry row, frees the key, queues the re-post and reduces the voucher total; the automatic job is created only after 20 s, only when no sync runs, limited to the queued expenses, never twice; an expense can be edited again; a real deletion still behaves as before.
+- Planner: amount, month, employee and category edits are detected; mapping or voucher-date changes are not; expenses posted before the type was recorded are compared on amount, month and employee only.
+- **Real data check (read-only):** the planner was run over the 12,608 stored report rows against the 12,601 posted expenses of the test company: **0 edits** (no false alarms).
+
+## I6) Known limits
+
+- A **category** edit is only detected for expenses whose expense type was recorded: all expenses posted from now on, and older ones the migration could resolve from the stored report rows; the others are compared on amount, month and employee.
+- The re-post needs the expense to appear in the Detailed Expense report for the same dates as the last sync. An expense edited into a state where it no longer qualifies (for example it is no longer approved) is corrected out of Tally and not posted again.
+- If delivery of the re-posted version fails after the correction, the expense is simply unsynced again and the next **Sync to Tally** posts it.
+- Only the PesoWise Detailed Expense data is followed; edits made in Tally itself are not sent back by this feature.
+
+**Deploy (needs the owner's approval, PesoWise stack only):** apply the migration; copy `_shared/pwt/{types,aggregate,prepare,slice}.ts` and `pwt-connector/index.ts` into the PesoWise functions container. No connector update is required.
+
+---
+
 ## Revision log
 
 | Date | Change |
@@ -727,7 +790,7 @@ Test vouchers created while verifying were deleted before the owner's own tests.
 | 2026-10-19 | Connector and setup installer rebuilt as version 1.1.0 (includes deletion sync). `/downloads/PesoWise-Tally-Setup.exe` and `PesoWise-Tally.tdl` serve the new files; the setup page states the version and how to update an installed PC (run the new setup, answer No to keep the pairing). |
 | 2026-10-19 | `/admin/pwtally` redesigned as the dedicated Tally integration setup page: live status banner with a 4-point checklist, the three things it automates, four numbered step cards (downloads, prepare Tally, pairing code with copy and 15-minute countdown plus connected PCs, ledger mapping), first-sync card, and tabs for sync history, deleted-expense corrections and troubleshooting. Admin sidebar link "Tally integration" added (shown only when `VITE_PWT_SYNC=1`). |
 | 2026-10-19 | `/admin/pwtally` simplified: status line, three short steps (Download, Connect with a code, Set up TallyPrime) and three tabs (History, Deleted expenses, Ledger mapping). The explanatory tiles, checklist and troubleshooting text were removed. |
-| 2026-10-19 | Connector 1.2.0: creates the payment voucher type used by Sync from Tally in the paired company automatically (heartbeat now returns the configured name). F7 updated. Unit-tested and verified live in TallyPrime (a throwaway voucher type was created as a Payment type, a repeat run changed nothing, the existing "PESO Wise Payment" was left alone, a wrong company was refused, and the test type was removed). |
+| 2026-10-19 | Connector 1.2.0: creates the payment voucher type used by Sync from Tally in the paired company automatically (heartbeat now returns the configured name). F7 updated. Unit-tested and verified live in TallyPrime (a throwaway voucher type was created as a Payment type, a repeat run changed nothing, the existing "PesoWise Payment" was left alone, a wrong company was refused, and the test type was removed). |
 | 2026-10-19 | Connector 1.2.1: the auto-created payment voucher type is now created ACTIVE and automatically numbered, and an existing inactive one is switched on (it was created inactive in 1.2.0, so TallyPrime hid it from the voucher type list; found when the owner could not see it). |
 | 2026-10-19 | **The "already posted" record is now per Tally company** (migration `20261019140000_pwt_registry_per_company.sql`, applied to the PesoWise DB with a safety copy `pwt_registry_bak_20261019`). Before, an expense posted to one company counted as posted for every company of the organisation, so a new empty company was never filled (found when a sync into a fresh company created no vouchers). Now each company has its own history; the same expense can be posted once to each company; duplicates inside one company stay impossible. Existing 12,586 + 15 postings were tagged with the company of their sync job. Deletion corrections are per company too. Tested in Postgres (10 + 41 checks). |
 | 2026-10-19 | **Large syncs no longer get stuck in "Preparing".** The server cancels any single request after about 12 s, so reading and planning a 12,000+ row report in one request was killed part-way (no error recorded). Preparation now runs in short resumable slices (migration `20261019150000_pwt_resumable_prepare.sql`: `prep_phase`/`prep_state`/`prep_seq`/`slice_lease_until`, `pwt_claim_slice_v1`, `pwt_slice_save_v1`, `pwt_job_rows_compact_v1`; worker `_shared/pwt/slice.ts`; `pwt-start-sync` action `continue`). Each slice reads or plans for about 7 s, saves its position and returns; the Sync control on the Reports page asks for the next slice until the job is ready. The planner reads only the compact fields it needs. A job stuck by the old worker restarts cleanly. Tested: unit (6), Postgres (13). Limit: while a job is preparing the Reports page must stay open (it drives the slices). |
@@ -748,9 +811,11 @@ Test vouchers created while verifying were deleted before the owner's own tests.
 | 2026-10-21 | **Ledger mapping page: Voucher ID example line (with the prefix box), the shared-ledger note and the "You changed" warning/confirmation were removed at the owner's request.** Save now saves directly. Existing Tally vouchers are still never altered by a mapping change (posted expenses are skipped by the registry; only unsynced expenses use the new mapping). The voucher prefix is no longer editable on the page (stays as saved, default PESO). Helper functions (`changedLedgers`, `sharedLedgers`) remain in `pwtSync.ts`, unused by the page. `AdminPwTally.tsx`. |
 | 2026-10-21 | **Safety: the .tdl download was removed from the website.** The setup page now offers only the connector installer (the installer carries the TDL and puts it in `%LOCALAPPDATA%\Programs\PesoWiseTally\`). `public/downloads/PesoWise-Tally.tdl` was deleted and `build-installer.mjs` no longer publishes it. The source stays in `connector/pwtally/tdl/`. `AdminPwTally.tsx`. |
 | 2026-10-21 | **"Voucher date is missing" is now explained on the page.** When Tally refuses vouchers with this message (a second company "Testing" accepted August but refused June and July), the date is outside the Tally company's financial year. The sync status now says so and how to fix it: Alter Company (Alt+F3), set "Financial year beginning from" and "Books beginning from" before the earliest expense month (e.g. 1-Apr-2026), then sync again; vouchers already posted stay. `friendlyTallyError` in `pwtSync.ts`, test in `pwtSync.test.ts`. |
-| 2026-10-21 | **Connector 1.2.3: "Voucher date is missing" can no longer happen on a company that holds only PesoWise entries.** Before importing vouchers the connector reads the paired company's start dates (Financial year beginning from / Books beginning from, read through a TDL export; `period.ts`). If the earliest voucher is before them it moves BOTH dates earlier (same day and month, covering year, e.g. 1-Aug-2026 -> 1-Apr-2025), verifies by reading Tally back, and then imports. A company that has its own accounting entries (anything that is not a `PWT ...` voucher or a PESO Wise Payment voucher) is never changed: the sync stops with a plain instruction (Alt+F3, Alter, start date). Verified live in TallyPrime on the Pesowise Testing company: the XML alter works in both directions, existing vouchers are kept, a voucher dated beyond the first 12 months is accepted once the start is earlier; the company was restored to 1-Apr-2026 afterwards. Unit tests (3 engine scenarios) added. Installer rebuilt as 1.2.3; install it on each PC that uses a new company. |
+| 2026-10-21 | **Connector 1.2.3: "Voucher date is missing" can no longer happen on a company that holds only PesoWise entries.** Before importing vouchers the connector reads the paired company's start dates (Financial year beginning from / Books beginning from, read through a TDL export; `period.ts`). If the earliest voucher is before them it moves BOTH dates earlier (same day and month, covering year, e.g. 1-Aug-2026 -> 1-Apr-2025), verifies by reading Tally back, and then imports. A company that has its own accounting entries (anything that is not a `PWT ...` voucher or a PesoWise Payment voucher) is never changed: the sync stops with a plain instruction (Alt+F3, Alter, start date). Verified live in TallyPrime on the Pesowise Testing company: the XML alter works in both directions, existing vouchers are kept, a voucher dated beyond the first 12 months is accepted once the start is earlier; the company was restored to 1-Apr-2026 afterwards. Unit tests (3 engine scenarios) added. Installer rebuilt as 1.2.3; install it on each PC that uses a new company. |
 | 2026-10-21 | **Fix: re-sync failed with "duplicate key value violates unique constraint pwt_vouchers_pkey".** When a delivery fails (for example Tally refuses a voucher date) the batch's vouchers are marked `released` but the rows stay; the next sync planned the same voucher date + number again and the plain INSERT collided, so every retry after a failure failed. Migration `20261021160000_pwt_vouchers_reuse_released.sql` replaces `pwt_complete_prep_v1`: released rows are reused (upsert), while a `planned` or `posted` voucher is still protected (a second sync that tries to claim it fails loudly). Acceptance test `supabase/tests/pwt_deletion/vouchers_reuse_acceptance.mjs` (5 checks); the other three DB acceptance suites still pass. Applied to the PesoWise database (previous function text kept in the session scratchpad). |
 | 2026-10-21 | **Connector 1.2.4: a date refusal now explains itself, and is retried once after a fresh read of the company dates.** The "Bug" company showed "Voucher date is missing" for the June vouchers while the company was shown starting 1-Jan-26 and only June (never Jul-Sep) was refused, so the start date alone did not explain it. The connector now (1) finds the company even when its name differs only in case or spacing, (2) on a date refusal reads the dates again, fixes them if they do not cover the vouchers and retries the rest once, and (3) otherwise appends a plain note to the error: the Financial year and Books dates it read and whether the earliest voucher is inside them. The page turns that note into an instruction (check the dates were saved with Alt+F3 / Ctrl+A and that TallyPrime is fully licensed - Educational mode limits the dates Tally accepts; unconfirmed). `period.ts`, `engine.ts`, `friendlyTallyError`; tests added. Installer rebuilt as 1.2.4. |
 | 2026-10-21 | **Voucher date setting (month end / first day) for Tally editions that refuse month-end dates.** On the "Bug" company (TallyPrime EDU, dates 1-Jan-2026, books cover June) the connector note proved the start date was not the cause: Tally still refused only the two vouchers dated 30-Jun-2026 while 31-Jul and 31-Aug were accepted, and the licensed Tally on the development PC accepts every date. The likely cause is the Educational edition's date limits (not confirmed by Tally documentation); the setting is the safe workaround. New organisation setting `postingDatePolicy` = `month_end` (default) or `month_start` (first day of the same month, still the right month, voucher IDs unchanged), a "Voucher date" drop-down on the Ledger mapping tab, migration `20261021180000_pwt_posting_date_setting.sql` (replaces `pwt_save_config_v1` to allow the key), planner change in `aggregate.ts`/`util.ts`. Tests: planner, page, and `posting_date_acceptance.mjs` (4 checks). Switching the setting on a company that already has vouchers creates the next syncs on the new date; existing vouchers keep their dates. |
 | 2026-10-22 | **Connector 1.2.5: installer without PowerShell.** Users saw "Virus detected" when downloading the installer (an unsigned self-extractor that ran `cmd` -> `powershell -ExecutionPolicy Bypass` -> WinForms/VB prompts -> a hidden `wscript` launcher). Windows Defender on the development PC found nothing in either file, so this is an antivirus heuristic on the other PC, not a virus. The installer now runs `PesoWiseTally.exe setup` directly (`src/setup.ts`): copies the program and the TDL to `%LOCALAPPDATA%` Programs PesoWiseTally, asks for the pairing code in its own console window, registers the per-user start-at-sign-in entry (HKCU Run) that starts the program directly (no VBScript, no script host), and starts it in the background. The installed copy has its PE subsystem switched to GUI so it never shows a console window. `installer/install.ps1` and `setup.cmd` were removed. Verified live on the development PC with a temporary profile: installed files present, subsystem 2, background connector running with no window, the self-extractor launches `PesoWiseTally.exe setup` as its only child. Unit tests added (`setup.test.ts`). **Not a guarantee:** an unsigned exe can still be flagged; the lasting fix is a code-signing certificate plus a Microsoft false-positive submission (see Part C). Installer SHA-256 (1.2.5): FCAE26276DF40CD7475C28BD3B16CF64519113DF72BCC2FCBDFF241EB4FBC75C. |
 | 2026-10-22 | **Installer code signing hook.** The 1.2.5 installer (no PowerShell) is still blocked as "virus or potentially unwanted software" on some PCs (reported from a second PC): an unsigned installer has no reputation, so antivirus cloud checks block it, and only a code-signing certificate fixes that for good. `connector/pwtally/scripts/build-installer.mjs` now signs the installer when `PWT_SIGN_PFX` (path to the .pfx) and `PWT_SIGN_PASSWORD` are set (optional `PWT_SIGN_TIMESTAMP`, default DigiCert); without them it prints that it is unsigned. Tested with a throw-away self-signed certificate (signature applied, then rebuilt unsigned). Next steps for the owner: obtain a code-signing certificate (an EV certificate or Microsoft Trusted Signing gives immediate SmartScreen trust), sign, and submit the signed file to Microsoft as a false positive at microsoft.com/wdsi/filesubmission. Until then a PC can allow the file in Windows Security (Protection history) or exclude the Downloads/install folder. |
+| 2026-10-22 | **The payment voucher type is now simply "PesoWise Payment" (the built-in default).** The organisation setting had been saved as "PESO Wise Payment"; it was set back to the default in the database, and the guide uses the default name everywhere. Whenever a company is connected, the connector creates a voucher type with this name in that company automatically (active, Payment type, automatic numbering) within a minute; Sync from Tally reads exactly that type. A company that still has the older "PESO Wise Payment" type keeps it (unused); payments already imported stay credited. |
+| 2026-10-22 | **PART I added: edited expenses are corrected in Tally automatically.** An already-synced expense whose amount, month, employee or category changes is corrected in Tally (old posting deleted / reduced / reversed by the existing deletion engine) and then posted again with its new values by an automatic job limited to the edited expenses. Trigger + queue + comparison in the planner + heartbeat-driven job; no connector update needed. Migration `20261022100000_pwt_edit_sync.sql` (not yet applied). Verified against the real stored data read-only: 0 false edits over 12,601 expenses. Tab renamed Corrections. See Part I. |

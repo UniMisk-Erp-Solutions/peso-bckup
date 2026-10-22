@@ -7,7 +7,7 @@ import { buildJobPlanFromNormalized, mergeNormalized, normalizeRows, type Normal
 import { COMPACT_KEYS } from "./compact.ts";
 import { fetchReportRowsSlice, FRESH_FETCH, type FetchResume, type Rpc } from "./fetchRows.ts";
 import { DEFAULT_PWT_CONFIG, withNaRule } from "./config.ts";
-import type { PosterState, PwtAccountingConfig, PwtReportType } from "./types.ts";
+import type { PostedInfo, PosterState, PwtAccountingConfig, PwtReportType } from "./types.ts";
 import { rowContentHash } from "./prepare.ts";
 
 type Row = Record<string, unknown>;
@@ -160,7 +160,10 @@ async function planAndComplete(deps: SliceDeps, job: Row, worker: string, chunks
     if (error) throw new Error(error.message);
     for (const p of (data ?? []) as PackedNormalized[]) parts.push(unpackNormalized(p));
   }
-  const norm = mergeNormalized(parts);
+  let norm = mergeNormalized(parts);
+  // An automatic edit job looks at ONLY the expenses that changed (never posts unrelated new expenses on its own).
+  const only = (job.parameters as Row | null | undefined)?.only_source_ids;
+  if (Array.isArray(only) && only.length) norm = onlyThese(norm, new Set(only.map(String)));
   const cfg: PwtAccountingConfig = withNaRule({ ...DEFAULT_PWT_CONFIG, ...((await deps.mappingConfig(org)) ?? {}) });
 
   // Registry conflict (another job reserved the same expense for this company between read and reserve) => re-plan once.
@@ -172,16 +175,23 @@ async function planAndComplete(deps: SliceDeps, job: Row, worker: string, chunks
     }, norm);
     const { error } = await rpc("pwt_complete_prep_v1", {
       p_job_id: job.id, p_worker: worker, p_batches: plan.batches, p_reservations: plan.reservations,
-      p_vouchers: plan.vouchers, p_summary: { ...plan.summary, config: cfg },
+      p_vouchers: plan.vouchers, p_summary: { ...plan.summary, config: cfg }, p_edits: plan.edits,
     });
     if (!error) return;
     if (attempt >= 1 || !/duplicate key|23505/i.test(error.message)) throw new Error(error.message);
   }
 }
 
+/** Keep only the postings whose source id is in the set (the view rows are display-only and kept as they are). */
+function onlyThese(n: NormalizedRows, ids: ReadonlySet<string>): NormalizedRows {
+  const post = n.post.filter((t) => ids.has(t.sourceId));
+  return { ...n, post, view: n.view === n.post ? post : n.view.filter((t) => ids.has(t.sourceId)), rowCount: post.length };
+}
+
 async function registryState(rpc: Rpc, org: string, company: string, report: PwtReportType, norm: NormalizedRows): Promise<PosterState> {
   const ids: string[] = report === "detailed_expense" || report === "claim_approval" ? norm.post.map((t) => t.sourceId) : [];
   const posted: Record<string, number> = {};
+  const info: Record<string, PostedInfo> = {};
   let counts: Record<string, number> = {};
   const parts: string[][] = [];
   for (let i = 0; i < ids.length; i += 2000) parts.push(ids.slice(i, i + 2000));
@@ -190,7 +200,8 @@ async function registryState(rpc: Rpc, org: string, company: string, report: Pwt
     const { data, error } = await rpc("pwt_registry_state_v1", { p_org: org, p_tally_company: company, p_source_ids: part });
     if (error) throw new Error(error.message);
     Object.assign(posted, (data as Row).posted as Record<string, number>);
+    Object.assign(info, ((data as Row).info ?? {}) as Record<string, PostedInfo>);
     counts = (data as Row).voucher_counts as Record<string, number>;
   }
-  return { postedSourceIds: new Set(Object.keys(posted)), voucherCounts: counts, postedAmounts: posted };
+  return { postedSourceIds: new Set(Object.keys(posted)), voucherCounts: counts, postedAmounts: posted, postedInfo: info };
 }

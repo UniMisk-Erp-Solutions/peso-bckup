@@ -19,6 +19,8 @@ export interface PwtDeletion {
   attempts: number;
   error: string | null;
   detected_via: string;
+  /** why the Tally entry is corrected: the expense was deleted, or edited after it was synced */
+  reason?: "deleted" | "edited";
   created_at: string;
   completed_at: string | null;
 }
@@ -40,10 +42,11 @@ export const PWT_DELETION_ACTION_LABEL: Record<PwtDeletionAction, string> = {
 
 /** One plain-language line for a correction. */
 export function describeDeletion(d: PwtDeletion): string {
-  const what = `${d.transaction_number ? `Expense ${d.transaction_number}` : "Expense"} · ${d.amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })} · voucher ${d.voucher_number}`;
+  const kind = d.reason === "edited" ? "Edited expense" : "Expense";
+  const what = `${d.transaction_number ? `${kind} ${d.transaction_number}` : kind} · ${d.amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })} · voucher ${d.voucher_number}`;
   switch (d.status) {
     case "completed":
-      return `${what} — ${d.action ? PWT_DELETION_ACTION_LABEL[d.action] : "corrected"}.`;
+      return `${what} — ${d.action ? PWT_DELETION_ACTION_LABEL[d.action] : "corrected"}${d.reason === "edited" ? "; the new version is posted next" : ""}.`;
     case "blocked":
       return `${what} — not changed in Tally: ${d.error ?? "needs a manual check"}`;
     case "queued":

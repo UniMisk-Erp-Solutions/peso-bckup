@@ -6,6 +6,33 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsPreflightResponse, jsonResponse } from "../_shared/cors.ts";
 import { sha256Hex } from "../_shared/pwt/index.ts";
 
+declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void };
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Automatic edit sync: when synced expenses were edited, the database hands out ONE automatic job that looks only at those expenses;
+ * this runs its short preparation slices (the page does the same for a manual sync). Runs in the background of the heartbeat.
+ */
+// deno-lint-ignore no-explicit-any
+async function driveEditJob(svc: any, connectorId: string): Promise<void> {
+  const { data } = await svc.rpc("pwt_edit_job_v1", { p_connector: connectorId });
+  const jobId = (data as { job_id?: string } | null)?.job_id;
+  if (!jobId) return;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  for (let i = 0; i < 6; i++) {
+    const res = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/pwt-run-job`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, apikey: key, "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: jobId }),
+    });
+    let r: { claimed?: boolean; done?: boolean; error?: string } = {};
+    try { r = await res.json(); } catch { /* ignore */ }
+    if (!res.ok || r.done || r.error) return;
+    if (!r.claimed) await sleep(1500);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse();
   if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
@@ -52,6 +79,8 @@ Deno.serve(async (req) => {
       });
       // The exact name of the payment voucher type used by "Sync from Tally" (organisation setting), so the connector can create it in Tally.
       const { data: st } = await svc.from("pwt_inbound_settings").select("voucher_type").eq("organization_id", c.organization_id).maybeSingle();
+      const work = driveEditJob(svc, c.id).catch((e) => console.error("pwt edit job", e));
+      if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) EdgeRuntime.waitUntil(work);
       return jsonResponse({ ok: true, paired_company: c.tally_company, voucher_type: st?.voucher_type ?? "PesoWise Payment" });
     }
     case "claim": {

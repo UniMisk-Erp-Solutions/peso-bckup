@@ -105,7 +105,8 @@ export type PwtIssueCode =
   | "BAD_ROW"
   | "NOT_APPROVED"
   | "ALREADY_POSTED"
-  | "AMOUNT_MISMATCH";
+  | "AMOUNT_MISMATCH"
+  | "EDITED_AFTER_POSTING";
 
 export interface PwtIssue {
   code: PwtIssueCode;
@@ -143,7 +144,27 @@ export interface AggregationResult {
   expenseLedgers: string[];
   postedSourceIds: string[];
   /** Per-expense posting facts for the registry reservation. */
-  postings: { sourceId: string; amount: number; contentHash: string; voucherNumber: string; voucherDate: string; serial: number; employeeLedger: string; expenseLedger: string }[];
+  postings: { sourceId: string; amount: number; contentHash: string; voucherNumber: string; voucherDate: string; serial: number; employeeLedger: string; expenseLedger: string; expenseType: string }[];
+  /** Already-posted expenses whose amount, month, employee or category changed since they were posted (each is corrected in Tally, then re-posted). */
+  edits: PostedEdit[];
+}
+
+/** What the registry recorded when an expense was posted (mapping-independent facts only). */
+export interface PostedInfo {
+  amount: number;
+  /** yyyy-mm of the voucher date */
+  month: string;
+  /** employee code (the part after the last "-" of the employee ledger name) */
+  code: string | null;
+  /** the PesoWise expense type; null for expenses posted before it was recorded */
+  type: string | null;
+}
+
+export interface PostedEdit {
+  sourceId: string;
+  changed: ("amount" | "date" | "employee" | "category")[];
+  was: PostedInfo;
+  now: { amount: number; month: string | null; code: string | null; type: string };
 }
 
 export interface PosterState {
@@ -153,4 +174,6 @@ export interface PosterState {
   voucherCounts: Readonly<Record<string, number>>;
   /** Amounts previously posted by sourceId, for mismatch detection. */
   postedAmounts?: Readonly<Record<string, number>>;
+  /** What was posted per sourceId (amount, month, employee code, type), to detect edits made after posting. */
+  postedInfo?: Readonly<Record<string, PostedInfo>>;
 }

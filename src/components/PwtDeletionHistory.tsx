@@ -40,9 +40,9 @@ export function PwtDeletionHistory({ organizationId }: { organizationId: string 
   return (
     <Card data-testid="pwt-deletion-history">
       <CardHeader>
-        <CardTitle>Deleted-expense corrections</CardTitle>
+        <CardTitle>Corrections in Tally</CardTitle>
         <CardDescription>
-          When an expense that was already synced to Tally is deleted in PesoWise, the matching accounting entry is corrected in Tally automatically.
+          When an expense that was already synced to Tally is deleted or edited in PesoWise, the matching accounting entry is corrected in Tally automatically (an edited expense is then posted again with its new values).
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -60,7 +60,7 @@ export function PwtDeletionHistory({ organizationId }: { organizationId: string 
               )}
             </li>
           ))}
-          {!rows.length && !error && <li className="text-muted-foreground">No deletions have needed a correction.</li>}
+          {!rows.length && !error && <li className="text-muted-foreground">Nothing has needed a correction.</li>}
         </ul>
       </CardContent>
     </Card>

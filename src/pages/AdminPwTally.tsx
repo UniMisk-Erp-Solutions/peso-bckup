@@ -253,7 +253,7 @@ export default function AdminPwTally() {
       <Tabs defaultValue="history">
         <TabsList>
           <TabsTrigger value="history">History</TabsTrigger>
-          <TabsTrigger value="deletions">Deleted expenses</TabsTrigger>
+          <TabsTrigger value="deletions">Corrections</TabsTrigger>
           <TabsTrigger value="mapping">Ledger mapping</TabsTrigger>
         </TabsList>
 

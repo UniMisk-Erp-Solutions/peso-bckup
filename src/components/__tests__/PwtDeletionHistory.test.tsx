@@ -23,6 +23,7 @@ describe("describeDeletion", () => {
     expect(describeDeletion(d())).toMatch(/TXN-7.*100\.00.*PESO\/08\/02.*Voucher deleted/);
     expect(describeDeletion(d({ action: "alter_voucher" }))).toMatch(/Amount removed from voucher/);
     expect(describeDeletion(d({ status: "blocked", action: null, error: "changed outside PesoWise" }))).toMatch(/not changed in Tally: changed outside PesoWise/);
+    expect(describeDeletion(d({ reason: "edited", action: "alter_voucher" }))).toMatch(/Edited expense TXN-7.*Amount removed from voucher; the new version is posted next/);
     expect(describeDeletion(d({ status: "queued", action: null }))).toMatch(/waiting for the connector/);
   });
 });
@@ -32,7 +33,7 @@ describe("PwtDeletionHistory", () => {
 
   it("shows corrections with their status, and an empty state", async () => {
     render(<PwtDeletionHistory organizationId="o" />);
-    await waitFor(() => expect(screen.getByText(/No deletions have needed a correction/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Nothing has needed a correction/)).toBeTruthy());
     rows.current = [d(), d({ id: "j2", status: "queued", action: null })];
     fireEvent.click(document.body);
     render(<PwtDeletionHistory organizationId="o" />);

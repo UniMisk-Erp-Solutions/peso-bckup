@@ -56,10 +56,10 @@ describe("fetchReportRowsSlice (resumable page walk)", () => {
 });
 
 /** In-memory stand-in for the database side of one job. */
-function fakeBackend(total: number, pageSize = 250) {
+function fakeBackend(total: number, pageSize = 250, opt: { parameters?: Row; posted?: Row; info?: Row } = {}) {
   const calls: string[] = [];
   const job: Row = {
-    id: "job-1", organization_id: ORG, report_type: "claim_approval", parameters: {}, tally_company: "Co", status: "queued",
+    id: "job-1", organization_id: ORG, report_type: "claim_approval", parameters: opt.parameters ?? {}, tally_company: "Co", status: "queued",
     created_at: "2026-10-19T10:00:00Z", prep_phase: "read", prep_state: null, prep_seq: 0,
   };
   const rows = new Map<number, Row>();
@@ -106,7 +106,7 @@ function fakeBackend(total: number, pageSize = 250) {
           }
           return { data: out, error: null };
         }
-        case "pwt_registry_state_v1": return { data: { posted: {}, voucher_counts: {} }, error: null };
+        case "pwt_registry_state_v1": return { data: { posted: opt.posted ?? {}, info: opt.info ?? {}, voucher_counts: {} }, error: null };
         case "pwt_complete_prep_v1": completed = args as Row; job.status = "delivering"; leased = false; return { data: { batches: 1 }, error: null };
         case "pwt_fail_job_v1": job.status = "failed"; job.error = args.p_error; return { data: null, error: null };
         default: return report(name, args);
@@ -161,5 +161,31 @@ describe("runPrepSlice (sliced job preparation)", () => {
     await expect(runPrepSlice(b.deps, "job-1", 0)).rejects.toThrow(/disk full/);
     expect(b.job.status).toBe("failed");
     expect(String(b.job.error)).toMatch(/disk full/);
+  });
+});
+
+describe("automatic edit job (only the expenses it was given)", () => {
+  const id = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+  const sid = (i: number) => `${ORG}:expense:${id(i)}`;
+  it("looks at only the listed expenses, reports an edit for a changed posted one and passes it on", async () => {
+    // expense 1 was posted as 100 (now 101 in the report: edited); expense 2 is listed but unchanged; expense 3 is NOT listed
+    const posted = { [sid(1)]: 100, [sid(2)]: 102 };
+    const info = {
+      [sid(1)]: { amount: 100, month: "2026-08", code: "1001", type: "Food" },
+      [sid(2)]: { amount: 102, month: "2026-08", code: "1002", type: "Food" },
+    };
+    const b = fakeBackend(3, 250, { parameters: { auto: true, only_source_ids: [sid(1), sid(2)] }, posted, info });
+    for (let i = 0; i < 20; i++) if ((await runPrepSlice(b.deps, "job-1", 0)).done) break;
+    const done = b.done()!;
+    expect((done.p_edits as Row[]).map((e) => e.source_id)).toEqual([sid(1)]);
+    expect(((done.p_edits as Row[])[0].changed as string[])).toEqual(["amount"]);
+    expect((done.p_reservations as Row[])).toEqual([]);                          // expense 3 (not listed) was not posted by this automatic job
+    expect((done.p_summary as Row).row_count).toBe(2);
+  });
+  it("a normal job (no list) still looks at everything", async () => {
+    const b = fakeBackend(3, 250, {});
+    for (let i = 0; i < 20; i++) if ((await runPrepSlice(b.deps, "job-1", 0)).done) break;
+    expect((b.done()!.p_reservations as Row[]).length).toBe(3);
+    expect(b.done()!.p_edits).toEqual([]);
   });
 });

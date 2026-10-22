@@ -1,6 +1,6 @@
 import type {
   AggregationResult, CanonicalTxn, ExpenseCategoryRule, ImportRow, PlannedVoucher,
-  PosterState, PwtAccountingConfig, PwtIssue,
+  PosterState, PostedEdit, PostedInfo, PwtAccountingConfig, PwtIssue,
 } from "./types.ts";
 import { monthEnd, monthStart, norm, round2 } from "./util.ts";
 
@@ -39,8 +39,9 @@ export function planPosting(
   opts: { view?: boolean } = {},
 ): AggregationResult {
   const issues: PwtIssue[] = [];
+  const edits: PostedEdit[] = [];
   const seen = new Map<string, CanonicalTxn>();
-  type Bucket = { date: string; rule: ExpenseCategoryRule; ledger: string; total: number; ids: string[]; items: { sourceId: string; amount: number; contentHash: string }[] };
+  type Bucket = { date: string; rule: ExpenseCategoryRule; ledger: string; total: number; ids: string[]; items: { sourceId: string; amount: number; contentHash: string; expenseType: string }[] };
   const buckets = new Map<string, Bucket>();
 
   for (const t of txns) {
@@ -63,6 +64,19 @@ export function planPosting(
     seen.set(t.sourceId, t);
 
     if (state.postedSourceIds.has(t.sourceId)) {
+      const info = state.postedInfo?.[t.sourceId];
+      if (info && !opts.view) {
+        const changed = changedAfterPosting(info, t);
+        if (changed.length) {
+          edits.push({
+            sourceId: t.sourceId, changed, was: info,
+            now: { amount: round2(t.amount), month: t.billDate ? t.billDate.slice(0, 7) : null, code: t.employeeId ? String(t.employeeId) : null, type: t.expenseType },
+          });
+          issues.push({ code: "EDITED_AFTER_POSTING", sourceId: t.sourceId, blocking: false,
+            detail: `edited after posting (${changed.join(", ")}); the old posting is corrected in Tally and the new version is posted` });
+          continue;
+        }
+      }
       const was = state.postedAmounts?.[t.sourceId];
       if (was !== undefined && round2(was) !== round2(t.amount)) {
         issues.push({ code: "AMOUNT_MISMATCH", sourceId: t.sourceId, blocking: false,
@@ -98,7 +112,7 @@ export function planPosting(
     const b = buckets.get(bk) ?? { date, rule, ledger, total: 0, ids: [], items: [] };
     b.total = round2(b.total + t.amount);
     b.ids.push(t.sourceId);
-    b.items.push({ sourceId: t.sourceId, amount: t.amount, contentHash: t.contentHash });
+    b.items.push({ sourceId: t.sourceId, amount: t.amount, contentHash: t.contentHash, expenseType: t.expenseType });
     buckets.set(bk, b);
   }
 
@@ -141,7 +155,21 @@ export function planPosting(
     expenseLedgers: [...new Set(rows.map((r) => r.expenseLedger))].sort(),
     postedSourceIds: rows.flatMap((r) => r.sourceIds),
     postings,
+    edits,
   };
+}
+
+/**
+ * What changed in an already-posted expense. Only facts that do NOT depend on the ledger mapping or the voucher-date setting are compared,
+ * so editing the mapping never looks like an edit of every expense: amount, month, employee code and expense type (when it was recorded).
+ */
+export function changedAfterPosting(info: PostedInfo, t: Pick<CanonicalTxn, "amount" | "billDate" | "employeeId" | "expenseType">): PostedEdit["changed"] {
+  const out: PostedEdit["changed"] = [];
+  if (Number.isFinite(t.amount) && round2(info.amount) !== round2(t.amount)) out.push("amount");
+  if (t.billDate && info.month && t.billDate.slice(0, 7) !== info.month) out.push("date");
+  if (info.code && t.employeeId && String(t.employeeId) !== info.code) out.push("employee");
+  if (info.type && t.expenseType && norm(info.type) !== norm(t.expenseType)) out.push("category");
+  return out;
 }
 
 export function voucherNumber(cfg: PwtAccountingConfig, date: string, serial: number, state: PosterState): string {

@@ -443,3 +443,59 @@ describe("Other-category spelling variants", () => {
     expect(planPosting(own, await txns([detailed({ expense_id: "d", category: "" })]), EMPTY).rows[0].expenseLedger).toBe("My Misc");
   });
 });
+
+describe("expenses edited after they were posted", () => {
+  const sid = `${ORG}:expense:e1`;
+  const info = { amount: 140, month: "2026-08", code: "1001", type: "Travelling (Public and Private Transport)" };
+  const stateWith = (i: typeof info | null): PosterState => ({
+    postedSourceIds: new Set([sid]), voucherCounts: {}, postedAmounts: { [sid]: 140 }, ...(i ? { postedInfo: { [sid]: i } } : {}),
+  });
+  const plan = async (over: Record<string, unknown>, i: typeof info | null = info, cfg = DEFAULT_PWT_CONFIG) =>
+    planPosting(cfg, await txns([detailed(over)]), stateWith(i));
+
+  it("an unchanged expense stays 'already posted'", async () => {
+    const r = await plan({});
+    expect(r.edits).toEqual([]);
+    expect(r.issues.map((x) => x.code)).toEqual(["ALREADY_POSTED"]);
+  });
+  it("a changed amount, month, employee or category is an edit (and is not posted again by this plan)", async () => {
+    const cases: [Record<string, unknown>, string][] = [
+      [{ debit: 150 }, "amount"],
+      [{ effective_date: "2026-09-03" }, "date"],
+      [{ employee_code: "2002", employee_name: "Someone Else" }, "employee"],
+      [{ category: "Food" }, "category"],
+    ];
+    for (const [over, what] of cases) {
+      const r = await plan(over);
+      expect(r.edits.map((e) => e.changed)).toEqual([[what]]);
+      expect(r.issues.map((x) => x.code)).toEqual(["EDITED_AFTER_POSTING"]);
+      expect(r.postings).toEqual([]);
+      expect(r.vouchers).toEqual([]);
+    }
+  });
+  it("several changes are listed together", async () => {
+    const r = await plan({ debit: 99, effective_date: "2026-10-01" });
+    expect(r.edits[0].changed).toEqual(["amount", "date"]);
+    expect(r.edits[0].was.amount).toBe(140);
+    expect(r.edits[0].now).toMatchObject({ amount: 99, month: "2026-10", code: "1001" });
+  });
+  it("changing the LEDGER MAPPING or the voucher-date setting is never an edit of every expense", async () => {
+    const remapped = { ...DEFAULT_PWT_CONFIG, categories: DEFAULT_PWT_CONFIG.categories.map((c) => ({ ...c, expenseLedger: "Something New", serial: c.serial + 20 })), postingDatePolicy: "month_start" as const };
+    const r = await plan({}, info, remapped);
+    expect(r.edits).toEqual([]);
+  });
+  it("an expense posted before the type was recorded: amount, month and employee edits are detected, the category is not compared", async () => {
+    const noType = { ...info, type: null as unknown as string };
+    expect((await plan({ category: "Food" }, noType)).edits).toEqual([]);
+    expect((await plan({ debit: 150 }, noType)).edits.map((e) => e.changed)).toEqual([["amount"]]);
+  });
+  it("without recorded facts it behaves as before (amount mismatch notice only)", async () => {
+    const r = await plan({ debit: 150 }, null);
+    expect(r.edits).toEqual([]);
+    expect(r.issues.map((x) => x.code)).toEqual(["AMOUNT_MISMATCH"]);
+  });
+  it("new postings carry their expense type for the registry", async () => {
+    const r = planPosting(DEFAULT_PWT_CONFIG, await txns([detailed({})]), EMPTY);
+    expect(r.postings[0].expenseType).toBe("Travelling (Public and Private Transport)");
+  });
+});
