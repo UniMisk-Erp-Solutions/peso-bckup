@@ -303,6 +303,7 @@
 | Date | Notes |
 |---|---|
 | 2026-10-22 | Created as the fresh single reference for the whole Tally integration (written from the verified state of the system on this date). DOC-146 is kept as the detailed engineering log and marked superseded as the main reference. |
+| 2026-10-22 | Inbound fix: "Deleted in Tally" flag only within the same voucher type (migration 20261022160000_pwt_inbound_deleted_same_type.sql); real start-error reason shown in the Sync from Tally dialog. |
 
 ## Index revision log
 
@@ -619,3 +620,4 @@ Use **DOC-113** for the next new document in `Documentations MD/`. DOC-111 [Repo
 | 2026-10-22 | DOC-146: Corrections tab names the Tally company of each correction and what it waits for (migration 20261022140000, applied). Still one document. Next ID: DOC-147. | Agent |
 | 2026-10-22 | **Registered DOC-147: the fresh, complete PesoWise <-> TallyPrime system document.** One reference for features, architecture, setup, the sync, mapping tables for the accountant, automatic delete and edit corrections, Sync from Tally, connector and installer, data model, security, build history, operations and open items. DOC-146 marked superseded (kept as the detailed engineering log). Next ID: DOC-148. | Agent |
 | 2026-10-22 | DOC-147 rev 1.1: connector 1.2.6, the installer never closes silently (error shown and logged, waits for Enter, retries while the file is held, no-argument run = setup). Next ID: DOC-148. | Agent |
+| 2026-10-22 | DOC-147 revised (1.2): Sync from Tally no longer flags payments of another voucher type as deleted after the type is switched; migration 20261022160000 (pending apply); start errors shown plainly. | Agent |

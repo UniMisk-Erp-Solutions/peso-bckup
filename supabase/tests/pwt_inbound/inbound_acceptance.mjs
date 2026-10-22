@@ -26,6 +26,7 @@ for (const f of ["20260819160000_balance_ledger.sql", "20260819162000_balance_im
   "20261016120000_pwt_foundation.sql", "20261017100000_pwt_inbound_payments.sql"]) await db.exec(readFileSync(M + f, "utf8"));
 // idempotent re-run of the new migration
 await db.exec(readFileSync(M + "20261017100000_pwt_inbound_payments.sql", "utf8"));
+await db.exec(readFileSync(M + "20261022160000_pwt_inbound_deleted_same_type.sql", "utf8"));
 
 const ORG = "11111111-1111-1111-1111-111111111111", OTHER_ORG = "99999999-9999-9999-9999-999999999999";
 const ADMIN = "22222222-2222-2222-2222-222222222222", EMPL = "33333333-3333-3333-3333-333333333333";
@@ -223,3 +224,15 @@ await as(EMPL);
 ok("non-admin cannot change the voucher type", /not permitted/.test(await bad("select public.pwt_inbound_set_voucher_type_v1($1,$2)", [ORG, "X"])));
 await as(ADMIN);
 ok("empty voucher type rejected", (await bad("select public.pwt_inbound_set_voucher_type_v1($1,$2)", [ORG, "  "])) !== null);
+
+// ---- Test 8: switching the voucher type must not flag the other type's payments as deleted
+await db.query("select public.pwt_inbound_set_voucher_type_v1($1,$2)", [ORG, "Type A"]);
+const tA = V({ type: "Type A", entries: pay("Amit Test-1001", 11) });
+const a1 = await runSync([tA]);
+ok("T8 payment of type A imported", a1.job.imported_count === 1);
+await db.query("select public.pwt_inbound_set_voucher_type_v1($1,$2)", [ORG, "Type B"]);
+const b1 = await runSync([]);          // Tally returns nothing of type B
+ok("T8 switching type does not flag type A payment as deleted", b1.job.flagged_count === 0 && (await one("select state from public.pwt_inbound_payments where voucher_guid=$1", [tA.guid])).state === "imported");
+await db.query("select public.pwt_inbound_set_voucher_type_v1($1,$2)", [ORG, "Type A"]);
+const a2 = await runSync([]);          // same type, voucher really gone
+ok("T8 same type and voucher gone: still flagged", a2.job.flagged_count === 1);
