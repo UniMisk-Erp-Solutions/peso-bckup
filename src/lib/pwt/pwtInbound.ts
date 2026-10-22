@@ -87,9 +87,25 @@ type RpcResult<T> = Promise<{ data: T | null; error: { message: string } | null 
 const rpc = <T,>(name: string, args: Record<string, unknown>): RpcResult<T> =>
   (supabase as unknown as { rpc: (n: string, a: Record<string, unknown>) => RpcResult<T> }).rpc(name, args);
 
+/** The edge function explains a refusal in its response body; the client only says "non-2xx", so read the body. */
+async function readFunctionError(error: { message?: string; context?: unknown }): Promise<string> {
+  try {
+    const res = error.context as Response | undefined;
+    if (res && typeof res.json === "function") {
+      const body = (await res.json()) as { error?: string };
+      if (body?.error) {
+        return /no Tally connector is paired/i.test(body.error)
+          ? "No Tally connector is paired for this organisation. Pair one (Admin > Tally) and keep that company open in TallyPrime."
+          : body.error;
+      }
+    }
+  } catch { /* fall back to the generic message */ }
+  return error.message ?? "";
+}
+
 export async function startInboundSync(organizationId: string): Promise<{ jobId: string; deduplicated: boolean }> {
   const { data, error } = await supabase.functions.invoke("pwt-inbound", { body: { action: "start", organization_id: organizationId } });
-  if (error) throw new Error(error.message || "Unable to start Sync from Tally");
+  if (error) throw new Error((await readFunctionError(error)) || "Unable to start Sync from Tally");
   const p = data as { accepted?: boolean; job_id?: string; deduplicated?: boolean; error?: string } | null;
   if (!p?.accepted || !p.job_id) throw new Error(p?.error ?? "Unable to start Sync from Tally");
   return { jobId: p.job_id, deduplicated: p.deduplicated === true };
