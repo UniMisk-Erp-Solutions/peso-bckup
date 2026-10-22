@@ -269,7 +269,7 @@ On **Balances → Sync from Tally** the connector reads the vouchers of the conf
 
 - **Commands:** `setup` (the installer runs this), `pair`, `run`, `doctor`, `install-startup`, `uninstall-startup`.
 - **What it does while running:** heartbeat (also returns the payment voucher type name and drives automatic edit jobs); claims and delivers batches; applies corrections; creates the payment voucher type; reads payments for Sync from Tally; checks the company period before importing vouchers.
-- **Install (version 1.2.5):** the installer is a self-extracting file that runs `PesoWiseTally.exe setup` directly (no cmd, no PowerShell, no VBScript). It copies the program and the TDL to `%LOCALAPPDATA%\Programs\PesoWiseTally`, asks for the pairing code in its own window, registers a per-user start-at-sign-in entry (no admin rights), starts it, and the installed copy runs with **no console window**.
+- **Install (version 1.2.6):** the installer is a self-extracting file that runs `PesoWiseTally.exe setup` directly (no cmd, no PowerShell, no VBScript). It copies the program and the TDL to `%LOCALAPPDATA%\Programs\PesoWiseTally`, asks for the pairing code in its own window, registers a per-user start-at-sign-in entry (no admin rights), starts it, and the installed copy runs with **no console window**. **The setup window never closes silently:** any failure is shown in plain words, written to `%LOCALAPPDATA%PesoWiseTallyConnectorconnector.log`, and the window waits for Enter. Copying retries for up to 15 seconds while an older connector is still stopping or antivirus is scanning the new file, and double-clicking the program with no arguments runs the setup.
 - **Security of the file:** the installer embeds only the public API address and the publishable key. It is **not code-signed**, so some antivirus products flag it as a false positive. The lasting fix is a code-signing certificate; the build already signs when `PWT_SIGN_PFX` and `PWT_SIGN_PASSWORD` are set.
 
 ---
@@ -366,6 +366,7 @@ Every step was built test-first against **real TallyPrime** (through its XML int
 | "Already imported" on Sync from Tally | The voucher was already imported, **or** it is not of the payment voucher type (plain Payment is ignored). |
 | Correction "Needs attention" | The voucher was changed in Tally by hand or its total differs from what PesoWise recorded; sort it out and press Retry. |
 | Antivirus blocks the installer | Unsigned file; allow it in Windows Security, or sign it (section 10). |
+| The installer window opens and closes at once (old 1.2.5 installer) | The setup failed and the window vanished before the reason could be read. Download the 1.2.6 installer: it keeps the window open, shows the reason, and logs it. If it still ends at once with no window, the antivirus is removing the file: check Windows Security → Protection history and allow it. |
 
 ### Tests
 
@@ -426,4 +427,5 @@ supabase/tests/pwt_deletion/              database acceptance tests
 
 | Date | Revision | Author | Notes |
 |------|----------|--------|-------|
+| 2026-10-22 | 1.1 | Agent | Connector 1.2.6: installer never closes silently (error shown, logged, waits for Enter), retries while the file is held, no-argument run = setup; troubleshooting row added. |
 | 2026-10-22 | 1.0 | Agent | Fresh single document: features, architecture, setup, sync, calculation, mapping, automatic corrections (delete and edit), Sync from Tally, connector and installer, data model, build history, operations, status and open items. |

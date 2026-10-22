@@ -85,3 +85,26 @@ describe("setup flow (no PowerShell)", () => {
     expect(existsSync(join(dir, "dest", "PesoWiseTally.exe"))).toBe(true);
   });
 });
+
+import { runSetupSafe, writeWithRetry } from "../setup.ts";
+describe("setup never closes silently", () => {
+  it("retries while another program holds the file (an old connector still stopping, antivirus scanning)", async () => {
+    let n = 0;
+    await writeWithRetry("x", Buffer.from("a"), 5, 0, () => { n += 1; if (n < 3) throw Object.assign(new Error("busy"), { code: "EBUSY" }); });
+    expect(n).toBe(3);
+  });
+  it("gives up on a different error, or after too many tries", async () => {
+    await expect(writeWithRetry("x", Buffer.from("a"), 5, 0, () => { throw Object.assign(new Error("no"), { code: "ENOENT" }); })).rejects.toThrow("no");
+    let n = 0;
+    await expect(writeWithRetry("x", Buffer.from("a"), 3, 0, () => { n += 1; throw Object.assign(new Error("busy"), { code: "EBUSY" }); })).rejects.toThrow("busy");
+    expect(n).toBe(3);
+  });
+  it("reports a failure in plain words instead of throwing", async () => {
+    const { d, said } = deps({ selfExe: join(tmpdir(), "does-not-exist.exe") });
+    const seen: string[] = [];
+    expect(await runSetupSafe(d, (e) => seen.push(e.message))).toBe(1);
+    expect(said.join("\n")).toContain("Setup could not finish.");
+    expect(said.join("\n")).toContain("Reason:");
+    expect(seen).toHaveLength(1);
+  });
+});

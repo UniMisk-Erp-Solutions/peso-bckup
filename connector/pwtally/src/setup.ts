@@ -5,7 +5,7 @@
  * The installed copy is switched to the Windows "GUI" subsystem so it never opens a console window.
  */
 import { execFileSync, spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 
@@ -43,6 +43,35 @@ export interface SetupDeps {
   waitMs?: number;
 }
 
+/** Writes a file, retrying while another program holds it (an old connector still shutting down, or antivirus scanning the new file). */
+export async function writeWithRetry(path: string, data: Buffer, attempts = 15, delayMs = 1000, write: (p: string, b: Buffer) => void = writeFileSync): Promise<void> {
+  for (let i = 1; ; i++) {
+    try {
+      write(path, data);
+      return;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (i >= attempts || !["EBUSY", "EPERM", "EACCES", "ETXTBSY"].includes(code ?? "")) throw e;
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+}
+
+/** runSetup that never throws: any failure is reported in plain words and the caller can keep the window open. */
+export async function runSetupSafe(d: SetupDeps, onError: (e: Error) => void = () => undefined): Promise<number> {
+  try {
+    return await runSetup(d);
+  } catch (e) {
+    const err = e instanceof Error ? e : new Error(String(e));
+    onError(err);
+    d.say("");
+    d.say("Setup could not finish.");
+    d.say(`Reason: ${err.message}`);
+    d.say("Close any older PesoWise Tally program (Task Manager), check that your antivirus did not remove the file, then run this setup again.");
+    return 1;
+  }
+}
+
 export async function runSetup(d: SetupDeps): Promise<number> {
   d.say("PesoWise Tally Setup");
   d.say("--------------------");
@@ -50,8 +79,8 @@ export async function runSetup(d: SetupDeps): Promise<number> {
   d.stopOthers();
   mkdirSync(d.destDir, { recursive: true });
   const installed = join(d.destDir, "PesoWiseTally.exe");
-  writeFileSync(installed, toGuiSubsystem(readFileSync(d.selfExe)));
-  if (existsSync(d.tdlSource)) copyFileSync(d.tdlSource, join(d.destDir, "PesoWise-Tally.tdl"));
+  await writeWithRetry(installed, toGuiSubsystem(readFileSync(d.selfExe)));
+  if (existsSync(d.tdlSource)) await writeWithRetry(join(d.destDir, "PesoWise-Tally.tdl"), readFileSync(d.tdlSource));
   d.say(`Installed to ${d.destDir}`);
 
   // 2) pair

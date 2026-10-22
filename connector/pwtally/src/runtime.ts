@@ -16,7 +16,7 @@ export interface ConnectorConfig {
   pollSeconds: number;
 }
 
-export const APP_VERSION = "1.2.5";
+export const APP_VERSION = "1.2.6";
 
 export function dataDir(): string {
   const base = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");

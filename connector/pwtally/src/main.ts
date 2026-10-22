@@ -14,7 +14,7 @@ import { Api, APP_VERSION, dataDir, loadConfig, log, saveConfig, tallyHttp, type
 import { runInboundJob, type InboundJob } from "./inbound.ts";
 import { runDeletionJob, type DeletionJob } from "./deletion.ts";
 import { ensurePaymentVoucherType } from "./voucherType.ts";
-import { realDeps, runSetup } from "./setup.ts";
+import { realDeps, runSetupSafe } from "./setup.ts";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -43,23 +43,34 @@ async function pair() {
 
 /** What the installer runs: install, pair, start. No PowerShell or script host is involved. */
 async function setup() {
-  const base = process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Local");
-  const cfgFile = join(dirname(process.execPath), "setup-config.json");
-  const sc = existsSync(cfgFile) ? (JSON.parse(readFileSync(cfgFile, "utf-8").replace(/^﻿/, "")) as { apiBase: string; apiKey?: string; tallyUrl?: string }) : null;
-  const deps = realDeps({
-    destDir: join(base, "Programs", "PesoWiseTally"),
-    skipPair: process.argv.includes("--no-pair"),
-    isPaired: () => !!loadConfig(),
-    pair: async (code) => {
-      if (!sc?.apiBase) throw new Error("this installer has no server address; download it again from PesoWise");
-      await pairWith(sc.apiBase, sc.apiKey, sc.tallyUrl ?? "http://127.0.0.1:9000", code);
-    },
-    doctor,
-  });
-  const code = await runSetup(deps);
-  if (!process.argv.includes("--no-wait")) {
+  const wait = !process.argv.includes("--no-wait");
+  let code = 1;
+  try {
+    const base = process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Local");
+    const cfgFile = join(dirname(process.execPath), "setup-config.json");
+    const sc = existsSync(cfgFile) ? (JSON.parse(readFileSync(cfgFile, "utf-8").replace(/^﻿/, "")) as { apiBase: string; apiKey?: string; tallyUrl?: string }) : null;
+    const deps = realDeps({
+      destDir: join(base, "Programs", "PesoWiseTally"),
+      skipPair: process.argv.includes("--no-pair"),
+      isPaired: () => !!loadConfig(),
+      pair: async (c) => {
+        if (!sc?.apiBase) throw new Error("this installer has no server address; download it again from PesoWise");
+        await pairWith(sc.apiBase, sc.apiKey, sc.tallyUrl ?? "http://127.0.0.1:9000", c);
+      },
+      doctor,
+    });
+    code = await runSetupSafe(deps, (e) => log(`SETUP FAILED: ${e.message}`));
+  } catch (e) {
+    // anything unexpected (for example an unreadable setup file) is shown, never a window that vanishes
+    const msg = e instanceof Error ? e.message : String(e);
+    try { log(`SETUP FAILED: ${msg}`); } catch { /* ignore */ }
+    console.log(`
+Setup could not start: ${msg}
+Download the installer again from PesoWise and run it.`);
+  }
+  if (wait) {
     process.stdout.write("\nPress Enter to close this window.");
-    await new Promise<void>((r) => { process.stdin.resume(); process.stdin.once("data", () => r()); });
+    await new Promise<void>((r) => { process.stdin.resume(); process.stdin.once("data", () => r()); process.stdin.once("end", () => r()); });
   }
   process.exit(code);
 }
@@ -211,7 +222,8 @@ function uninstallStartup() {
 
 const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
-const cmd = process.argv[2];
+// Double-clicking the program (no arguments) means "install": a window that prints a usage line and closes would look like a crash.
+const cmd = process.argv[2] ?? "setup";
 const table: Record<string, () => Promise<void> | void> = {
   pair, run, doctor, setup, "install-startup": installStartup, "uninstall-startup": uninstallStartup,
 };
