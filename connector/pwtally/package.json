@@ -6,6 +6,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "node scripts/build.mjs",
-    "installer": "node scripts/build-installer.mjs"
+    "installer": "node scripts/build-installer.mjs",
+    "standalone": "node scripts/build-standalone.mjs"
   }
 }

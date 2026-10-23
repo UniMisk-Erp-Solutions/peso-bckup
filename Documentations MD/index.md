@@ -622,3 +622,4 @@ Use **DOC-113** for the next new document in `Documentations MD/`. DOC-111 [Repo
 | 2026-10-22 | DOC-147 rev 1.1: connector 1.2.6, the installer never closes silently (error shown and logged, waits for Enter, retries while the file is held, no-argument run = setup). Next ID: DOC-148. | Agent |
 | 2026-10-22 | DOC-147 revised (1.2): Sync from Tally no longer flags payments of another voucher type as deleted after the type is switched; migration 20261022160000 (pending apply); start errors shown plainly. | Agent |
 | 2026-10-22 | DOC-147 revised (1.3): Sync to Tally control restyled as a card; history list removed from the report screen. | Agent |
+| 2026-10-23 | DOC-147 revised (1.4): single self-contained setup exe replaces the IExpress installer to avoid Defender false positives; unsigned. | Agent |

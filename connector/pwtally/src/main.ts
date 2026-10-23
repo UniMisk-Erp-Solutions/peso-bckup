@@ -16,6 +16,9 @@ import { runDeletionJob, type DeletionJob } from "./deletion.ts";
 import { ensurePaymentVoucherType } from "./voucherType.ts";
 import { realDeps, runSetupSafe } from "./setup.ts";
 
+/** Set by esbuild `define` in the stand-alone build (scripts/build-standalone.mjs); undefined otherwise. */
+declare const PWT_EMBED_CFG: string | undefined;
+
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 ? process.argv[i + 1] : undefined;
@@ -48,7 +51,7 @@ async function setup() {
   try {
     const base = process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Local");
     const cfgFile = join(dirname(process.execPath), "setup-config.json");
-    const sc = existsSync(cfgFile) ? (JSON.parse(readFileSync(cfgFile, "utf-8").replace(/^﻿/, "")) as { apiBase: string; apiKey?: string; tallyUrl?: string }) : null;
+    const sc = typeof PWT_EMBED_CFG !== "undefined" ? (JSON.parse(PWT_EMBED_CFG) as { apiBase: string; apiKey?: string; tallyUrl?: string }) : existsSync(cfgFile) ? (JSON.parse(readFileSync(cfgFile, "utf-8").replace(/^﻿/, "")) as { apiBase: string; apiKey?: string; tallyUrl?: string }) : null;
     const deps = realDeps({
       destDir: join(base, "Programs", "PesoWiseTally"),
       skipPair: process.argv.includes("--no-pair"),

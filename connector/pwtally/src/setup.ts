@@ -22,12 +22,17 @@ export function toGuiSubsystem(exe: Buffer): Buffer {
   return out;
 }
 
+/** Set by esbuild `define` in the stand-alone build (scripts/build-standalone.mjs); undefined otherwise. */
+declare const PWT_EMBED_TDL: string | undefined;
+
 export interface SetupDeps {
   /** where the installed program goes */
   destDir: string;
   /** the running (console) program and the files extracted next to it */
   selfExe: string;
   tdlSource: string;
+  /** TDL text built into a stand-alone download (used instead of a file next to the program) */
+  tdlText?: string;
   /** asks the user; resolves to the typed text */
   ask: (question: string) => Promise<string>;
   say: (line: string) => void;
@@ -80,7 +85,8 @@ export async function runSetup(d: SetupDeps): Promise<number> {
   mkdirSync(d.destDir, { recursive: true });
   const installed = join(d.destDir, "PesoWiseTally.exe");
   await writeWithRetry(installed, toGuiSubsystem(readFileSync(d.selfExe)));
-  if (existsSync(d.tdlSource)) await writeWithRetry(join(d.destDir, "PesoWise-Tally.tdl"), readFileSync(d.tdlSource));
+  if (d.tdlText) await writeWithRetry(join(d.destDir, "PesoWise-Tally.tdl"), Buffer.from(d.tdlText, "utf-8"));
+  else if (existsSync(d.tdlSource)) await writeWithRetry(join(d.destDir, "PesoWise-Tally.tdl"), readFileSync(d.tdlSource));
   d.say(`Installed to ${d.destDir}`);
 
   // 2) pair
@@ -128,6 +134,7 @@ export function realDeps(opts: { destDir: string; pair: (code: string) => Promis
     destDir: opts.destDir,
     selfExe,
     tdlSource: join(dirname(selfExe), "PesoWise-Tally.tdl"),
+    tdlText: typeof PWT_EMBED_TDL !== "undefined" ? PWT_EMBED_TDL : undefined,
     ask: (q) => rl.question(q),
     say: (l) => console.log(l),
     pair: opts.pair,
