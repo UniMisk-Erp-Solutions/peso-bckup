@@ -27,6 +27,7 @@ for (const f of ["20260819160000_balance_ledger.sql", "20260819162000_balance_im
 // idempotent re-run of the new migration
 await db.exec(readFileSync(M + "20261017100000_pwt_inbound_payments.sql", "utf8"));
 await db.exec(readFileSync(M + "20261022160000_pwt_inbound_deleted_same_type.sql", "utf8"));
+await db.exec(readFileSync(M + "20261023100000_pwt_inbound_match_by_code.sql", "utf8"));
 
 const ORG = "11111111-1111-1111-1111-111111111111", OTHER_ORG = "99999999-9999-9999-9999-999999999999";
 const ADMIN = "22222222-2222-2222-2222-222222222222", EMPL = "33333333-3333-3333-3333-333333333333";
@@ -104,7 +105,6 @@ ok("T3 repeat of the multi-employee voucher imports nothing", r3b.job.imported_c
 const before = { a: await bal(E.a), b: await bal(E.b), c: await bal(E.c), o: await bal(E.o), z: await bal(E.z), d1: await bal(E.d1) };
 const bads = [
   V({ entries: pay("Nobody Here-5555", 100) }),                               // unknown employee
-  V({ entries: pay("Amit Wrong Name-1001", 100) }),                           // code exists, name differs
   V({ entries: pay("Other Org Person-2001", 100) }),                          // employee of another organisation
   V({ entries: pay("Zed Inactive-1009", 100) }),                              // inactive member
   V({ entries: pay("Dup One-7777", 100) }),                                   // ambiguous code
@@ -123,11 +123,11 @@ const bads = [
 const r4 = await runSync(bads);
 ok("T4 no balance changed by any invalid voucher", (await bal(E.a)) === before.a && (await bal(E.b)) === before.b && (await bal(E.c)) === before.c && (await bal(E.o)) === before.o && (await bal(E.z)) === before.z && (await bal(E.d1)) === before.d1);
 ok("T4 nothing imported", r4.job.imported_count === 0);
-ok("T4 unmatched/ambiguous reported (5)", r4.job.unmatched_count === 5, `got ${r4.job.unmatched_count}`);
+ok("T4 unmatched/ambiguous reported (4)", r4.job.unmatched_count === 4, `got ${r4.job.unmatched_count}`);
 ok("T4 skipped reported (11)", r4.job.skipped_count === 11, `got ${r4.job.skipped_count}`);
 ok("T4 job needs attention with a problem list", r4.job.status === "needs_attention");
 const probs = (await one("select public.pwt_inbound_job_problems_v1($1,$2) p", [ORG, r4.claim.job_id])).p;
-ok("T4 problems list names the reason", probs.length >= 16 && probs.some((p) => /name does not match/.test(p.reason)) && probs.some((p) => /more than one employee/.test(p.reason)) && probs.some((p) => /cancelled/.test(p.reason)));
+ok("T4 problems list names the reason", probs.length >= 15 && probs.some((p) => /more than one employee/.test(p.reason)) && probs.some((p) => /cancelled/.test(p.reason)));
 ok("T4 refund (Cr on employee) is skipped with a reason, not imported", probs.some((p) => /not balanced or has no debit/.test(p.reason)));
 
 // ---- wrong company / authorisation / incomplete upload
@@ -236,3 +236,12 @@ ok("T8 switching type does not flag type A payment as deleted", b1.job.flagged_c
 await db.query("select public.pwt_inbound_set_voucher_type_v1($1,$2)", [ORG, "Type A"]);
 const a2 = await runSync([]);          // same type, voucher really gone
 ok("T8 same type and voucher gone: still flagged", a2.job.flagged_count === 1);
+
+// ---- Test 9: the employee is identified by the code; a different name text does not matter
+await db.query("select public.pwt_inbound_set_voucher_type_v1($1,$2)", [ORG, "PesoWise Payment"]);
+const beforeA = await bal(E.a);
+const wn = V({ entries: pay("Whatever Typed Manually-1001", 77) });
+const w1 = await runSync([wn]);
+ok("T9 right code + different name text credits that employee", w1.job.imported_count === 1 && (await bal(E.a)) === beforeA + 77);
+const w2 = await runSync([V({ entries: pay("Whatever Typed Manually-5555", 10) })]);
+ok("T9 unknown code is still refused", w2.job.imported_count === 0 && w2.job.unmatched_count === 1);
