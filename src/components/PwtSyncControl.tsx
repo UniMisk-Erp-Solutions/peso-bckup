@@ -120,6 +120,7 @@ export function PwtSyncGroup({ organizationId, disabled = false, params, childre
   const button = (
     <Button
       type="button"
+      className="bg-emerald-600 text-white hover:bg-emerald-700"
       onClick={() => void start()}
       disabled={disabled || starting || active || !organizationId || !report}
       data-testid="sync-to-tally"

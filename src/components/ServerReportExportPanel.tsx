@@ -6,6 +6,7 @@
  * status row, and downloads the finished file straight from Storage via a
  * signed URL, so even a multi-megabyte export never passes through a JS buffer.
  */
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Download, Loader2, AlertCircle, FileSpreadsheet, RotateCw, History, ChevronLeft, ChevronRight, Table as TableIcon,
@@ -363,6 +364,9 @@ export function ServerReportExportPanel({
   const [job, setJob] = useState<ExportJob | null>(null);
   const [starting, setStarting] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  // The Sync to Tally button is shown beside the filters' Clear button when that slot exists on the page (Reports > Detailed Expense).
+  const [syncSlot, setSyncSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => { setSyncSlot(document.getElementById("pwt-sync-slot")); }, []);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<ExportHistoryEntry[]>([]);
   const [historyTotal, setHistoryTotal] = useState(0);
@@ -816,7 +820,8 @@ export function ServerReportExportPanel({
           >
             {({ button, status }) => (
               <>
-                {actionRow(button)}
+                {actionRow(syncSlot ? null : button)}
+                {syncSlot ? createPortal(button, syncSlot) : null}
                 {status}
               </>
             )}

@@ -2232,10 +2232,12 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                   <p className="text-xs text-muted-foreground">Loading custom field options…</p>
                 )}
 
-                <div className="flex gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2 pt-1">
                   <Button variant="outline" onClick={clearFilters}>
                     Clear
                   </Button>
+                  {/* The "Sync to Tally" button of the report panel below is shown here (see ServerReportExportPanel). */}
+                  <span id="pwt-sync-slot" className="contents" />
                 </div>
               </div>
 
