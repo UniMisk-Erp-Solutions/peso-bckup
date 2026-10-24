@@ -38,6 +38,7 @@ import { createImportBatch, insertImportRows, type StagedImportRow } from "@/ser
 import { ImportBalancesDialog } from "@/components/balances/ImportBalancesDialog";
 import { ImportHistoryDialog } from "@/components/balances/ImportHistoryDialog";
 import { SyncFromTallyDialog } from "@/components/balances/SyncFromTallyDialog";
+import { TallyHistoryDialog } from "@/components/balances/TallyHistoryDialog";
 import { BalanceCreditHistory } from "@/components/balances/BalanceCreditHistory";
 
 /** Employee payments entered in TallyPrime -> balances. Shown only when the Tally integration is enabled (VITE_PWT_SYNC=1). */
@@ -148,6 +149,7 @@ export default function Balances() {
   // component/parser/services, never two separate implementations.
   const [importDialogInitialSource, setImportDialogInitialSource] = useState<"template" | "tally">("template");
   const [importHistoryDialogOpen, setImportHistoryDialogOpen] = useState(false);
+  const [tallyHistoryOpen, setTallyHistoryOpen] = useState(false);
   const [syncFromTallyOpen, setSyncFromTallyOpen] = useState(false);
 
   const {
@@ -1213,6 +1215,7 @@ export default function Balances() {
       </div>
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "balances" | "history" | "offers")} className="w-full">
+        <div className="flex flex-wrap items-center gap-3">
         <TabsList className={`grid w-full max-w-lg ${transferAcceptanceEnabled ? "grid-cols-3" : "grid-cols-2"}`}>
           <TabsTrigger value="balances">{t("balances:balancesTab")}</TabsTrigger>
           {transferAcceptanceEnabled ? (
@@ -1223,6 +1226,16 @@ export default function Balances() {
             {t("balances:history")}
           </TabsTrigger>
         </TabsList>
+        {userRole === 'admin' && TALLY_SYNC_ENABLED && (
+          <Button
+            className="bg-emerald-600 text-white hover:bg-emerald-700"
+            onClick={() => setSyncFromTallyOpen(true)}
+            data-testid="sync-from-tally-button"
+          >
+            Sync from Tally
+          </Button>
+        )}
+        </div>
 
         <TabsContent value="balances" className="space-y-6">
           <Card>
@@ -1277,10 +1290,10 @@ export default function Balances() {
                   {userRole === 'admin' && TALLY_SYNC_ENABLED && (
                     <Button
                       variant="outline"
-                      onClick={() => setSyncFromTallyOpen(true)}
-                      data-testid="sync-from-tally-button"
+                      onClick={() => setTallyHistoryOpen(true)}
+                      data-testid="tally-history-button"
                     >
-                      Sync from Tally
+                      Tally History
                     </Button>
                   )}
                   {userRole === 'admin' && (
@@ -2129,6 +2142,13 @@ export default function Balances() {
               onOpenChange={setSyncFromTallyOpen}
               organizationId={organizationId}
               onSynced={fetchProfiles}
+            />
+          )}
+          {userRole === 'admin' && organizationId && TALLY_SYNC_ENABLED && (
+            <TallyHistoryDialog
+              open={tallyHistoryOpen}
+              onOpenChange={setTallyHistoryOpen}
+              organizationId={organizationId}
             />
           )}
           {userRole === 'admin' && organizationId && (
