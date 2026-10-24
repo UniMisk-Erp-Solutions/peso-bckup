@@ -93,3 +93,31 @@ SELECT a.id, a.organization_id, a.expense_id, e.transaction_number, e.total_amou
   LEFT JOIN public.profiles d ON d.user_id = a.deleted_by
  WHERE a.deleted_at IS NOT NULL
 ON CONFLICT (attachment_id) DO NOTHING;
+
+-- Images that were uploaded but never became part of a saved expense (for example: added on a new expense, then removed with the
+-- cross before saving, or the form was abandoned). Their bytes stay in storage under temp/<employee user id>/<file>; this view names
+-- the employee. It is computed from storage, so it needs no trigger and is always current. Same rule as above: server access only.
+CREATE OR REPLACE VIEW bill_archive.unsaved_uploads AS
+WITH saved AS (
+  SELECT DISTINCT substring(a.storage_path FROM '[^/]+$') AS file_name
+    FROM public.attachments a
+   WHERE a.storage_path IS NOT NULL
+)
+SELECT p.employee_id::text            AS employee_code,
+       p.name                         AS employee_name,
+       p.organization_id              AS organization_id,
+       split_part(o.name, '/', 2)::uuid AS employee_user_id,
+       o.bucket_id                    AS bucket_id,
+       o.name                         AS storage_path,
+       split_part(o.name, '/', 3)     AS file_name,
+       (o.metadata ->> 'size')::bigint AS file_size,
+       o.created_at                   AS uploaded_at
+  FROM storage.objects o
+  LEFT JOIN public.profiles p ON p.user_id::text = split_part(o.name, '/', 2)
+  LEFT JOIN saved s ON s.file_name = split_part(o.name, '/', 3)
+ WHERE o.bucket_id = 'receipts'
+   AND o.name LIKE 'temp/%'
+   AND s.file_name IS NULL;
+REVOKE ALL ON bill_archive.unsaved_uploads FROM PUBLIC, anon, authenticated, service_role;
+COMMENT ON VIEW bill_archive.unsaved_uploads IS
+  'Uploaded images with no saved attachment (removed before saving / abandoned), by employee. Files are in storage at bucket_id/storage_path.';

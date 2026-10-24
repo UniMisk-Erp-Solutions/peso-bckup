@@ -22,6 +22,9 @@ in the website, and let someone with server access find it by employee.
   when `deleted_at` goes from NULL to a value.
 - Trigger `refuse_delete`: the application cannot delete archive rows.
 - One-time backfill of every attachment already soft-deleted.
+- View `bill_archive.unsaved_uploads`: images that were uploaded but never became part of a saved expense (added on a new expense, then removed
+  with the cross or abandoned before saving). They stay in storage under `temp/<employee user id>/<file>`; the view names the employee
+  (code, name, organisation), the file and its storage path. Computed from storage, no trigger. In the restored backup this is about 1,959 images.
 - The file itself is not moved: it stays at `bucket_id/storage_path` (bucket `receipts`).
 
 ## How to look a bill up (server access only)
@@ -33,7 +36,7 @@ The image is the object `receipts/<storage_path>` in the storage service (MinIO 
 
 ## Key files
 - `supabase/migrations/20261024160000_deleted_bill_archive.sql`
-- `supabase/tests/bill_archive/archive_acceptance.mjs` (7 checks)
+- `supabase/tests/bill_archive/archive_acceptance.mjs` (10 checks)
 
 ## Database / migrations
 `20261024160000_deleted_bill_archive.sql` (run manually; idempotent).
@@ -41,6 +44,12 @@ The image is the object `receipts/<storage_path>` in the storage service (MinIO 
 ## Test plan
 `node supabase/tests/bill_archive/archive_acceptance.mjs` (needs `@electric-sql/pglite`): backfill, trigger, no duplicates, DELETE refused,
 website roles have no access.
+
+## Finding unsaved uploads (server access only)
+```sql
+select employee_code, employee_name, file_name, file_size, uploaded_at, storage_path
+  from bill_archive.unsaved_uploads where employee_code = '1001' order by uploaded_at desc;
+```
 
 ## Not covered
 - The purge of expired trashed expenses (`purge_expired_trashed_expenses_v1`) can still remove storage bytes of expenses that are purged.
@@ -50,3 +59,4 @@ website roles have no access.
 | Date | Notes |
 |---|---|
 | 2026-10-24 | Created. Migration and test written; applied nowhere yet. |
+| 2026-10-24 | Added view `unsaved_uploads` for images removed or abandoned before the expense was saved. |
