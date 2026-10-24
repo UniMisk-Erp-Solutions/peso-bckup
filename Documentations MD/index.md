@@ -624,3 +624,4 @@ Use **DOC-113** for the next new document in `Documentations MD/`. DOC-111 [Repo
 | 2026-10-22 | DOC-147 revised (1.3): Sync to Tally control restyled as a card; history list removed from the report screen. | Agent |
 | 2026-10-23 | DOC-147 revised (1.4): single self-contained setup exe replaces the IExpress installer to avoid Defender false positives; unsigned. | Agent |
 | 2026-10-23 | DOC-147 revised (1.5): Sync from Tally matches employees by code only; migration 20261023100000 (pending apply). | Agent |
+| 2026-10-24 | DOC-147 revised (1.6): cash/bank group names compared case-insensitively in Sync from Tally; migration 20261024100000 (pending apply). | Agent |

@@ -28,6 +28,7 @@ for (const f of ["20260819160000_balance_ledger.sql", "20260819162000_balance_im
 await db.exec(readFileSync(M + "20261017100000_pwt_inbound_payments.sql", "utf8"));
 await db.exec(readFileSync(M + "20261022160000_pwt_inbound_deleted_same_type.sql", "utf8"));
 await db.exec(readFileSync(M + "20261023100000_pwt_inbound_match_by_code.sql", "utf8"));
+await db.exec(readFileSync(M + "20261024100000_pwt_inbound_cash_parent_ci.sql", "utf8"));
 
 const ORG = "11111111-1111-1111-1111-111111111111", OTHER_ORG = "99999999-9999-9999-9999-999999999999";
 const ADMIN = "22222222-2222-2222-2222-222222222222", EMPL = "33333333-3333-3333-3333-333333333333";
@@ -245,3 +246,11 @@ const w1 = await runSync([wn]);
 ok("T9 right code + different name text credits that employee", w1.job.imported_count === 1 && (await bal(E.a)) === beforeA + 77);
 const w2 = await runSync([V({ entries: pay("Whatever Typed Manually-5555", 10) })]);
 ok("T9 unknown code is still refused", w2.job.imported_count === 0 && w2.job.unmatched_count === 1);
+
+// ---- Test 10: the cash/bank group name is compared without regard to capital letters ("Cash-in-hand")
+const ci = V({ entries: [{ ledger: "Amit Test-1001", amount: -33, parent: "Sundry Debtors" }, { ledger: "Cash", amount: 33, parent: "Cash-in-hand" }] });
+const beforeCi = await bal(E.a);
+const ci1 = await runSync([ci]);
+ok("T10 'Cash-in-hand' (different capitals) is accepted as cash", ci1.job.imported_count === 1 && (await bal(E.a)) === beforeCi + 33);
+const ci2 = await runSync([V({ entries: [{ ledger: "Amit Test-1001", amount: -9, parent: "Sundry Debtors" }, { ledger: "Sales", amount: 9, parent: "sales accounts" }] })]);
+ok("T10 a non-cash group is still refused", ci2.job.imported_count === 0 && ci2.job.skipped_count === 1);
