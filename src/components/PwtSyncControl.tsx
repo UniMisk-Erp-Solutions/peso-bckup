@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { AlertCircle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,10 +15,13 @@ interface Props {
   disabled?: boolean;
   /** Same filter inputs the existing report panel already holds, so Sync sees exactly what the report shows. */
   params: PwtSyncParams;
+  /** Receives the Sync button and the status box so the page can place each where it wants. */
+  children: (parts: { button: ReactNode; status: ReactNode }) => ReactNode;
 }
 
 /** "Sync to Tally" for one report: button, live status, and actionable errors (no history list). */
-export function PwtSyncControl({ organizationId, disabled = false, params }: Props) {
+export function PwtSyncGroup({ organizationId, disabled = false, params, children }: Props) {
+  const [shown, setShown] = useState(false);
   const [starting, setStarting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [jobs, setJobs] = useState<PwtJob[]>([]);
@@ -93,12 +96,13 @@ export function PwtSyncControl({ organizationId, disabled = false, params }: Pro
   useEffect(() => () => { wantedJob.current = null; }, []);
 
   const start = async () => {
+    setShown(true);
     if (!organizationId || !report) return;
     setStarting(true);
     setMessage(null);
     try {
       const r = await startPwtSync({ ...params, organizationId });
-      setMessage(r.deduplicated ? "An identical sync is already running." : "Sync queued.");
+      setMessage(r.deduplicated ? "An identical sync is already running." : null);
       await refresh();
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Unable to start Tally sync");
@@ -112,7 +116,21 @@ export function PwtSyncControl({ organizationId, disabled = false, params }: Pro
   const failed = !!latest && (latest.status === "failed" || latest.status === "needs_attention");
   const when = (iso: string | null) =>
     iso ? new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit", hour12: true }) : "";
-  return (
+
+  const button = (
+    <Button
+      type="button"
+      onClick={() => void start()}
+      disabled={disabled || starting || active || !organizationId || !report}
+      data-testid="sync-to-tally"
+    >
+      {starting || active ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+      {starting ? "Starting sync…" : active ? "Sync in progress" : "Sync to Tally"}
+    </Button>
+  );
+
+  // The progress / result box only appears once someone has pressed Sync (or a sync is already running).
+  const status = !(shown || active) ? null : (
     <div className="rounded-lg border border-border bg-card p-4 shadow-sm" data-testid="pwt-sync">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -124,8 +142,7 @@ export function PwtSyncControl({ organizationId, disabled = false, params }: Pro
             <p className="text-xs text-muted-foreground">
               Posts the expenses of this report to TallyPrime as vouchers. Each expense is sent only once.
             </p>
-
-            {!latest && <p className="pt-1 text-sm text-muted-foreground">Not sent yet.</p>}
+            {!latest && !message && <p className="pt-1 text-sm text-muted-foreground">Starting…</p>}
             {latest && active && (
               <p className="flex items-center gap-2 pt-1 text-sm" data-testid="pwt-latest">
                 <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -154,17 +171,7 @@ export function PwtSyncControl({ organizationId, disabled = false, params }: Pro
             {message && <p className="text-xs text-muted-foreground">{message}</p>}
           </div>
         </div>
-
         <div className="flex flex-col items-end gap-1.5">
-          <Button
-            type="button"
-            onClick={() => void start()}
-            disabled={disabled || starting || active || !organizationId || !report}
-            data-testid="sync-to-tally"
-          >
-            {starting || active ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-            {starting ? "Starting sync…" : active ? "Sync in progress" : "Sync to Tally"}
-          </Button>
           {connectorOnline !== undefined && (
             <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <span className={`h-2 w-2 rounded-full ${connectorOnline ? "bg-emerald-500" : "bg-amber-500"}`} />
@@ -178,4 +185,11 @@ export function PwtSyncControl({ organizationId, disabled = false, params }: Pro
       </div>
     </div>
   );
+
+  return <>{children({ button, status })}</>;
+}
+
+/** Stand-alone layout (button, then the box once Sync was pressed). */
+export function PwtSyncControl(props: Omit<Props, "children">) {
+  return <PwtSyncGroup {...props}>{({ button, status }) => <div className="space-y-2">{button}{status}</div>}</PwtSyncGroup>;
 }

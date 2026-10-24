@@ -6,7 +6,7 @@
  * status row, and downloads the finished file straight from Storage via a
  * signed URL, so even a multi-megabyte export never passes through a JS buffer.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Download, Loader2, AlertCircle, FileSpreadsheet, RotateCw, History, ChevronLeft, ChevronRight, Table as TableIcon,
   ArrowUp, ArrowDown, Filter, X, Eye, RefreshCcw,
@@ -39,7 +39,7 @@ import {
   type ColumnFilterSpec,
   type SortDirection,
 } from "@/lib/reportExportJobs";
-import { PwtSyncControl } from "@/components/PwtSyncControl";
+import { PwtSyncGroup } from "@/components/PwtSyncControl";
 
 /** PesoWise -> TallyPrime "Sync to Tally" control on the four reports; off unless VITE_PWT_SYNC=1. */
 const PWT_SYNC_ENABLED = import.meta.env.VITE_PWT_SYNC === "1";
@@ -768,11 +768,38 @@ export function ServerReportExportPanel({
         The report is built on the server. When it is ready, download it as a CSV.
       </p>
 
-      {enableTallySync && PWT_SYNC_ENABLED && reportType === "detailed_expense" && (
-        <PwtSyncControl
-          organizationId={organizationId}
-          disabled={disabled}
-          params={{
+      {(() => {
+        const actionRow = (syncButton: ReactNode) => (
+      <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => void generate()} disabled={disabled || busy || !organizationId}>
+            {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {busy ? "Generating on server…" : "Generate report"}
+          </Button>
+
+          {syncButton}
+
+          {activeDownloadTarget && (
+            <Button variant="default" onClick={() => void download()} disabled={downloading}>
+              {downloading
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <Download className="mr-2 h-4 w-4" />}
+              Download CSV
+            </Button>
+          )}
+
+          {job?.status === "failed" && (
+            <Button variant="outline" onClick={() => void generate()}>
+              <RotateCw className="mr-2 h-4 w-4" />
+              Try again
+            </Button>
+          )}
+        </div>
+        );
+        return enableTallySync && PWT_SYNC_ENABLED && reportType === "detailed_expense" ? (
+          <PwtSyncGroup
+            organizationId={organizationId}
+            disabled={disabled}
+            params={{
             reportType: reportType ?? "daily_project",
             category,
             userId,
@@ -786,31 +813,18 @@ export function ServerReportExportPanel({
             selectedMonth,
             selectedWeek,
           }}
-        />
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => void generate()} disabled={disabled || busy || !organizationId}>
-          {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-          {busy ? "Generating on server…" : "Generate report"}
-        </Button>
-
-        {activeDownloadTarget && (
-          <Button variant="default" onClick={() => void download()} disabled={downloading}>
-            {downloading
-              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              : <Download className="mr-2 h-4 w-4" />}
-            Download CSV
-          </Button>
-        )}
-
-        {job?.status === "failed" && (
-          <Button variant="outline" onClick={() => void generate()}>
-            <RotateCw className="mr-2 h-4 w-4" />
-            Try again
-          </Button>
-        )}
-      </div>
+          >
+            {({ button, status }) => (
+              <>
+                {actionRow(button)}
+                {status}
+              </>
+            )}
+          </PwtSyncGroup>
+        ) : (
+          actionRow(null)
+        );
+      })()}
 
       {busy && job && (
         <p className="text-sm text-muted-foreground tabular-nums">
