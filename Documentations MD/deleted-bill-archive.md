@@ -34,9 +34,17 @@ select employee_code, employee_name, transaction_number, expense_amount, filenam
 ```
 The image is the object `receipts/<storage_path>` in the storage service (MinIO volume `stub/storage-single-tenant/receipts/<storage_path>`).
 
+## No clash with submitted expenses
+- The archive is a separate schema; it never writes to `expenses` or `attachments` and the website never reads it.
+- A removed bill keeps its `attachments` row (soft delete) exactly as before; the bill-above-limit submit check counts live attachments only, so it is unchanged.
+- Recording is wrapped so a failure only logs a warning and never blocks the delete (`20261024170000_deleted_bill_archive_never_blocks.sql`).
+- A temp image that later becomes a saved attachment leaves the `unsaved_uploads` list automatically.
+- Checked on the backup database with a rolled-back delete: archive +1, expense row untouched, nothing left behind after rollback.
+
 ## Key files
 - `supabase/migrations/20261024160000_deleted_bill_archive.sql`
-- `supabase/tests/bill_archive/archive_acceptance.mjs` (10 checks)
+- `supabase/migrations/20261024170000_deleted_bill_archive_never_blocks.sql`
+- `supabase/tests/bill_archive/archive_acceptance.mjs` (11 checks)
 
 ## Database / migrations
 `20261024160000_deleted_bill_archive.sql` (run manually; idempotent).
@@ -59,4 +67,5 @@ select employee_code, employee_name, file_name, file_size, uploaded_at, storage_
 | Date | Notes |
 |---|---|
 | 2026-10-24 | Created. Migration and test written; applied nowhere yet. |
+| 2026-10-24 | Added trigger hardening (never blocks the real delete) and the 'no clash' section. |
 | 2026-10-24 | Added view `unsaved_uploads` for images removed or abandoned before the expense was saved. |

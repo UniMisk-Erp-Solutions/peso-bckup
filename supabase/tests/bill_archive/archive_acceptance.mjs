@@ -29,6 +29,7 @@ await db.exec(`
 const sql = readFileSync(M + "20261024160000_deleted_bill_archive.sql", "utf8");
 await db.exec(sql);
 await db.exec(sql);   // idempotent
+await db.exec(readFileSync(M + "20261024170000_deleted_bill_archive_never_blocks.sql", "utf8"));
 
 let r = await one("select count(*)::int n from bill_archive.deleted_bills");
 ok("existing deleted bill copied once (and only the deleted one)", r.n === 1);
@@ -56,5 +57,14 @@ ok("an image uploaded but never saved is listed with its employee", r.rows.lengt
 ok("a temp image that became a saved attachment is not listed", !r.rows.some((x) => x.file_name === "222-saved.jpg"));
 r = await one("select has_table_privilege('authenticated','bill_archive.unsaved_uploads','select') a, has_table_privilege('anon','bill_archive.unsaved_uploads','select') b");
 ok("the view is closed to the website roles", !r.a && !r.b, JSON.stringify(r));
+
+// the archive can never block a real delete: make archiving fail on purpose and delete a bill anyway
+await db.exec("alter table bill_archive.deleted_bills add constraint always_fails check (false) not valid");
+await db.exec("insert into public.attachments(id, expense_id, organization_id, filename, storage_path) values ('a0000000-0000-0000-0000-000000000009','e0000000-0000-0000-0000-000000000001','99999999-9999-9999-9999-999999999999','x.jpg','p/x.jpg')");
+let blocked = null;
+try { await db.exec("update public.attachments set deleted_at = now() where id='a0000000-0000-0000-0000-000000000009'"); } catch (e) { blocked = e.message; }
+r = await one("select deleted_at is not null as gone from public.attachments where id='a0000000-0000-0000-0000-000000000009'");
+ok("even if archiving fails, the bill is still removed normally (never blocks the real record)", blocked === null && r.gone === true, String(blocked));
+await db.exec("alter table bill_archive.deleted_bills drop constraint always_fails");
 
 process.exit(fails ? 1 : 0);
