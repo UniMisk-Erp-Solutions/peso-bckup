@@ -427,6 +427,7 @@ supabase/tests/pwt_deletion/              database acceptance tests
 
 | Date | Revision | Author | Notes |
 |------|----------|--------|-------|
+| 2026-10-24 | 1.11 | Agent | The status box now appears directly under the Clear row (below the Sync button); a "Tally sync history" panel (last 10 syncs: time, expenses, vouchers, status) sits beside Report history. |
 | 2026-10-24 | 1.10 | Agent | The Sync to Tally button is at the far right end of the Clear row. |
 | 2026-10-24 | 1.9 | Agent | The Sync to Tally button moved next to the filters' Clear button (Reports > Detailed Expense) and is green instead of blue; the status box still appears only after Sync is pressed. If the slot is missing the button falls back to the action row. |
 | 2026-10-24 | 1.8 | Agent | The Sync to Tally button now sits in the action row between Generate report and Download CSV; the status box (progress / result / problem) appears only after someone presses Sync (or while a sync is already running). |

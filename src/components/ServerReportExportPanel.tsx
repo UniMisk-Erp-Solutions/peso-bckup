@@ -366,7 +366,13 @@ export function ServerReportExportPanel({
   const [downloading, setDownloading] = useState(false);
   // The Sync to Tally button is shown beside the filters' Clear button when that slot exists on the page (Reports > Detailed Expense).
   const [syncSlot, setSyncSlot] = useState<HTMLElement | null>(null);
-  useEffect(() => { setSyncSlot(document.getElementById("pwt-sync-slot")); }, []);
+  const [statusSlot, setStatusSlot] = useState<HTMLElement | null>(null);
+  const [syncHistoryEl, setSyncHistoryEl] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setSyncSlot(document.getElementById("pwt-sync-slot"));
+    setStatusSlot(document.getElementById("pwt-status-slot"));
+  }, []);
+  const syncOn = enableTallySync && PWT_SYNC_ENABLED && reportType === "detailed_expense";
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<ExportHistoryEntry[]>([]);
   const [historyTotal, setHistoryTotal] = useState(0);
@@ -799,7 +805,7 @@ export function ServerReportExportPanel({
           )}
         </div>
         );
-        return enableTallySync && PWT_SYNC_ENABLED && reportType === "detailed_expense" ? (
+        return syncOn ? (
           <PwtSyncGroup
             organizationId={organizationId}
             disabled={disabled}
@@ -818,11 +824,12 @@ export function ServerReportExportPanel({
             selectedWeek,
           }}
           >
-            {({ button, status }) => (
+            {({ button, status, history }) => (
               <>
                 {actionRow(syncSlot ? null : button)}
                 {syncSlot ? createPortal(button, syncSlot) : null}
-                {status}
+                {statusSlot ? createPortal(status, statusSlot) : status}
+                {syncHistoryEl ? createPortal(history, syncHistoryEl) : null}
               </>
             )}
           </PwtSyncGroup>
@@ -1003,7 +1010,8 @@ export function ServerReportExportPanel({
         </section>
       )}
 
-      {/* Generation history for THIS report type. */}
+      {/* Generation history for THIS report type (with the Tally sync history beside it when Tally sync is on). */}
+      <div className={syncOn ? "grid items-start gap-3 lg:grid-cols-2" : undefined}>
       <section aria-label="Report history" className="rounded-lg border border-border bg-background p-3 shadow-sm space-y-2">
         <div className="flex items-center gap-2 border-b border-border pb-2">
           <History className="h-4 w-4 text-muted-foreground" />
@@ -1130,6 +1138,8 @@ export function ServerReportExportPanel({
           onNext={() => void loadHistory(historyOffset + HISTORY_PAGE_SIZE)}
         />
       </section>
+      {syncOn && <div ref={setSyncHistoryEl} />}
+      </div>
     </div>
   );
 }

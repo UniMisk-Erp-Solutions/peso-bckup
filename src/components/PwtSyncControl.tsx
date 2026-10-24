@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertCircle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle, CheckCircle2, History, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   anyConnectorOnline, continuePwtJob, describePwtJob, isPwtActive, listPwtConnectors, listPwtJobs, startPwtSync, toPwtReportType,
@@ -16,7 +16,7 @@ interface Props {
   /** Same filter inputs the existing report panel already holds, so Sync sees exactly what the report shows. */
   params: PwtSyncParams;
   /** Receives the Sync button and the status box so the page can place each where it wants. */
-  children: (parts: { button: ReactNode; status: ReactNode }) => ReactNode;
+  children: (parts: { button: ReactNode; status: ReactNode; history: ReactNode }) => ReactNode;
 }
 
 /** "Sync to Tally" for one report: button, live status, and actionable errors (no history list). */
@@ -39,7 +39,7 @@ export function PwtSyncGroup({ organizationId, disabled = false, params, childre
     if (!organizationId) return;
     try {
       const all = await listPwtJobs(organizationId, 25);
-      setJobs(all.filter((j) => j.report_type === report).slice(0, 5));
+      setJobs(all.filter((j) => j.report_type === report).slice(0, 10));
       setConnectorOnline(anyConnectorOnline(await listPwtConnectors(organizationId)));
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Could not load sync history");
@@ -187,10 +187,49 @@ export function PwtSyncGroup({ organizationId, disabled = false, params, childre
     </div>
   );
 
-  return <>{children({ button, status })}</>;
+  const history = (
+    <section aria-label="Sync history" className="rounded-lg border border-border bg-background p-3 shadow-sm space-y-2" data-testid="pwt-history">
+      <div className="flex items-center gap-2 border-b border-border pb-2">
+        <History className="h-4 w-4 text-muted-foreground" />
+        <h4 className="text-sm font-semibold">Tally sync history</h4>
+      </div>
+      {jobs.length === 0 ? (
+        <p className="py-2 text-sm text-muted-foreground">Nothing has been sent to Tally yet.</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {jobs.map((j) => (
+            <li key={j.id} className="flex items-start justify-between gap-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{when(j.created_at)}</p>
+                <p className="text-xs text-muted-foreground">
+                  {j.status === "completed"
+                    ? j.voucher_count
+                      ? `${j.posted_count.toLocaleString()} expenses · ${j.voucher_count} voucher(s)`
+                      : "Nothing new to send"
+                    : j.status === "failed" || j.status === "needs_attention"
+                      ? "Not completed. Open the latest sync for details"
+                      : "In progress"}
+                </p>
+              </div>
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                  j.status === "completed" ? "bg-emerald-100 text-emerald-800"
+                    : j.status === "failed" || j.status === "needs_attention" ? "bg-red-100 text-red-800"
+                      : "bg-slate-100 text-slate-700"}`}
+              >
+                {j.status === "completed" ? "Sent" : j.status === "failed" || j.status === "needs_attention" ? "Needs attention" : "In progress"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+
+  return <>{children({ button, status, history })}</>;
 }
 
 /** Stand-alone layout (button, then the box once Sync was pressed). */
 export function PwtSyncControl(props: Omit<Props, "children">) {
-  return <PwtSyncGroup {...props}>{({ button, status }) => <div className="space-y-2">{button}{status}</div>}</PwtSyncGroup>;
+  return <PwtSyncGroup {...props}>{({ button, status, history }) => <div className="space-y-2">{button}{status}{history}</div>}</PwtSyncGroup>;
 }
