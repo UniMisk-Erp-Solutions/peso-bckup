@@ -29,6 +29,7 @@ await db.exec(readFileSync(M + "20261017100000_pwt_inbound_payments.sql", "utf8"
 await db.exec(readFileSync(M + "20261022160000_pwt_inbound_deleted_same_type.sql", "utf8"));
 await db.exec(readFileSync(M + "20261023100000_pwt_inbound_match_by_code.sql", "utf8"));
 await db.exec(readFileSync(M + "20261024100000_pwt_inbound_cash_parent_ci.sql", "utf8"));
+await db.exec(readFileSync(M + "20261024140000_pwt_inbound_list_batch.sql", "utf8"));
 
 const ORG = "11111111-1111-1111-1111-111111111111", OTHER_ORG = "99999999-9999-9999-9999-999999999999";
 const ADMIN = "22222222-2222-2222-2222-222222222222", EMPL = "33333333-3333-3333-3333-333333333333";
@@ -254,3 +255,9 @@ const ci1 = await runSync([ci]);
 ok("T10 'Cash-in-hand' (different capitals) is accepted as cash", ci1.job.imported_count === 1 && (await bal(E.a)) === beforeCi + 33);
 const ci2 = await runSync([V({ entries: [{ ledger: "Amit Test-1001", amount: -9, parent: "Sundry Debtors" }, { ledger: "Sales", amount: 9, parent: "sales accounts" }] })]);
 ok("T10 a non-cash group is still refused", ci2.job.imported_count === 0 && ci2.job.skipped_count === 1);
+
+// ---- Test 11: the job list carries the import batch and its status (Tally History: per-employee rows and Reverse import)
+await as(ADMIN);
+const lst = (await one("select public.pwt_inbound_list_jobs_v1($1,50) r", [ORG])).r;
+const withBatch = lst.filter((x) => x.batch_id);
+ok("T11 list returns batch_id and batch_status for jobs that imported", withBatch.length > 0 && withBatch.every((x) => x.batch_status === "applied" || x.batch_status === "reversed"), JSON.stringify(withBatch.slice(0, 1)));

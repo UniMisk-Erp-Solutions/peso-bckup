@@ -24,6 +24,9 @@ export interface PwtInboundJob {
   progress_current: number;
   progress_total: number | null;
   error: string | null;
+  /** The balance import batch this sync created (Import History / reversal) and its status; absent on older servers. */
+  batch_id?: string | null;
+  batch_status?: string | null;
 }
 
 export interface PwtInboundProblem {

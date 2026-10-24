@@ -427,6 +427,7 @@ supabase/tests/pwt_deletion/              database acceptance tests
 
 | Date | Revision | Author | Notes |
 |------|----------|--------|-------|
+| 2026-10-24 | 1.13 | Agent | Tally History: Details shows one row per employee (before, added, after, note) plus the vouchers that were not imported; "Reverse Import" (reason required) reverses a sync with the same balance engine as Import History. The job list now returns batch_id and batch_status. Migration 20261024140000_pwt_inbound_list_batch.sql (apply manually; without it the dialog still lists syncs but without per-employee rows or Reverse). |
 | 2026-10-24 | 1.12 | Agent | Employee Balances: the green "Sync from Tally" button now sits beside the Balances / Transfer History tabs; the old header slot is a "Tally History" button that opens a history dialog of every Sync from Tally (date, company, status, imported count and amount; Details shows the voucher results), like Import History. New file src/components/balances/TallyHistoryDialog.tsx. |
 | 2026-10-24 | 1.11 | Agent | The status box now appears directly under the Clear row (below the Sync button); a "Tally sync history" panel (last 10 syncs: time, expenses, vouchers, status) sits beside Report history. |
 | 2026-10-24 | 1.10 | Agent | The Sync to Tally button is at the far right end of the Clear row. |
