@@ -6,8 +6,6 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { formatINR } from "@/lib/format";
@@ -17,6 +15,9 @@ import {
   describeInboundJob, getInboundProblems, listInboundJobs, PWT_INBOUND_STATE_LABEL, PWT_INBOUND_STATUS_LABEL,
   type PwtInboundJob, type PwtInboundProblem,
 } from "@/lib/pwt/pwtInbound";
+
+/** The balance engine records a reason with every reversal; the screen does not ask for one. */
+const REVERSE_REASON = "Reversed from Tally History";
 
 interface Props {
   open: boolean;
@@ -45,7 +46,6 @@ export function TallyHistoryDialog({ open, onOpenChange, organizationId }: Props
   const [problems, setProblems] = useState<PwtInboundProblem[]>([]);
 
   const [reverseJob, setReverseJob] = useState<PwtInboundJob | null>(null);
-  const [reason, setReason] = useState("");
   const [reversing, setReversing] = useState(false);
   const [reversedCount, setReversedCount] = useState<{ jobId: string; count: number } | null>(null);
 
@@ -69,7 +69,6 @@ export function TallyHistoryDialog({ open, onOpenChange, organizationId }: Props
       setRows([]);
       setProblems([]);
       setReverseJob(null);
-      setReason("");
       setReversedCount(null);
     }
   }, [open, organizationId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -106,16 +105,11 @@ export function TallyHistoryDialog({ open, onOpenChange, organizationId }: Props
 
   const confirmReverse = async () => {
     if (!reverseJob?.batch_id) return;
-    if (!reason.trim()) {
-      toast({ variant: "destructive", title: "Reason required", description: "Enter a reason for this reversal before continuing." });
-      return;
-    }
     setReversing(true);
     try {
-      const res = await reverseImportBatchV3(reverseJob.batch_id, reason.trim());
+      const res = await reverseImportBatchV3(reverseJob.batch_id, REVERSE_REASON);
       setReversedCount({ jobId: reverseJob.id, count: res.reversed_count });
       setReverseJob(null);
-      setReason("");
       await load();
     } catch (e) {
       toast({ variant: "destructive", title: "Reversal failed", description: e instanceof Error ? e.message : String(e) });
@@ -173,7 +167,7 @@ export function TallyHistoryDialog({ open, onOpenChange, organizationId }: Props
                           {expanded === j.id ? "Hide" : "Details"}
                         </Button>
                         {j.batch_id && j.batch_status === "applied" && j.imported_count > 0 && (
-                          <Button variant="destructive" size="sm" onClick={() => { setReverseJob(j); setReason(""); }}>
+                          <Button variant="destructive" size="sm" onClick={() => setReverseJob(j)}>
                             Reverse Import
                           </Button>
                         )}
@@ -272,19 +266,9 @@ export function TallyHistoryDialog({ open, onOpenChange, organizationId }: Props
               The vouchers stay in Tally and are not imported again by a later sync.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 py-2">
-            <Label htmlFor="tally-reverse-reason">Reason (required)</Label>
-            <Textarea
-              id="tally-reverse-reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="Why is this sync being reversed?"
-              className="min-h-[90px]"
-            />
-          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setReverseJob(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={() => void confirmReverse()} disabled={reversing || !reason.trim()}>
+            <Button variant="destructive" onClick={() => void confirmReverse()} disabled={reversing}>
               {reversing ? "Reversing..." : "Reverse Import"}
             </Button>
           </DialogFooter>
