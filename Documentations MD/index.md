@@ -628,3 +628,4 @@ Use **DOC-113** for the next new document in `Documentations MD/`. DOC-111 [Repo
 | 2026-10-24 | DOC-147 revised (1.7): simpler Tally sync box (plain status, connector indicator). | Agent |
 | 2026-10-24 | DOC-147 revised (1.8): Sync button between Generate report and Download CSV; status box shown only after Sync is pressed. | Agent |
 | 2026-10-24 | DOC-147 revised (1.9): Sync to Tally button beside Clear, green. | Agent |
+| 2026-10-24 | DOC-147 revised (1.10): Sync to Tally button at the right end of the Clear row. | Agent |

@@ -2237,7 +2237,7 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                     Clear
                   </Button>
                   {/* The "Sync to Tally" button of the report panel below is shown here (see ServerReportExportPanel). */}
-                  <span id="pwt-sync-slot" className="contents" />
+                  <span id="pwt-sync-slot" className="ml-auto flex items-center" />
                 </div>
               </div>
 
