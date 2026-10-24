@@ -1,0 +1,52 @@
+# Deleted-bill archive (server-side only)
+
+**Doc ID:** DOC-148  
+**Status:** in progress (migration written and tested; not yet applied to a live database)  
+**Last updated:** 2026-10-24  
+**Owner / area:** expenses, attachments (Receipt Attachments cross button)
+
+## Summary
+When an employee (or anyone) removes a bill with the cross in *Receipt Attachments*, the file already stays in storage (soft delete).
+This change also records, permanently, whose bill it was: employee ID/code, name, the expense (transaction number, amount, status),
+who deleted it and when, the file name and its storage path. It is readable **only with direct database/server access**: no website
+screen (admin or otherwise) shows it, and the API roles have no privileges on it.
+
+## Problem / requirement
+Bills above the organisation's limit were deleted after submitting (21 files on 16 expenses in MicroLink, found 2026-10-24). The files
+were still in storage but only traceable through joins. Requirement: keep every removed bill with the employee's details, never show it
+in the website, and let someone with server access find it by employee.
+
+## Solution
+- New schema `bill_archive` (not exposed through PostgREST; all privileges revoked from `anon`, `authenticated`, `service_role`).
+- Table `bill_archive.deleted_bills` (one row per removed attachment) filled by trigger `capture_deleted_bill` on `public.attachments`
+  when `deleted_at` goes from NULL to a value.
+- Trigger `refuse_delete`: the application cannot delete archive rows.
+- One-time backfill of every attachment already soft-deleted.
+- The file itself is not moved: it stays at `bucket_id/storage_path` (bucket `receipts`).
+
+## How to look a bill up (server access only)
+```sql
+select employee_code, employee_name, transaction_number, expense_amount, filename, storage_path, deleted_at, deleted_by_name
+  from bill_archive.deleted_bills where employee_code = '1001' order by deleted_at desc;
+```
+The image is the object `receipts/<storage_path>` in the storage service (MinIO volume `stub/storage-single-tenant/receipts/<storage_path>`).
+
+## Key files
+- `supabase/migrations/20261024160000_deleted_bill_archive.sql`
+- `supabase/tests/bill_archive/archive_acceptance.mjs` (7 checks)
+
+## Database / migrations
+`20261024160000_deleted_bill_archive.sql` (run manually; idempotent).
+
+## Test plan
+`node supabase/tests/bill_archive/archive_acceptance.mjs` (needs `@electric-sql/pglite`): backfill, trigger, no duplicates, DELETE refused,
+website roles have no access.
+
+## Not covered
+- The purge of expired trashed expenses (`purge_expired_trashed_expenses_v1`) can still remove storage bytes of expenses that are purged.
+- Deleting the last bill of an above-limit expense is still allowed (separate decision).
+
+## Revision log
+| Date | Notes |
+|---|---|
+| 2026-10-24 | Created. Migration and test written; applied nowhere yet. |
