@@ -633,3 +633,4 @@ Use **DOC-113** for the next new document in `Documentations MD/`. DOC-111 [Repo
 | 2026-10-24 | DOC-147 revised (1.12): Sync from Tally button beside the tabs (green); Tally History dialog replaces it in the header. | Agent |
 | 2026-10-24 | DOC-147 revised (1.13): Tally History per-employee details and Reverse Import; migration 20261024140000 (pending apply). | Agent |
 | 2026-10-24 | DOC-147 revised (1.14): Tally History reverse needs no reason. | Agent |
+| 2026-10-24 | DOC-142 extended (section 11): the backup instance was restored again from the 2026-10-19 production snapshot (database and files); Tally tables not carried over; rollback snapshot kept on the server. | Agent |

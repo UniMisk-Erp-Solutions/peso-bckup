@@ -301,3 +301,26 @@ not had the 2026-09-01 reload, Production included.
 | 2026-09-01 | Restore performed and verified. Documents the false-success first attempt (wrong grep pattern, missing `ON_ERROR_STOP`, `postgres` not being a superuser), the row-count parity check that caught it, the targeted section restore as `supabase_admin` that avoided dropping the live `_supabase` analytics database, the `graphql_public` repair, the 1,608 receipt records with no bytes behind them, DOC-115 survival plus the wrapper consolidation, retained rollback artifacts, and the gitignore fix for a 244 MB dump sitting committable in the repo root. |
 | 2026-09-01 (post-restore repair) | Frontend showed no data. Root cause was twofold: the backup host was unreachable at the time (gateway said destination host unreachable, Cloudflare 530; the static Vercel page still returned 200, which is why it looked like an app bug), and separately the restore had left real defects. Fixed: ran VACUUM ANALYZE (115 of 115 tables had zero planner statistics after the restore), recreated the graphql_public wrapper, and repaired a genuine schema/code version mismatch — the dump came from a newer codebase, dropping 7 functions and the generated_reports table that the deployed frontend still calls. Recreated the tables and 4 functions from this repo's own idempotent migration 20260823100000, and restored 3 admin/ambiguity v1 functions verbatim from the pre-restore backup, alongside the newer v2 ones. All verified live per-organization. Also recorded two verification traps that produced false 'missing function' readings: PostgREST matches RPCs by signature (a no-arg call to an arg-taking function returns 404 PGRST202), and its OpenAPI spec is per-role (anon-key fetches omit authenticated-only functions). |
 | 2026-09-02 | Verified the DOC-113/114 project-ID and project-name recovery against the reloaded database. That work's three artifacts (the `dynamic` source kind, MicroLink's dynamic config, and the written values) are all gone, but no repair was needed: upstream promoted the same behaviour into `report_daily_project_rows_v1` as a built-in three-tier fallback, so it resolves without a special config kind. Proven on a real generated CSV rather than by inspection — 5,078 rows, project id 98.9%, project name 98.8%, voucher 100%, 213 distinct projects with correct id-to-name pairing, and the residue (58/62 blank) matches DOC-114's genuinely-unresolvable 65. UI preview RPC returned 25/25 populated. Added DO-NOT-RE-APPLY guards to migrations 20260820160000 / 20260826100000 / 20260827100000, each of which would overwrite the new thin wrapper with the old self-contained implementation and reintroduce the DOC-115 drift. |
+
+## 11) Second restore, 2026-10-24 — production snapshot of 2026-10-19 (database and files)
+
+The backup instance (`192.168.23.46`, PesoWise stack only) was replaced with the daily production snapshot of
+2026-10-19 03:00 (`pesowise-main`: 841 auth users, 36,063 storage uploads, integrity VERIFIED), supplied by the
+operator as a cluster dump (`Pesowise-main_db.sql.gz`) and a MinIO data archive (`pesowise-main_storage.tar.gz`, 13 GB).
+
+- **Database:** only the `postgres` section of the cluster dump was applied, as `supabase_admin`, from a scratch
+  database, after `DROP DATABASE postgres WITH (FORCE)` with the 12 dependent containers stopped. The dump's
+  `ALTER DATABASE ... SET app.settings.jwt_*` lines were removed and the instance's own values re-applied, so the
+  backup keeps its own JWT settings. Errors: 4 (the known `graphql_public.graphql` ordering artifact, wrapper recreated
+  from the pre-restore snapshot) + 1 (`database "postgres" does not exist` on the dump's own DROP).
+- **A first attempt overlaid the existing database** because the connection-terminate step was mistyped; it was
+  discarded by the forced drop above, so the final database is a clean restore.
+- **Result:** `auth.users` 841, `profiles` 535, `organizations` 8, `expenses` 38,666 (newest 2026-10-19),
+  `storage.objects` 36,063, matching the snapshot summary. The Tally integration tables (`pwt_*`, 39 before) are **not**
+  present: production never had them and they were intentionally not carried over. The Tally screens on the backup
+  site therefore show errors until the `pwt_*` migrations are applied again.
+- **Files:** `stub/storage-single-tenant` from the archive was extracted into the backup MinIO volume (merge, the archive's
+  `.minio.sys` was excluded so the instance keeps its own MinIO configuration). 10 of 10 sampled objects (5 newest, 5
+  random) are present.
+- **Rollback:** `/tmp/pre_restore_postgres_20261024.dump` (186 MB, custom format) on the server, taken before the restore.
+- All 14 containers healthy; PostgREST, Auth and Storage APIs and `peso-backup.vercel.app` return 200.
