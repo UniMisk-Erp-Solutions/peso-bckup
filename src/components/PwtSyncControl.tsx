@@ -1,21 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Loader2, RefreshCw } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { AlertCircle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  anyConnectorOnline, continuePwtJob, describePwtJob, isPwtActive, listPwtConnectors, listPwtJobs, PWT_STATUS_LABEL, startPwtSync, toPwtReportType,
-  type PwtJob, type PwtJobStatus, type PwtSyncParams,
+  anyConnectorOnline, continuePwtJob, describePwtJob, isPwtActive, listPwtConnectors, listPwtJobs, startPwtSync, toPwtReportType,
+  type PwtJob, type PwtSyncParams,
 } from "@/lib/pwt/pwtSync";
 
 const POLL_MS = 3000;
 
-function statusVariant(s: PwtJobStatus): "default" | "secondary" | "outline" | "destructive" | "success" {
-  if (s === "completed") return "success";
-  if (s === "failed" || s === "needs_attention") return "destructive";
-  if (s === "queued") return "outline";
-  return "secondary";
-}
 
 interface Props {
   organizationId: string | null;
@@ -115,24 +108,54 @@ export function PwtSyncControl({ organizationId, disabled = false, params }: Pro
   };
 
   const latest = jobs[0];
+  const done = !!latest && latest.status === "completed" && !!latest.completed_at;
+  const failed = !!latest && (latest.status === "failed" || latest.status === "needs_attention");
+  const when = (iso: string | null) =>
+    iso ? new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit", hour12: true }) : "";
   return (
     <div className="rounded-lg border border-border bg-card p-4 shadow-sm" data-testid="pwt-sync">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
           <div className="mt-0.5 rounded-md bg-primary/10 p-2 text-primary">
             <RefreshCw className="h-4 w-4" />
           </div>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h4 className="text-sm font-semibold">Tally sync</h4>
-              {latest && <Badge variant={statusVariant(latest.status)}>{PWT_STATUS_LABEL[latest.status]}</Badge>}
-            </div>
-            <p className="mt-0.5 text-xs text-muted-foreground">Post these expenses to TallyPrime as vouchers.</p>
-            {latest && <p className="mt-1 text-sm text-foreground" data-testid="pwt-latest">{describePwtJob(latest, connectorOnline)}</p>}
-            {message && <p className="mt-1 text-xs text-muted-foreground">{message}</p>}
+          <div className="min-w-0 space-y-1">
+            <h4 className="text-sm font-semibold">Send expenses to Tally</h4>
+            <p className="text-xs text-muted-foreground">
+              Posts the expenses of this report to TallyPrime as vouchers. Each expense is sent only once.
+            </p>
+
+            {!latest && <p className="pt-1 text-sm text-muted-foreground">Not sent yet.</p>}
+            {latest && active && (
+              <p className="flex items-center gap-2 pt-1 text-sm" data-testid="pwt-latest">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                <span>{describePwtJob(latest, connectorOnline)}</span>
+              </p>
+            )}
+            {latest && done && !active && (
+              <p className="flex items-center gap-2 pt-1 text-sm" data-testid="pwt-latest">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                <span>
+                  {latest.voucher_count
+                    ? `${latest.posted_count.toLocaleString()} expenses sent to Tally in ${latest.voucher_count} voucher(s)`
+                    : "Everything is already in Tally. Nothing new to send"}
+                  <span className="text-muted-foreground"> · {when(latest.completed_at)}</span>
+                </span>
+              </p>
+            )}
+            {latest && failed && !active && (
+              <div className="mt-1 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm" data-testid="pwt-latest">
+                <p className="flex items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                  <span>{describePwtJob(latest, connectorOnline)}</span>
+                </p>
+              </div>
+            )}
+            {message && <p className="text-xs text-muted-foreground">{message}</p>}
           </div>
         </div>
-        <div className="flex flex-col items-end gap-1">
+
+        <div className="flex flex-col items-end gap-1.5">
           <Button
             type="button"
             onClick={() => void start()}
@@ -142,8 +165,14 @@ export function PwtSyncControl({ organizationId, disabled = false, params }: Pro
             {starting || active ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             {starting ? "Starting sync…" : active ? "Sync in progress" : "Sync to Tally"}
           </Button>
+          {connectorOnline !== undefined && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className={`h-2 w-2 rounded-full ${connectorOnline ? "bg-emerald-500" : "bg-amber-500"}`} />
+              {connectorOnline ? "Tally PC connected" : "Tally PC offline"}
+            </span>
+          )}
           <Link to="/admin/pwtally" className="text-xs text-primary hover:underline">
-            Tally connector &amp; setup
+            Tally setup
           </Link>
         </div>
       </div>

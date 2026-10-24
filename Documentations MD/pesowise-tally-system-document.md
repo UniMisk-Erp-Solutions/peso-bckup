@@ -427,6 +427,7 @@ supabase/tests/pwt_deletion/              database acceptance tests
 
 | Date | Revision | Author | Notes |
 |------|----------|--------|-------|
+| 2026-10-24 | 1.7 | Agent | Tally sync box on the report screen simplified: title "Send expenses to Tally", one plain status line (not sent / sending / N expenses sent in M vouchers with time / red explanation), "Tally PC connected / offline" indicator, one button. Rest of the Reports page unchanged. |
 | 2026-10-24 | 1.6 | Agent | Sync from Tally: the credit side group (Cash / Bank) is compared without regard to capital letters, so a real company's "Cash-in-hand" is accepted (it was refused as "credit side is not a cash or bank ledger"). Migration 20261024100000_pwt_inbound_cash_parent_ci.sql (apply manually). |
 | 2026-10-23 | 1.5 | Agent | Sync from Tally identifies the employee by the CODE at the end of the ledger name (`<anything>-<code>`); the name text is no longer compared, so a manually typed name no longer causes "name does not match". Unknown code, inactive member and shared codes are still refused. Migration 20261023100000_pwt_inbound_match_by_code.sql (apply manually). |
 | 2026-10-23 | 1.4 | Agent | Download is now ONE self-contained PesoWise-Tally-Setup.exe (the pkg program with the public server address and TDL compiled in; build: `npm run standalone` in connector/pwtally). The IExpress self-extractor was what Windows Defender flagged (Wacatac/Sabsik !ml); the plain program scans clean locally. Still unsigned: code signing remains the lasting fix. |
