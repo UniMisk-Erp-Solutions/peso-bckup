@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatINR } from "@/lib/format";
 import { reverseImportBatchV3 } from "@/services/BalanceLedgerService";
 import { getImportRows, type ImportRowDetail } from "@/services/BalanceImportService";
+import { describePwtError } from "@/lib/pwt/pwtErrors";
 import {
   describeInboundJob, getInboundProblems, listInboundJobs, PWT_INBOUND_STATE_LABEL, PWT_INBOUND_STATUS_LABEL,
   type PwtInboundJob, type PwtInboundProblem,
@@ -55,7 +56,7 @@ export function TallyHistoryDialog({ open, onOpenChange, organizationId }: Props
     try {
       setJobs(await listInboundJobs(organizationId, 30));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load the Tally history");
+      setError(describePwtError(e, "Could not load the Tally history. Press Refresh."));
     } finally {
       setLoading(false);
     }
@@ -97,7 +98,7 @@ export function TallyHistoryDialog({ open, onOpenChange, organizationId }: Props
       }
       if (j.status !== "failed") setProblems(await getInboundProblems(organizationId, j.id));
     } catch (e) {
-      toast({ variant: "destructive", title: "Could not load the details", description: e instanceof Error ? e.message : String(e) });
+      toast({ variant: "destructive", title: "Could not load the details", description: describePwtError(e, "Please try again.") });
     } finally {
       setDetailLoading(false);
     }
@@ -112,7 +113,7 @@ export function TallyHistoryDialog({ open, onOpenChange, organizationId }: Props
       setReverseJob(null);
       await load();
     } catch (e) {
-      toast({ variant: "destructive", title: "Reversal failed", description: e instanceof Error ? e.message : String(e) });
+      toast({ variant: "destructive", title: "Reversal failed", description: describePwtError(e, "Nothing was changed. Try again.") });
     } finally {
       setReversing(false);
     }

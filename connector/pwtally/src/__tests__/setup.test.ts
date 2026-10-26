@@ -108,3 +108,23 @@ describe("setup never closes silently", () => {
     expect(seen).toHaveLength(1);
   });
 });
+
+import { pairingAdvice } from "../setup.ts";
+import { explainNetworkError } from "../runtime.ts";
+
+describe("plain error messages", () => {
+  it("names the network problem and the host", () => {
+    const u = "https://pesowise-backup-supabase.unimisk.com/functions/v1/pwt-connector";
+    expect(explainNetworkError(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } }), u)).toMatch(/cannot find the PesoWise server \(pesowise-backup-supabase\.unimisk\.com\)/);
+    expect(explainNetworkError(new DOMException("signal timed out", "TimeoutError"), u)).toMatch(/did not answer in time/);
+    expect(explainNetworkError(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }), u)).toMatch(/refused the connection/);
+    expect(explainNetworkError(Object.assign(new TypeError("fetch failed"), { cause: { code: "CERT_HAS_EXPIRED" } }), u)).toMatch(/certificate problem/);
+    expect(explainNetworkError(new TypeError("fetch failed"), u)).toMatch(/cannot reach the PesoWise server/);
+  });
+  it("gives the right next step for each pairing failure", () => {
+    expect(pairingAdvice("network: this PC cannot reach the PesoWise server (x)")).toMatch(/Nothing is wrong with the code/);
+    expect(pairingAdvice("PesoWise API 401: invalid or expired pairing code")).toMatch(/wrong or expired/);
+    expect(pairingAdvice("PesoWise API 429: slow down")).toMatch(/Wait a minute/);
+    expect(pairingAdvice("PesoWise API 503: x")).toMatch(/server had a problem/);
+  });
+});

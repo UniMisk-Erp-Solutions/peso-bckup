@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom";
 import { AlertCircle, CheckCircle2, History, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { describePwtError } from "@/lib/pwt/pwtErrors";
 import {
   anyConnectorOnline, continuePwtJob, describePwtJob, isPwtActive, listPwtConnectors, listPwtJobs, startPwtSync, toPwtReportType,
   type PwtJob, type PwtSyncParams,
@@ -42,7 +43,7 @@ export function PwtSyncGroup({ organizationId, disabled = false, params, childre
       setJobs(all.filter((j) => j.report_type === report).slice(0, 10));
       setConnectorOnline(anyConnectorOnline(await listPwtConnectors(organizationId)));
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Could not load sync history");
+      setMessage(describePwtError(e, "Could not load the sync history. Refresh the page."));
     }
   }, [organizationId, report]);
 
@@ -105,7 +106,7 @@ export function PwtSyncGroup({ organizationId, disabled = false, params, childre
       setMessage(r.deduplicated ? "An identical sync is already running." : null);
       await refresh();
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Unable to start Tally sync");
+      setMessage(describePwtError(e, "The sync could not be started. Try again."));
     } finally {
       setStarting(false);
     }

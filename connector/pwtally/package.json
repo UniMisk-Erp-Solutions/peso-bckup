@@ -1,6 +1,6 @@
 {
   "name": "@pesowise/pwtally-connector",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "private": true,
   "description": "PesoWise TallyPrime connector (pwt): outbound HTTPS to PesoWise, local XML to TallyPrime",
   "scripts": {

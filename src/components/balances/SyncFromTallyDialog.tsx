@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { formatINR } from "@/lib/format";
+import { describePwtError } from "@/lib/pwt/pwtErrors";
 import { listPwtConnectors, anyConnectorOnline } from "@/lib/pwt/pwtSync";
 import {
   describeInboundJob, getInboundProblems, getInboundVoucherType, setInboundVoucherType, isInboundActive, lastSuccessful, listInboundJobs, PWT_INBOUND_STATE_LABEL,
@@ -64,7 +65,7 @@ export function SyncFromTallyDialog({ open, onOpenChange, organizationId, onSync
         }
       }
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Could not load sync status");
+      setMessage(describePwtError(e, "Could not load the sync status. Close and reopen this window."));
     }
   }, [organizationId, onSynced]);
 
@@ -93,7 +94,7 @@ export function SyncFromTallyDialog({ open, onOpenChange, organizationId, onSync
       setMessage(r.deduplicated ? "A sync is already running." : "Sync started. Reading vouchers from TallyPrime…");
       await refresh();
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Unable to start Sync from Tally");
+      setMessage(describePwtError(e, "Sync from Tally could not be started. Try again."));
     } finally {
       setStarting(false);
     }
@@ -106,7 +107,7 @@ export function SyncFromTallyDialog({ open, onOpenChange, organizationId, onSync
       setSavedType(voucherType.trim());
       setMessage("Voucher type saved. The next sync reads this exact type.");
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Could not save");
+      setMessage(describePwtError(e, "Could not save the voucher type. Try again."));
     }
   };
 

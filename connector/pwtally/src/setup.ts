@@ -105,8 +105,9 @@ export async function runSetup(d: SetupDeps): Promise<number> {
       try {
         await d.pair(code);
       } catch (e) {
-        d.say(`Pairing failed: ${(e as Error).message}`);
-        d.say("The code may be wrong or expired (15 minutes). Get a new code in PesoWise and run this setup again.");
+        const msg = (e as Error).message;
+        d.say(`Pairing failed: ${msg}`);
+        d.say(pairingAdvice(msg));
         return 1;
       }
     }
@@ -156,4 +157,13 @@ export function realDeps(opts: { destDir: string; pair: (code: string) => Promis
       spawn(exe, ["run"], { detached: true, stdio: "ignore", windowsHide: true, env }).unref();
     },
   };
+}
+
+/** What to do next, by the kind of failure. */
+export function pairingAdvice(message: string): string {
+  if (/^network:/i.test(message)) return "Nothing is wrong with the code. Fix the connection (see above), then run this setup again.";
+  if (/\b429\b/.test(message)) return "Too many tries in a short time. Wait a minute, then run this setup again with the same code.";
+  if (/\b5\d\d\b/.test(message)) return "The PesoWise server had a problem. Wait a minute and run this setup again with the same code (or get a new one).";
+  if (/must use https|no server address/i.test(message)) return "This installer is not set up correctly. Download it again from PesoWise and run it.";
+  return "The code may be wrong or expired (15 minutes). Get a new code in PesoWise and run this setup again.";
 }

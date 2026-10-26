@@ -16,7 +16,7 @@ export interface ConnectorConfig {
   pollSeconds: number;
 }
 
-export const APP_VERSION = "1.2.6";
+export const APP_VERSION = "1.2.7";
 
 export function dataDir(): string {
   const base = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
@@ -85,11 +85,31 @@ export class Api {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (this.cfg.deviceToken) headers.Authorization = `Bearer ${this.cfg.deviceToken}`;
     if (this.cfg.apiKey) headers.apikey = this.cfg.apiKey;
-    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) });
+    let res: Response;
+    try {
+      res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) });
+    } catch (e) {
+      throw new Error(explainNetworkError(e, url));
+    }
     const text = await res.text();
     let json: unknown = {};
     try { json = JSON.parse(text); } catch { /* non-json */ }
     if (!res.ok) throw new Error(`PesoWise API ${res.status}: ${(json as { error?: string }).error ?? text.slice(0, 120)}`);
     return json as T;
   }
+}
+
+/** "fetch failed" says nothing: name the real problem (no internet, name not found, refused, timed out, certificate) and the host. */
+export function explainNetworkError(e: unknown, url: string): string {
+  let host = url;
+  try { host = new URL(url).host; } catch { /* keep the raw text */ }
+  const err = e as { name?: string; message?: string; cause?: { code?: string; message?: string } };
+  const code = err.cause?.code ?? "";
+  const text = `${err.name ?? ""} ${err.message ?? ""} ${err.cause?.message ?? ""} ${code}`;
+  if (/TimeoutError|AbortError|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|timed out/i.test(text)) return `network: the PesoWise server (${host}) did not answer in time. Check the internet connection and try again.`;
+  if (/ENOTFOUND|EAI_AGAIN/i.test(text)) return `network: this PC cannot find the PesoWise server (${host}). Check the internet connection and DNS, then try again.`;
+  if (/ECONNREFUSED/i.test(text)) return `network: the PesoWise server (${host}) refused the connection. Try again in a few minutes.`;
+  if (/CERT|SSL|TLS|self.signed|unable to verify/i.test(text)) return `network: a secure connection to ${host} could not be made (certificate problem). Check the date and time on this PC and any proxy or antivirus web protection.`;
+  if (/ECONNRESET|socket hang up|EPIPE/i.test(text)) return `network: the connection to ${host} was cut. Try again.`;
+  return `network: this PC cannot reach the PesoWise server (${host}). Check the internet connection, firewall or proxy and try again.`;
 }

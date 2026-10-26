@@ -4,6 +4,7 @@
  * balance engine. The browser only starts the job and reads progress and results.
  */
 import { supabase } from "@/integrations/supabase/client";
+import { describePwtError, functionErrorText } from "@/lib/pwt/pwtErrors";
 
 export type PwtInboundStatus = "queued" | "fetching" | "processing" | "completed" | "needs_attention" | "failed" | "cancelled";
 
@@ -90,39 +91,23 @@ type RpcResult<T> = Promise<{ data: T | null; error: { message: string } | null 
 const rpc = <T,>(name: string, args: Record<string, unknown>): RpcResult<T> =>
   (supabase as unknown as { rpc: (n: string, a: Record<string, unknown>) => RpcResult<T> }).rpc(name, args);
 
-/** The edge function explains a refusal in its response body; the client only says "non-2xx", so read the body. */
-async function readFunctionError(error: { message?: string; context?: unknown }): Promise<string> {
-  try {
-    const res = error.context as Response | undefined;
-    if (res && typeof res.json === "function") {
-      const body = (await res.json()) as { error?: string };
-      if (body?.error) {
-        return /no Tally connector is paired/i.test(body.error)
-          ? "No Tally connector is paired for this organisation. Pair one (Admin > Tally) and keep that company open in TallyPrime."
-          : body.error;
-      }
-    }
-  } catch { /* fall back to the generic message */ }
-  return error.message ?? "";
-}
-
 export async function startInboundSync(organizationId: string): Promise<{ jobId: string; deduplicated: boolean }> {
   const { data, error } = await supabase.functions.invoke("pwt-inbound", { body: { action: "start", organization_id: organizationId } });
-  if (error) throw new Error((await readFunctionError(error)) || "Unable to start Sync from Tally");
+  if (error) throw new Error(await functionErrorText(error));
   const p = data as { accepted?: boolean; job_id?: string; deduplicated?: boolean; error?: string } | null;
-  if (!p?.accepted || !p.job_id) throw new Error(p?.error ?? "Unable to start Sync from Tally");
+  if (!p?.accepted || !p.job_id) throw new Error(describePwtError(p?.error, "Sync from Tally could not be started. Try again."));
   return { jobId: p.job_id, deduplicated: p.deduplicated === true };
 }
 
 export async function listInboundJobs(organizationId: string, limit = 10): Promise<PwtInboundJob[]> {
   const { data, error } = await rpc<PwtInboundJob[]>("pwt_inbound_list_jobs_v1", { p_organization_id: organizationId, p_limit: limit });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(describePwtError(error));
   return (data ?? []).map((j) => ({ ...j, imported_amount: Number(j.imported_amount) }));
 }
 
 export async function getInboundProblems(organizationId: string, jobId: string): Promise<PwtInboundProblem[]> {
   const { data, error } = await rpc<PwtInboundProblem[]>("pwt_inbound_job_problems_v1", { p_organization_id: organizationId, p_job_id: jobId });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(describePwtError(error));
   return (data ?? []).map((p) => ({ ...p, amount: Number(p.amount) }));
 }
 
@@ -134,7 +119,7 @@ export function lastSuccessful(jobs: PwtInboundJob[]): PwtInboundJob | undefined
 /** The exact Tally voucher type that carries employee payments (organisation setting; default "PesoWise Payment"). */
 export async function getInboundVoucherType(organizationId: string): Promise<string> {
   const { data, error } = await rpc<{ voucher_type: string }>("pwt_inbound_get_settings_v1", { p_organization_id: organizationId });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(describePwtError(error));
   return data?.voucher_type ?? "PesoWise Payment";
 }
 
@@ -142,5 +127,5 @@ export async function setInboundVoucherType(organizationId: string, voucherType:
   const name = voucherType.trim();
   if (!name) throw new Error("Enter the exact voucher type name used in TallyPrime.");
   const { error } = await rpc("pwt_inbound_set_voucher_type_v1", { p_organization_id: organizationId, p_voucher_type: name });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(describePwtError(error));
 }

@@ -4,6 +4,7 @@
  * the worker, the connector, or Tally.
  */
 import { supabase } from "@/integrations/supabase/client";
+import { describePwtError, functionErrorText } from "@/lib/pwt/pwtErrors";
 import { activeCustomFieldFilters } from "@/lib/detailedExpenseReportFilters";
 
 /** The report filters a sync is started with (the same values the report panel already holds). */
@@ -114,7 +115,10 @@ export function friendlyTallyError(error: string | null | undefined): string | n
     }
     return `Tally refused ${ids.length ? ids.join(", ") : "some vouchers"} because their date is outside this company's financial year. In Tally open Alter Company (Alt+F3) and set "Financial year beginning from" and "Books beginning from" to a date before the earliest expense month (for example 1-Apr-2026), then sync again. Vouchers already posted stay; only the rest are sent.`;
   }
-  return error;
+  if (/already exists in tally with different amounts/i.test(error)) {
+    return `${error.replace(/\s*-\s*manual review needed/i, "")}. Open that voucher in Tally, compare it with PesoWise, and fix or delete it in Tally before syncing again.`;
+  }
+  return describePwtError(error, error);
 }
 
 /** One short, actionable line for a job (never raw stack traces). */
@@ -161,9 +165,9 @@ export async function startPwtSync(
   const { data, error } = await supabase.functions.invoke("pwt-start-sync", {
     body: { organization_id: input.organizationId, report_type: report, parameters },
   });
-  if (error) throw new Error(error.message || "Unable to start Tally sync");
+  if (error) throw new Error(await functionErrorText(error));
   const p = data as { accepted?: boolean; job_id?: string; deduplicated?: boolean; error?: string } | null;
-  if (!p?.accepted || !p.job_id) throw new Error(p?.error ?? "Unable to start Tally sync");
+  if (!p?.accepted || !p.job_id) throw new Error(describePwtError(p?.error, "The sync could not be started. Try again."));
   return { jobId: p.job_id, deduplicated: p.deduplicated === true };
 }
 
@@ -179,19 +183,19 @@ export interface PwtSliceResult {
 
 export async function continuePwtJob(organizationId: string, jobId: string): Promise<PwtSliceResult> {
   const { data, error } = await supabase.functions.invoke("pwt-start-sync", { body: { action: "continue", organization_id: organizationId, job_id: jobId } });
-  if (error) throw new Error(error.message || "Could not continue the sync");
+  if (error) throw new Error(await functionErrorText(error));
   return (data ?? { claimed: false, done: false }) as PwtSliceResult;
 }
 
 export async function listPwtJobs(organizationId: string, limit = 10): Promise<PwtJob[]> {
   const { data, error } = await rpc<PwtJob[]>("pwt_list_jobs_v1", { p_organization_id: organizationId, p_limit: limit });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(describePwtError(error));
   return data ?? [];
 }
 
 export async function listPwtConnectors(organizationId: string): Promise<PwtConnector[]> {
   const { data, error } = await rpc<PwtConnector[]>("pwt_list_connectors_v1", { p_organization_id: organizationId });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(describePwtError(error));
   return data ?? [];
 }
 
@@ -214,13 +218,13 @@ export async function createPairingCode(organizationId: string, tallyCompany: st
     p_code_hash: await sha256Hex(code),
     p_tally_company: tallyCompany.trim(),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(describePwtError(error));
   return code;
 }
 
 export async function revokePwtConnector(organizationId: string, connectorId: string): Promise<void> {
   const { error } = await rpc("pwt_revoke_connector_v1", { p_organization_id: organizationId, p_connector: connectorId });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(describePwtError(error));
 }
 
 /* ------------------------------------------------------------------ mapping settings */
@@ -341,7 +345,7 @@ export function unmappedTypesFromJobs(jobs: PwtJob[]): string[] {
 
 export async function getPwtConfig(organizationId: string): Promise<PwtConfig | null> {
   const { data, error } = await rpc<PwtConfig | null>("pwt_get_config_v1", { p_organization_id: organizationId });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(describePwtError(error));
   return data;
 }
 
@@ -349,7 +353,7 @@ export async function savePwtConfig(organizationId: string, config: PwtConfig): 
   const problem = validatePwtConfig(config);
   if (problem) throw new Error(problem);
   const { error } = await rpc("pwt_save_config_v1", { p_organization_id: organizationId, p_config: config });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(describePwtError(error));
 }
 
 /** Built-in defaults shown when an organisation has not saved its own mapping yet (same as the server's). */

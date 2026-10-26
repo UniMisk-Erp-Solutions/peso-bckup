@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { describePwtError } from "@/lib/pwt/pwtErrors";
 import { describeDeletion, listPwtDeletions, PWT_DELETION_STATUS_LABEL, retryPwtDeletion, type PwtDeletion } from "@/lib/pwt/pwtDeletion";
 
 /**
@@ -18,7 +19,7 @@ export function PwtDeletionHistory({ organizationId }: { organizationId: string 
       setRows(await listPwtDeletions(organizationId, 10));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load corrections");
+      setError(describePwtError(e, "Could not load the corrections. Refresh the page."));
     }
   }, [organizationId]);
 
@@ -33,7 +34,7 @@ export function PwtDeletionHistory({ organizationId }: { organizationId: string 
       await retryPwtDeletion(organizationId, id);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Retry failed");
+      setError(describePwtError(e, "The retry did not work. Try again."));
     }
   };
 

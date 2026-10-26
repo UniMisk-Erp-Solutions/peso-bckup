@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PwtDeletionHistory } from "@/components/PwtDeletionHistory";
 import { useAuth } from "@/contexts/AuthContext";
+import { describePwtError } from "@/lib/pwt/pwtErrors";
 import { fetchExpenseCategoryNames } from "@/lib/fetchExpenseCategoryNames";
 import {
   createPairingCode, DEFAULT_PWT_CATEGORIES, describePwtJob, PWT_LEDGER_CHOICES, withNaRow, autoMapRules, getPwtConfig, listPwtConnectors, listPwtJobs, PWT_STATUS_LABEL,
@@ -87,7 +88,7 @@ export default function AdminPwTally() {
       setConnectors(c);
       setJobs(j);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load");
+      setError(describePwtError(e, "Could not load the Tally setup. Refresh the page."));
     }
   }, [organizationId]);
 
@@ -136,7 +137,7 @@ export default function AdminPwTally() {
       setCode(await createPairingCode(organizationId, company));
       setCodeAt(Date.now());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not create code");
+      setError(describePwtError(e, "Could not create the pairing code. Try again."));
     } finally {
       setBusy(false);
     }
@@ -161,7 +162,7 @@ export default function AdminPwTally() {
       setSavedRules(rules);
       setMapMsg("Saved.");
     } catch (e) {
-      setMapMsg(e instanceof Error ? e.message : "Could not save");
+      setMapMsg(describePwtError(e, "Could not save the mapping. Try again."));
     }
   };
   const autoMap = async () => {
