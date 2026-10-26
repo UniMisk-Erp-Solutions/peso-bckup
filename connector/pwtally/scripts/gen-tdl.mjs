@@ -81,16 +81,18 @@ L(
 );
 
 // Real vouchers: every ledger line of every voucher, with the voucher's date, reference and expense ledger (its first line).
-// Debit lines and any voucher that is not a PesoWise one are hidden at the Data Line; the totals count only the employee (credit) lines.
+// Only PesoWise vouchers (narration "PWT PESO/..") are read, and only their employee (credit) lines are listed. Both rules are COLLECTION filters
+// (verified through Tally's export: a Line "Invisible" rule hid the rows in the export but not on the Practice company's screen, which listed the
+// debit lines and a manual PesoWise Payment voucher). The totals count only the employee (credit) lines.
 const VCH_CR = 'if $IsDeemedPositive then 0 else (if $$Owner:$Narration Contains "PWT PESO/" then $$Number:$Amount else 0)';
 const VCH_ONE = 'if $IsDeemedPositive then 0 else (if $$Owner:$Narration Contains "PWT PESO/" then 1 else 0)';
-const VCH_HIDE = '$PWTDeem = "Yes" OR NOT $PWTId Contains "PWT PESO/"';
 L(
-  "[Collection : PWTVchSrc]", "Type : Voucher", "",
+  "[System : Formula]", 'PWT Ours : $Narration Contains "PWT PESO/"', 'PWT Credit Line : $PWTDeem = "No"', "",
+  "[Collection : PWTVchSrc]", "Type : Voucher", "Filter : PWT Ours", "",
   "[Collection : PWTVchLines]", "Source Collection : PWTVchSrc", "Walk : AllLedgerEntries",
   "Compute : PWTLed : $LedgerName", "Compute : PWTAmt : $Amount", "Compute : PWTExp : $$Owner:$LedgerName",
   "Compute : PWTDt : $$Owner:$Date", "Compute : PWTId : $$Owner:$Narration", "Compute : PWTDeem : $IsDeemedPositive",
-  `Compute : PWTCr : ${VCH_CR}`, `Compute : PWTOne : ${VCH_ONE}`, "",
+  `Compute : PWTCr : ${VCH_CR}`, `Compute : PWTOne : ${VCH_ONE}`, "Filter : PWT Credit Line", "",
 );
 
 for (const r of REPORTS) {
@@ -119,7 +121,7 @@ for (const r of REPORTS) {
     `[Part : ${P} Grid Part]`, `Line : ${P} Col Head Line, ${P} Data Line`, `Repeat : ${P} Data Line : ${SRC}`,
     "Scroll : Vertical", "Common Border : Yes", "",
     `[Line : ${P} Col Head Line]`, `Field : ${COLS.map((_, i) => `${P} H${i + 1}`).join(", ")}`, "Border : Thin Box",
-    `[Line : ${P} Data Line]`, `Field : ${COLS.map((_, i) => `${P} D${i + 1}`).join(", ")}`, "Border : Thin Bottom", ...(fromVouchers ? [`Invisible : ${VCH_HIDE}`] : []), "",
+    `[Line : ${P} Data Line]`, `Field : ${COLS.map((_, i) => `${P} D${i + 1}`).join(", ")}`, "Border : Thin Bottom", "",
   );
   COLS.forEach((c, i) => {
     L(

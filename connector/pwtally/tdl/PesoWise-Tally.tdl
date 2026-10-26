@@ -56,8 +56,13 @@ Height : 14
 Font : Arial
 Height : 11
 
+[System : Formula]
+PWT Ours : $Narration Contains "PWT PESO/"
+PWT Credit Line : $PWTDeem = "No"
+
 [Collection : PWTVchSrc]
 Type : Voucher
+Filter : PWT Ours
 
 [Collection : PWTVchLines]
 Source Collection : PWTVchSrc
@@ -70,6 +75,7 @@ Compute : PWTId : $$Owner:$Narration
 Compute : PWTDeem : $IsDeemedPositive
 Compute : PWTCr : if $IsDeemedPositive then 0 else (if $$Owner:$Narration Contains "PWT PESO/" then $$Number:$Amount else 0)
 Compute : PWTOne : if $IsDeemedPositive then 0 else (if $$Owner:$Narration Contains "PWT PESO/" then 1 else 0)
+Filter : PWT Credit Line
 
 [Report : PWT DE List]
 Use : DSP Template
@@ -131,7 +137,6 @@ Border : Thin Box
 [Line : PWT DE Data Line]
 Field : PWT DE D1, PWT DE D2, PWT DE D3, PWT DE D4, PWT DE D5
 Border : Thin Bottom
-Invisible : $PWTDeem = "Yes" OR NOT $PWTId Contains "PWT PESO/"
 
 [Field : PWT DE H1]
 Use : Short Name Field
