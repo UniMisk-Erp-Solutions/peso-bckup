@@ -427,6 +427,7 @@ supabase/tests/pwt_deletion/              database acceptance tests
 
 | Date | Revision | Author | Notes |
 |------|----------|--------|-------|
+| 2026-10-26 | 1.16 | Agent | The 16 pwt migrations were applied to the backup database after its production restore (it had no Tally tables); schema cache reloaded and checked. See DOC-142 section 11a. |
 | 2026-10-26 | 1.15 | Agent | The TDL generator on main now carries the filter fix (only `PWT PESO/` vouchers and only their employee lines; no manual vouchers or debit lines) that had only existed in the working tree; the published setup exe was rebuilt from main with that TDL and the backup server address (SHA-256 BFEDB4B6…351D). Pushed to the peso-bckup repo only. |
 | 2026-10-24 | 1.14 | Agent | Tally History Reverse Import no longer asks for a reason (the ledger records "Reversed from Tally History"). |
 | 2026-10-24 | 1.13 | Agent | Tally History: Details shows one row per employee (before, added, after, note) plus the vouchers that were not imported; "Reverse Import" (reason required) reverses a sync with the same balance engine as Import History. The job list now returns batch_id and batch_status. Migration 20261024140000_pwt_inbound_list_batch.sql (apply manually; without it the dialog still lists syncs but without per-employee rows or Reverse). |

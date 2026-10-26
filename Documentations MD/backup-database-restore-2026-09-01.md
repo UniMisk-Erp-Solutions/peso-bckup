@@ -324,3 +324,11 @@ operator as a cluster dump (`Pesowise-main_db.sql.gz`) and a MinIO data archive 
   random) are present.
 - **Rollback:** `/tmp/pre_restore_postgres_20261024.dump` (186 MB, custom format) on the server, taken before the restore.
 - All 14 containers healthy; PostgREST, Auth and Storage APIs and `peso-backup.vercel.app` return 200.
+
+### 11a) Tally tables re-applied (2026-10-26)
+Because the 2026-10-19 production snapshot has no Tally integration, the backup site's Tally page failed with "Could not find the function
+public.pwt_list_connectors_v1 ... in the schema cache". The 16 `pwt_*` migrations (20261016120000 ... 20261024140000) were applied to the
+backup database in order (all succeeded, empty tables), then PostgREST's schema cache was reloaded (`NOTIFY pgrst, 'reload schema'`).
+Verified: 17 `pwt_*` tables, 46 `pwt` functions, the `pwt_expense_edited` trigger, every `pwt_*_v1` RPC the website and edge functions call exists,
+the admin RPCs return empty lists for MicroLink, creating a pairing code works (checked inside a rolled-back transaction), and the five
+`pwt-*` edge functions answer (401/400 without a valid token). Production was not touched.

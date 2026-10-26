@@ -637,3 +637,4 @@ Use **DOC-113** for the next new document in `Documentations MD/`. DOC-111 [Repo
 | 2026-10-24 | DOC-142 extended (section 11): the backup instance was restored again from the 2026-10-19 production snapshot (database and files); Tally tables not carried over; rollback snapshot kept on the server. | Agent |
 | 2026-10-24 | **Registered DOC-148: deleted-bill archive** (server-side only record of removed bills by employee). Next ID: DOC-149. | Agent |
 | 2026-10-26 | DOC-147 revised (1.15): TDL filter fix reaches main; setup exe rebuilt from main for the backup server. | Agent |
+| 2026-10-26 | DOC-142 section 11a + DOC-147 rev 1.16: Tally migrations re-applied to the backup database; ready for end-to-end tests. | Agent |
