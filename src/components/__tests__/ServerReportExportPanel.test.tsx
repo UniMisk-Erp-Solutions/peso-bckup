@@ -968,6 +968,6 @@ describe("ServerReportExportPanel", () => {
 
   it("the PesoWise-Tally sync control is rendered only for Detailed Expense (flag VITE_PWT_SYNC is build-time, so checked in source)", () => {
     const src = readFileSync(resolve(process.cwd(), "src/components/ServerReportExportPanel.tsx"), "utf8");
-    expect(src).toContain(`enableTallySync && PWT_SYNC_ENABLED && reportType === "detailed_expense"`);
+    expect(src).toContain(`enableTallySync && pwtSyncEnabled && reportType === "detailed_expense"`);
   });
 });

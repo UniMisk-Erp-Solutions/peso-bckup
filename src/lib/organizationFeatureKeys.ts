@@ -64,6 +64,13 @@ export const ORGANIZATION_FEATURE_KEYS = {
    * exist. See src/lib/expenseDateLocks.ts.
    */
   expense_date_locking: "expense_date_locking",
+  /**
+   * PesoWise-Tally integration (Tally integration page, Sync to Tally on the
+   * reports, Sync from Tally on Balances). Default OFF for every company: no
+   * organization_features row means off. Also requires the deployment to be
+   * built with VITE_PWT_SYNC=1 (see src/lib/pwtSyncGate.ts).
+   */
+  tally_integration: "tally_integration",
 } as const;
 
 export type OrganizationFeatureKey = (typeof ORGANIZATION_FEATURE_KEYS)[keyof typeof ORGANIZATION_FEATURE_KEYS];
@@ -171,6 +178,11 @@ export const MASTER_ADMIN_FEATURE_DEFINITIONS: FeatureDefinition[] = [
   {
     key: ORGANIZATION_FEATURE_KEYS.expense_date_locking,
     labelKey: "features.expenseDateLocking",
+    requiresSubdomain: false,
+  },
+  {
+    key: ORGANIZATION_FEATURE_KEYS.tally_integration,
+    labelKey: "features.tallyIntegration",
     requiresSubdomain: false,
   },
 ];

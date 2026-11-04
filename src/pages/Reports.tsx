@@ -44,6 +44,7 @@ import { useExpenseCustomFieldFilters } from "@/hooks/useExpenseCustomFieldFilte
 import { ExpenseCustomFieldFilters } from "@/components/ExpenseCustomFieldFilters";
 import { ServerReportExportPanel } from "@/components/ServerReportExportPanel";
 import { hasApprovalHierarchy, hasTeamsEnabled } from "@/lib/orgFeatureGates";
+import { isPwtSyncEnabled } from "@/lib/pwtSyncGate";
 import {
   fetchTeamMemberUserIds,
   fetchTeamScopedExpenses,
@@ -1875,6 +1876,7 @@ export default function Reports({ teamScoped = false, selfOnly = false }: Report
                 category={selectedCategory}
                 engineerStatus={engineerStatus}
                 enableTallySync={userRole === "admin" && !teamScoped}
+                pwtSyncEnabled={isPwtSyncEnabled(hasOrganizationFeature)}
                 syncCustomFieldFilters={customFieldFilters}
               />
             </CardContent>
@@ -1977,6 +1979,7 @@ export default function Reports({ teamScoped = false, selfOnly = false }: Report
                 category={selectedCategory}
                 engineerStatus={engineerStatus}
                 enableTallySync={userRole === "admin" && !teamScoped}
+                pwtSyncEnabled={isPwtSyncEnabled(hasOrganizationFeature)}
                 syncCustomFieldFilters={customFieldFilters}
               />
             </CardContent>
@@ -2151,6 +2154,7 @@ export default function Reports({ teamScoped = false, selfOnly = false }: Report
                 selectedMonth={selectedMonth}
                 selectedWeek={selectedWeek}
                 enableTallySync={userRole === "admin" && !teamScoped}
+                pwtSyncEnabled={isPwtSyncEnabled(hasOrganizationFeature)}
               />
             </CardContent>
           </Card>
@@ -2245,6 +2249,7 @@ export default function Reports({ teamScoped = false, selfOnly = false }: Report
                   teamScoped={teamScoped}
                   disabled={!dailyConfigReady}
                   enableTallySync={userRole === "admin" && !teamScoped}
+                  pwtSyncEnabled={isPwtSyncEnabled(hasOrganizationFeature)}
                 />
               </CardContent>
             </Card>

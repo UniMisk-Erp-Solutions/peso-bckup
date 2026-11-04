@@ -2,7 +2,7 @@
 
 **Doc ID:** DOC-147  
 **Status:** in progress  
-**Last updated:** 2026-10-22  
+**Last updated:** 2026-11-04  
 **Owner / area:** Tally integration (system, mapping, operation, build history)  
 
 ---
@@ -352,9 +352,24 @@ Every step was built test-first against **real TallyPrime** (through its XML int
 
 1. Apply the migrations in order to the project's own database.
 2. Copy `pwt-*` functions and `_shared/pwt` into the project's edge-runtime container (stream a file into the container; the host volume is root-owned). Check each file's checksum against the repository.
-3. Website: `VITE_PWT_SYNC=1`, redeploy.
+3. Website: `VITE_PWT_SYNC=1`, redeploy. This is only the build-level switch: it makes the integration exist in the deployment. A company sees it only after Master Admin turns on the **Tally integration** feature for it (next section).
 4. Installer: `node connector/pwtally/scripts/build.mjs`, `gen-tdl.mjs`, `build-installer.mjs`; commit the new installer in `public/downloads/` (the only file of that folder that is committed).
 5. Per customer: pair with a code, load the TDL, map ledgers; nothing else.
+
+### Per-company switch: the "Tally integration" feature (added 2026-11-04)
+
+**Requirement.** The build flag applied to every company on a deployment, so every admin (for example Patidar Travels) saw the Tally menu whether or not they use Tally.
+
+**Solution.** A per-company feature flag `tally_integration` (stored in `organization_features`, default **off**; no row means off). It appears as a checkbox, "Tally integration", in the Master Admin company feature list for every company, next to the other feature checkboxes. The integration is visible for a company only when **both** the build flag (`VITE_PWT_SYNC=1`) and this feature are on. It controls:
+
+- the **Tally integration** sidebar item and the `/admin/pwtally` page (a company without the feature is redirected to the dashboard);
+- **Sync to Tally** on Detailed Expense and the **Sync from Tally** controls on Balances.
+
+**Database / migrations.** None. `organization_features.feature_key` is free text, so no migration or backfill is needed; every existing company starts off. To use it for a company, tick the checkbox in Master Admin.
+
+**Key files.** `src/lib/pwtSyncGate.ts`, `src/lib/organizationFeatureKeys.ts`, `src/components/PwtFeatureGate.tsx`, `src/components/AppSidebar.tsx`, `src/App.tsx`, `src/pages/Balances.tsx`, `src/pages/Reports.tsx`, `src/components/ServerReportExportPanel.tsx`. The label text (`features.tallyIntegration`) already existed in `src/locales/{en,hi,gu}/master.json`.
+
+**Test plan.** `src/lib/__tests__/pwtSyncGate.test.ts` (both switches required; definition listed for every company). Manual: a company with the feature off shows no Tally menu and `/admin/pwtally` redirects; after ticking the checkbox the menu, page and sync buttons appear.
 
 ### Troubleshooting
 
@@ -427,6 +442,7 @@ supabase/tests/pwt_deletion/              database acceptance tests
 
 | Date | Revision | Author | Notes |
 |------|----------|--------|-------|
+| 2026-11-04 | 1.3 | Agent | Per-company "Tally integration" feature flag (Master Admin checkbox, default off for every company) gates the Tally menu, page and sync buttons together with the build flag; no migration. |
 | 2026-10-26 | 1.17 | Agent | Plain, specific error messages for every failure of the Tally features: new `src/lib/pwt/pwtErrors.ts` (`describePwtError`, `functionErrorText`) turns network loss, expired login, no permission, no connector paired, bad/expired pairing code, a sync too large for the server (statement timeout), missing server setup, rate limits, timeouts, TallyPrime offline, wrong company open, voucher conflicts and server errors into one sentence that says what happened and what to do; used by Sync to Tally, Sync from Tally, Tally History, Corrections and the Tally setup page. Connector 1.2.7: network failures name the host and the cause (no internet / name not found / refused / timed out / certificate), and setup gives the right next step per failure. |
 | 2026-10-26 | 1.16 | Agent | The 16 pwt migrations were applied to the backup database after its production restore (it had no Tally tables); schema cache reloaded and checked. See DOC-142 section 11a. |
 | 2026-10-26 | 1.15 | Agent | The TDL generator on main now carries the filter fix (only `PWT PESO/` vouchers and only their employee lines; no manual vouchers or debit lines) that had only existed in the working tree; the published setup exe was rebuilt from main with that TDL and the backup server address (SHA-256 BFEDB4B6…351D). Pushed to the peso-bckup repo only. |

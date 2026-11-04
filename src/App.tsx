@@ -18,6 +18,7 @@ import { TenantHostRedirect } from "@/components/TenantHostRedirect";
 import { Layout } from "@/components/Layout";
 import { PageLoadingSkeleton } from "@/components/PageLoadingSkeleton";
 import Auth from "./pages/Auth";
+import { PwtFeatureGate } from "./components/PwtFeatureGate";
 import HomePage from "./pages/marketing/HomePage";
 import FeaturesPage from "./pages/FeaturesPage";
 import HowItWorksPage from "./pages/HowItWorksPage";
@@ -327,7 +328,9 @@ const App = () => (
               <ProtectedRoute allowedRoles={["admin"]}>
                 <Layout>
                   <LazyPage>
-                    <AdminPwTally />
+                    <PwtFeatureGate>
+                      <AdminPwTally />
+                    </PwtFeatureGate>
                   </LazyPage>
                 </Layout>
               </ProtectedRoute>
