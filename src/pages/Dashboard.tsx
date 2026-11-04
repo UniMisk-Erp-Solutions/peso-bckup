@@ -132,6 +132,8 @@ export default function Dashboard() {
   const backendHealth = useDashboardBackendHealth();
   const dashboardSubscriptionActiveRef = useRef(false);
   const dashboardReconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The ONE live dashboard notification channel (reconnects replace it; cleanup always removes the current one). */
+  const dashboardChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   // Monotonic token: a slower/older fetchStats() can never overwrite newer stats.
   const statsSeqRef = useRef(0);
   // Collapse bursts of realtime events into a single background refresh.
@@ -377,13 +379,17 @@ export default function Dashboard() {
   };
 
 
+  // Notification channel + polling fallback. Keyed by (user, organization) ONLY. It used to also depend on
+  // userRole, which resolves AFTER the user id, so every page load tore the channel down and rebuilt it
+  // ("Setting up / Cleaning up / Setting up") for no reason, while the organization the handlers filter
+  // on was captured stale. Now it re-subscribes exactly when the user or organization really changes.
   useEffect(() => {
     if (!user?.id) return;
 
     dashboardSubscriptionActiveRef.current = true;
 
     try {
-      const cleanup = setupRealtimeSubscription();
+      setupRealtimeSubscription();
 
       const pollInterval = setInterval(() => {
         if (!dashboardSubscriptionActiveRef.current) return;
@@ -393,38 +399,6 @@ export default function Dashboard() {
           console.warn("Error polling notifications:", error);
         }
       }, 60000);
-
-      // Set up real-time subscription for return requests (cashiers only)
-      let requestsCleanup = () => {};
-      if (userRole === "cashier") {
-        try {
-          const requestsChannel = supabase
-            .channel(`cashier-return-requests-${user.id}`)
-            .on('postgres_changes',
-              {
-                event: '*',
-                schema: 'public',
-                table: 'money_return_requests',
-                filter: `cashier_id=eq.${user.id}`
-              },
-              () => {
-                console.log('Return request updated, refreshing...');
-                fetchReturnRequests();
-              }
-            )
-            .subscribe();
-          
-          requestsCleanup = () => {
-            try {
-              supabase.removeChannel(requestsChannel);
-            } catch (error) {
-              console.warn("Error removing requests channel:", error);
-            }
-          };
-        } catch (error) {
-          console.warn("Could not set up return requests subscription:", error);
-        }
-      }
 
       return () => {
         dashboardSubscriptionActiveRef.current = false;
@@ -437,19 +411,56 @@ export default function Dashboard() {
           realtimeRefreshTimeoutRef.current = null;
         }
         try {
-          cleanup();
+          // Remove whichever channel is current (a reconnect may have replaced the original).
+          const current = dashboardChannelRef.current;
+          dashboardChannelRef.current = null;
+          if (current) {
+            console.log('Cleaning up dashboard notification subscription');
+            supabase.removeChannel(current);
+          }
           clearInterval(pollInterval);
-          requestsCleanup();
         } catch (error) {
           console.warn("Error during cleanup:", error);
         }
       };
     } catch (error) {
       console.error("Error setting up dashboard subscriptions:", error);
-      // Return empty cleanup function to prevent errors
       return () => {};
     }
-  }, [user?.id, userRole]);
+  }, [user?.id, organizationId]);
+
+  // Cashier-only return-request channel: depends on being a cashier, not on every role change.
+  const isCashier = userRole === "cashier";
+  useEffect(() => {
+    if (!user?.id || !isCashier) return;
+    let requestsChannel: ReturnType<typeof supabase.channel> | null = null;
+    try {
+      requestsChannel = supabase
+        .channel(`cashier-return-requests-${user.id}`)
+        .on('postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'money_return_requests',
+            filter: `cashier_id=eq.${user.id}`
+          },
+          () => {
+            console.log('Return request updated, refreshing...');
+            fetchReturnRequests();
+          }
+        )
+        .subscribe();
+    } catch (error) {
+      console.warn("Could not set up return requests subscription:", error);
+    }
+    return () => {
+      try {
+        if (requestsChannel) supabase.removeChannel(requestsChannel);
+      } catch (error) {
+        console.warn("Error removing requests channel:", error);
+      }
+    };
+  }, [user?.id, isCashier]);
 
   const fetchStatsPartial = async (opts?: { background?: boolean }) => {
     try {
@@ -695,7 +706,7 @@ export default function Dashboard() {
       supabase.removeChannel(existingChannel);
     }
 
-    const channel = supabase
+    const channel: ReturnType<typeof supabase.channel> = supabase
       .channel(channelName)
       .on('postgres_changes', 
         { 
@@ -755,8 +766,9 @@ export default function Dashboard() {
         }
       });
 
+      dashboardChannelRef.current = channel;
       return () => {
-        console.log('Cleaning up dashboard notification subscription');
+        if (dashboardChannelRef.current === channel) dashboardChannelRef.current = null;
         supabase.removeChannel(channel);
       };
     };

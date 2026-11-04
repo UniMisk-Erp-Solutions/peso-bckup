@@ -17,7 +17,7 @@ await db.exec(`
   create table public.expenses(id uuid primary key, organization_id uuid, approval_tier text, deleted_at timestamptz, transaction_number text);
 `);
 for (const f of [
-  "20261016120000_pwt_foundation.sql", "20261016130000_pwt_config_rpcs.sql", "20261019100000_pwt_deletion_sync.sql",
+  "20261016120000_pwt_foundation.sql", "20261016130000_pwt_config_rpcs.sql", "20261019110000_pwt_deletion_sync.sql",
   "20261019140000_pwt_registry_per_company.sql", "20261019150000_pwt_resumable_prepare.sql", "20261021100000_pwt_report_rows_setting.sql",
   "20261021140000_pwt_prepare_txns.sql", "20261021180000_pwt_posting_date_setting.sql",
 ]) await db.exec(readFileSync(M + f, "utf8"));

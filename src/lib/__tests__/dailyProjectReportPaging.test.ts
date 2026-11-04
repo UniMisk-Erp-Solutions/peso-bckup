@@ -675,3 +675,24 @@ describe("output parity: legacy in-browser pipeline vs server-paged pipeline", (
     }
   });
 });
+
+describe("deterministic page errors are never retried (DOC-101 §11)", () => {
+  it("classifies database/auth/timeouts as non-transient and transport failures as transient", async () => {
+    const { isTransientPageError } = await import("../dailyProjectReportPaging");
+    expect(isTransientPageError({ code: "57014", message: "canceling statement due to statement timeout" })).toBe(false);
+    expect(isTransientPageError({ code: "42501", message: "not permitted to generate this report" })).toBe(false);
+    expect(isTransientPageError({ code: "PGRST301", message: "JWT expired" })).toBe(false);
+    expect(isTransientPageError({ code: "", message: "TypeError: Failed to fetch" })).toBe(true);
+    expect(isTransientPageError({ code: "", message: "NetworkError when attempting to fetch resource." })).toBe(true);
+    expect(isTransientPageError({ code: "", message: "upstream returned 503" })).toBe(true);
+    expect(isTransientPageError({ message: "something else" })).toBe(false);
+  });
+
+  it("a page_failed error flagged non-retryable fails on the first attempt (no repeat requests)", async () => {
+    const fetchPage = vi.fn(async (): Promise<DailyReportPage> => {
+      throw new DailyReportExportError("page_failed", "canceling statement due to statement timeout", { retryable: false });
+    });
+    await expect(runDailyProjectReportExport({ ...baseExport, fetchPage })).rejects.toMatchObject({ code: "page_failed" });
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+  });
+});

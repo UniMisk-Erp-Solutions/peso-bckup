@@ -21,6 +21,7 @@
     "employeeTransferHistory": "Employee Balance History (employees can view balance credits recorded to their account)",
     "historicalBalanceV2": "Historical Balance (Opening Balance, Balance Update, Tally import) -- requires backend update",
     "expenseFieldMemory": "Expense Field Memory (recently-used title/destination/purpose suggestions per employee)",
-    "expenseDateLocking": "Expense Date Locking (admins can block submissions for selected dates/months/ranges)"
+    "expenseDateLocking": "Expense Date Locking (admins can block submissions for selected dates/months/ranges)",
+    "tallyIntegration": "Tally Integration (sync reports to TallyPrime and import employee payments from Tally; needs the Tally connector)"
   }
 }

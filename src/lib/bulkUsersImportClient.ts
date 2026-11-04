@@ -64,10 +64,13 @@ export async function runBulkUsersImportInChunks(params: {
   rows: BulkUserCsvRow[];
   chunkSize?: number;
   invoke: (body: Record<string, unknown>) => Promise<BulkUsersImportResponse>;
+  /** Groups the chunked requests of one upload in the user-account audit history (DOC-158). Carries no identity. */
+  batchId?: string;
   onProgress?: (progress: { completed: number; total: number; chunk: number; chunks: number }) => void;
 }): Promise<BulkUsersImportResponse> {
   const { organizationId, dryRun, rows, invoke, onProgress } = params;
   const chunkSize = params.chunkSize ?? BULK_USERS_IMPORT_CHUNK_SIZE;
+  const batchId = params.batchId ?? `bulk-${crypto.randomUUID()}`;
   const sortedRows = sortBulkImportRows(rows);
   const batches = chunk(sortedRows, chunkSize);
 
@@ -87,6 +90,7 @@ export async function runBulkUsersImportInChunks(params: {
       organization_id: organizationId,
       dry_run: dryRun,
       skip_welcome_email: true,
+      batch_id: batchId,
       row_offset: rowOffset,
       rows: batch,
     });

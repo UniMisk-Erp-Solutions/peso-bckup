@@ -58,6 +58,8 @@ function loadPlausible(): void {
   const script = document.createElement("script");
   script.async = true;
   script.src = PLAUSIBLE_SRC;
+  // Analytics is non-critical: a blocked, offline or CORS-failing tag must never surface as an app error.
+  script.onerror = () => {};
   document.head.appendChild(script);
 
   // The allow-list in this file is the only thing that may report a pageview.
@@ -88,7 +90,11 @@ export function PlausibleAnalytics() {
     if (lastReported.current === path) return;
     lastReported.current = path;
 
-    window.plausible?.("pageview");
+    try {
+      window.plausible?.("pageview");
+    } catch {
+      /* analytics must never break navigation */
+    }
   }, [location.pathname]);
 
   return null;

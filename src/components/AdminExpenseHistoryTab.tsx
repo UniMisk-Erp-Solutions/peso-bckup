@@ -25,6 +25,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -215,6 +216,7 @@ export function AdminExpenseHistoryTab({ organizationId }: { organizationId: str
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Expense history</DialogTitle>
+            <DialogDescription>Every status change recorded for this expense, newest last.</DialogDescription>
           </DialogHeader>
           <ExpenseTimeline logs={selectedLogs} />
         </DialogContent>

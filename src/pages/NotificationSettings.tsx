@@ -1,91 +1,21 @@
-import { useEffect, useState } from "react";
 import { useTranslation } from "@/i18n";
-import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
+import { useNotificationSettings } from "@/hooks/useNotificationSettings";
+import type { NotificationSettings } from "@/lib/notificationSettings";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Bell, Volume2, VolumeX } from "lucide-react";
 
-interface NotificationSettings {
-  popup_enabled: boolean;
-  sound_enabled: boolean;
-  desktop_enabled: boolean;
-}
-
 export default function NotificationSettings() {
   const { t } = useTranslation(["settings", "common"]);
-  const { user } = useAuth();
   const { toast } = useToast();
-  const [loading, setLoading] = useState(true);
-  const [settings, setSettings] = useState<NotificationSettings>({
-    popup_enabled: true,
-    sound_enabled: true,
-    desktop_enabled: false,
-  });
-
-  useEffect(() => {
-    if (user) {
-      loadSettings();
-    }
-  }, [user]);
-
-  const loadSettings = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("notification_settings")
-        .eq("user_id", user?.id)
-        .maybeSingle();
-
-      if (!error && data?.notification_settings) {
-        setSettings({
-          popup_enabled: data.notification_settings.popup_enabled ?? true,
-          sound_enabled: data.notification_settings.sound_enabled ?? true,
-          desktop_enabled: data.notification_settings.desktop_enabled ?? false,
-        });
-      } else {
-        const stored = localStorage.getItem(`notification_settings_${user?.id}`);
-        if (stored) {
-          try {
-            setSettings(JSON.parse(stored));
-          } catch {
-            // use defaults
-          }
-        }
-      }
-    } catch {
-      const stored = localStorage.getItem(`notification_settings_${user?.id}`);
-      if (stored) {
-        try {
-          setSettings(JSON.parse(stored));
-        } catch {
-          // use defaults
-        }
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+  // ONE shared load per user (src/lib/notificationSettings.ts): no per-page request, no retry loop.
+  const { settings, loading, update } = useNotificationSettings();
 
   const saveSettings = async (newSettings: NotificationSettings) => {
     try {
-      setSettings(newSettings);
-
-      localStorage.setItem(`notification_settings_${user?.id}`, JSON.stringify(newSettings));
-
-      const { error } = await supabase
-        .from("profiles")
-        .update({
-          notification_settings: newSettings,
-        })
-        .eq("user_id", user?.id);
-
-      if (error) {
-        console.error("Error saving to database, using localStorage only:", error);
-      }
-
+      await update(newSettings);
       toast({
         title: t("notificationsPage.saved"),
         description: t("notificationsPage.savedHint"),

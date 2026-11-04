@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { NotificationPopup } from "@/components/NotificationPopup";
 import { useNavigate } from "react-router-dom";
 import { notificationMatchesOrg, userIdRealtimeFilter } from "@/lib/realtimeFilters";
+import { useNotificationSettings } from "@/hooks/useNotificationSettings";
 
 interface Notification {
   id: string;
@@ -24,21 +25,16 @@ interface Notification {
   created_at: string;
 }
 
-interface NotificationSettings {
-  popup_enabled: boolean;
-  sound_enabled: boolean;
-  desktop_enabled: boolean;
-}
-
 export function useNotificationManager() {
   const { user, organizationId } = useAuth();
   const navigate = useNavigate();
   const [activeNotifications, setActiveNotifications] = useState<Notification[]>([]);
-  const [settings, setSettings] = useState<NotificationSettings>({
-    popup_enabled: true,
-    sound_enabled: true,
-    desktop_enabled: false,
-  });
+  // Shared, server-backed preferences (one load per user). The realtime handlers below are created
+  // once per subscription, so they read the CURRENT value through this ref -- previously they closed
+  // over the first render's settings and ignored later changes until the next resubscribe.
+  const { settings } = useNotificationSettings();
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const isSettingUpRef = useRef(false);
@@ -49,12 +45,11 @@ export function useNotificationManager() {
   };
 
   useEffect(() => {
-    if (user) {
-      loadSettings();
+    if (user?.id) {
       // Request notification permission on mount
       requestNotificationPermission();
     }
-  }, [user]);
+  }, [user?.id]);
 
   const requestNotificationPermission = async () => {
     if ("Notification" in window && Notification.permission === "default") {
@@ -105,26 +100,8 @@ export function useNotificationManager() {
     };
   }, [user?.id, organizationId]);
 
-  const loadSettings = () => {
-    try {
-      const stored = localStorage.getItem(`notification_settings_${user?.id}`);
-      if (stored) {
-        setSettings(JSON.parse(stored));
-      } else {
-        // Default to enabled for Windows notifications
-        setSettings({
-          popup_enabled: true,
-          sound_enabled: true,
-          desktop_enabled: true,
-        });
-      }
-    } catch (error) {
-      console.error("Error loading notification settings:", error);
-    }
-  };
-
   const playNotificationSound = () => {
-    if (settings.sound_enabled) {
+    if (settingsRef.current.sound_enabled) {
       // Create a simple notification sound
       const audio = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIGWi77+efTRAMUKfj8LZjHAY4kdfyzHksBSR3x/DdkEAKFF606euoVRQKRp/g8r5sIQUrgc7y2Yk2CBhou+/nn00QDFCn4/C2YxwGOJHX8sx5LAUkd8fw3ZBAC");
       audio.volume = 0.3;
@@ -150,7 +127,7 @@ export function useNotificationManager() {
           badge: window.location.origin + "/HERO.png",
           tag: notification.id,
           requireInteraction: false,
-          silent: !settings.sound_enabled,
+          silent: !settingsRef.current.sound_enabled,
           timestamp: new Date(notification.created_at).getTime(),
           dir: "ltr",
         });
@@ -232,7 +209,7 @@ export function useNotificationManager() {
           };
 
           // Show popup if enabled
-          if (settings.popup_enabled) {
+          if (settingsRef.current.popup_enabled) {
             console.log('Adding notification to active notifications:', notification);
             setActiveNotifications(prev => {
               // Check if notification already exists to avoid duplicates
@@ -248,7 +225,7 @@ export function useNotificationManager() {
 
           // Show native Windows desktop notification (like WhatsApp) if enabled
           // This appears in Windows notification center
-          if (settings.desktop_enabled) {
+          if (settingsRef.current.desktop_enabled) {
             showDesktopNotification(notification);
           }
         }

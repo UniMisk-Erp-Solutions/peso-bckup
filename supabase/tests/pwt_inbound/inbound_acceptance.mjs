@@ -27,9 +27,9 @@ for (const f of ["20260819160000_balance_ledger.sql", "20260819162000_balance_im
 // idempotent re-run of the new migration
 await db.exec(readFileSync(M + "20261017100000_pwt_inbound_payments.sql", "utf8"));
 await db.exec(readFileSync(M + "20261022160000_pwt_inbound_deleted_same_type.sql", "utf8"));
-await db.exec(readFileSync(M + "20261023100000_pwt_inbound_match_by_code.sql", "utf8"));
-await db.exec(readFileSync(M + "20261024100000_pwt_inbound_cash_parent_ci.sql", "utf8"));
-await db.exec(readFileSync(M + "20261024140000_pwt_inbound_list_batch.sql", "utf8"));
+await db.exec(readFileSync(M + "20261030110000_pwt_inbound_match_by_code.sql", "utf8"));
+await db.exec(readFileSync(M + "20261030120000_pwt_inbound_cash_parent_ci.sql", "utf8"));
+await db.exec(readFileSync(M + "20261030130000_pwt_inbound_list_batch.sql", "utf8"));
 
 const ORG = "11111111-1111-1111-1111-111111111111", OTHER_ORG = "99999999-9999-9999-9999-999999999999";
 const ADMIN = "22222222-2222-2222-2222-222222222222", EMPL = "33333333-3333-3333-3333-333333333333";

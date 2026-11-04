@@ -89,7 +89,8 @@ export async function copyAttachmentsFromExpense(params: {
     .from("attachments")
     .select("filename, content_type, file_url, file_size")
     .eq("expense_id", sourceExpenseId)
-    .eq("organization_id", organizationId);
+    .eq("organization_id", organizationId)
+    .is("deleted_at", null);
 
   if (error || !sourceRows?.length) {
     throw new Error("Shared receipt could not be linked to this expense.");

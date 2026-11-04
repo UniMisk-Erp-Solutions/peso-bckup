@@ -228,6 +228,12 @@ export default function ExpenseBatchForm() {
   const sessionTempUploadMetaRef = useRef<Map<string, TempUploadMeta>>(new Map());
   const lineTempFilenamesRef = useRef<Map<string, Set<string>>>(new Map());
   const isSubmittingRef = useRef(false);
+  /**
+   * DOC-148: id of THIS logical batch. The SERVER maps it to one batch row and (id, line index) to
+   * one expense per line, so pressing "Retry failed lines" -- or retrying after a reload with the
+   * same id -- resolves to the same rows. A fresh id is minted only after a fully successful batch.
+   */
+  const clientBatchIdRef = useRef<string>(crypto.randomUUID());
 
   const translatedBaseFields = useMemo(
     () => translateBaseFieldConfig(baseFieldConfig, t),
@@ -335,6 +341,16 @@ export default function ExpenseBatchForm() {
     }
   };
 
+  /** The employee removed a bill: it must not be finalized for any line. */
+  const unregisterTempUpload = (storagePath: string, lineClientId?: string) => {
+    if (lineClientId) {
+      lineTempFilenamesRef.current.get(lineClientId)?.delete(storagePath);
+    } else {
+      sessionTempFilenamesRef.current.delete(storagePath);
+    }
+    sessionTempUploadMetaRef.current.delete(storagePath);
+  };
+
   const buildMetaRecord = (): Record<string, TempUploadMeta> => {
     const out: Record<string, TempUploadMeta> = {};
     sessionTempUploadMetaRef.current.forEach((v, k) => {
@@ -399,6 +415,11 @@ export default function ExpenseBatchForm() {
     meta: TempUploadMeta,
   ) => {
     registerTempUpload(storagePath, meta, clientId);
+    setReceiptTick((t) => t + 1);
+  };
+
+  const unregisterLineReceipt = (clientId: string, storagePath: string) => {
+    unregisterTempUpload(storagePath, clientId);
     setReceiptTick((t) => t + 1);
   };
 
@@ -777,6 +798,7 @@ export default function ExpenseBatchForm() {
             ? Array.from(sessionTempFilenamesRef.current)
             : undefined,
         metaByFilename: buildMetaRecord(),
+        clientBatchId: clientBatchIdRef.current,
       });
       setSubmitResult(result);
       const succeeded = result.results.filter((r) => r.ok).length;
@@ -843,9 +865,13 @@ export default function ExpenseBatchForm() {
         }
       }
 
-      sessionTempFilenamesRef.current.clear();
-      sessionTempUploadMetaRef.current.clear();
-      lineTempFilenamesRef.current.clear();
+      if (failed === 0) {
+        clientBatchIdRef.current = crypto.randomUUID(); // the next batch is a NEW logical batch
+        sessionTempFilenamesRef.current.clear();
+        sessionTempUploadMetaRef.current.clear();
+        lineTempFilenamesRef.current.clear();
+      }
+      // On a partial failure the temp receipt references are KEPT: a failed line may still need them.
 
       toast({
         title: "Batch submitted",
@@ -1140,6 +1166,7 @@ export default function ExpenseBatchForm() {
                 onDuplicate={duplicateLineAt}
                 onRemove={removeLine}
                 onReceiptUpload={registerLineReceipt}
+                onReceiptRemove={unregisterLineReceipt}
               />
             ) : (
               <>
@@ -1306,6 +1333,7 @@ export default function ExpenseBatchForm() {
                       attachmentLimit={attachmentLimit}
                       receiptCount={getReceiptCount(line.clientId)}
                       onUpload={(path, meta) => registerLineReceipt(line.clientId, path, meta)}
+                      onRemove={(path) => unregisterLineReceipt(line.clientId, path)}
                     />
                   )}
                 </div>
@@ -1426,6 +1454,10 @@ export default function ExpenseBatchForm() {
                     registerTempUpload(path, meta);
                     setReceiptTick((t) => t + 1);
                   }}
+                  onRemove={(path) => {
+                    unregisterTempUpload(path);
+                    setReceiptTick((t) => t + 1);
+                  }}
                 />
                 <p className="text-xs text-muted-foreground">
                   Shared bill for lines above the attachment threshold (same rules as single expenses).
@@ -1466,6 +1498,17 @@ export default function ExpenseBatchForm() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {submitResult.failureCount > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status">
+                <span>
+                  {submitResult.failureCount} line(s) were saved as drafts and not submitted. Retrying reuses those
+                  drafts - already submitted lines are not created again.
+                </span>
+                <Button size="sm" onClick={() => void handleSubmit()} disabled={loading}>
+                  {loading ? "Retrying…" : "Retry failed lines"}
+                </Button>
+              </div>
+            )}
             {isMobile ? (
               <div className="space-y-3">
                 {submitResult.results.map((r) => (

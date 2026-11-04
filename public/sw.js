@@ -1,5 +1,5 @@
 const CACHE_NAME_PREFIX = "pesowise-";
-const CACHE_VERSION = "pesowise-v13";
+const CACHE_VERSION = "pesowise-v14";
 // The web app manifest is deliberately NOT precached. It is host-specific (apex vs
 // tenant branding, id and start_url), so a cached copy could describe the wrong app.
 // It is fetched from the network on every request instead — see the fetch handler.
@@ -62,6 +62,9 @@ function shouldBypassCache(url) {
   return (
     path.startsWith("/api/") ||
     path.startsWith("/assets/") ||
+    // Installer downloads: never answer from here. This worker's offline fallback is index.html, which would be
+    // saved as a broken ".exe". The browser (and the host's real 404) handle these directly.
+    path.startsWith("/downloads/") ||
     path.includes("/rest/") ||
     path.includes("supabase")
   );

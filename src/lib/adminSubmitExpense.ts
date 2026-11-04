@@ -44,6 +44,11 @@ export type AdminSubmitExpenseInput = {
   /** Deduplicates a retried submit (network timeout, double click). Required
    * for the bulk path; generate a fresh one per attempt for the single form. */
   idempotencyKey?: string | null;
+  /**
+   * DOC-150 attach-first: id of the draft prepared with prepareExpenseForEmployee() and already
+   * given its bill. The RPC promotes THAT row instead of inserting a new one.
+   */
+  existingExpenseId?: string | null;
 };
 
 export type AdminSubmitExpenseResult = {
@@ -69,6 +74,10 @@ export class AdminSubmitExpenseError extends Error {
 function classifyRpcError(error: { message?: string; code?: string } | null | undefined): AdminSubmitExpenseError {
   const message = error?.message ?? "Unknown error";
   const lower = message.toLowerCase();
+  // DOC-150: the server refuses an above-threshold expense that has no live bill (attach-first).
+  if (lower.includes("bill photos are required")) {
+    return new AdminSubmitExpenseError("BILL_REQUIRED", message);
+  }
   if (error?.code === "28000" || lower.includes("authentication required")) {
     return new AdminSubmitExpenseError("UNAUTHENTICATED", message);
   }
@@ -119,7 +128,7 @@ function classifyRpcError(error: { message?: string; code?: string } | null | un
 export async function submitExpenseForEmployee(
   input: AdminSubmitExpenseInput,
 ): Promise<AdminSubmitExpenseResult> {
-  const { data, error } = await db.rpc("admin_submit_expense_for_employee_v2", {
+  const { data, error } = await db.rpc("admin_submit_expense_for_employee_v3", {
     p_organization_id: input.organizationId,
     p_employee_id: input.employeeId,
     p_title: input.title,
@@ -133,6 +142,7 @@ export async function submitExpenseForEmployee(
     p_status: input.status ?? "submitted",
     p_status_comment: input.statusComment ?? null,
     p_idempotency_key: input.idempotencyKey ?? null,
+    p_existing_expense_id: input.existingExpenseId ?? null,
   });
 
   if (error) throw classifyRpcError(error);
@@ -149,6 +159,42 @@ export async function submitExpenseForEmployee(
     customFieldsSaved: data.custom_fields_saved ?? 0,
     idempotentReplay: data.idempotent_replay === true,
   };
+}
+
+/**
+ * DOC-150 attach-first, step 1: create (or return, on a retry) the employee-owned DRAFT this admin is
+ * submitting for. `prepareKey` is a UUID minted once per form; the same key always resolves to the same
+ * row (unique logical identity), so a reload or lost response can never create a second expense.
+ */
+export async function prepareExpenseForEmployee(input: {
+  organizationId: string;
+  employeeId: string;
+  title: string;
+  destination: string;
+  tripStart: string;
+  tripEnd: string;
+  category: string;
+  amount: number;
+  purpose?: string | null;
+  prepareKey: string;
+}): Promise<{ expenseId: string; status: string; created: boolean }> {
+  const { data, error } = await db.rpc("admin_prepare_expense_for_employee_v1", {
+    p_organization_id: input.organizationId,
+    p_employee_id: input.employeeId,
+    p_title: input.title,
+    p_destination: input.destination,
+    p_trip_start: input.tripStart,
+    p_trip_end: input.tripEnd,
+    p_category: input.category,
+    p_amount: input.amount,
+    p_purpose: input.purpose ?? null,
+    p_idempotency_key: input.prepareKey,
+  });
+  if (error) throw classifyRpcError(error);
+  if (!data?.expense_id) {
+    throw new AdminSubmitExpenseError("EXPENSE_CREATE_FAILED", "The server did not return a prepared expense.");
+  }
+  return { expenseId: data.expense_id, status: data.status, created: data.created === true };
 }
 
 export type BulkSubmitRow = {
@@ -194,7 +240,7 @@ export async function submitBulkExpensesForEmployees(
 ): Promise<BulkSubmitRowResult[]> {
   const results: BulkSubmitRowResult[] = [];
   for (const batch of chunk(rows, BULK_SUBMIT_CHUNK_SIZE)) {
-    const { data, error } = await db.rpc("admin_bulk_submit_expenses_v2", {
+    const { data, error } = await db.rpc("admin_bulk_submit_expenses_v3", {
       p_organization_id: organizationId,
       p_rows: batch.map((row) => ({
         row_index: row.rowIndex,

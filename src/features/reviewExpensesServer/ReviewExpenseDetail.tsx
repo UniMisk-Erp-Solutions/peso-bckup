@@ -42,6 +42,7 @@ import { isUuidLikeLabel } from "@/lib/fetchExpenseFormFieldDisplay";
 import { ExpenseReviewTimeline } from "@/components/ExpenseReviewTimeline";
 import { ExpenseCorrectionAuditList } from "@/components/ExpenseCorrectionAudit";
 import { AttachmentPreviewDialog } from "@/components/AttachmentPreviewDialog";
+import { useExpensePreview } from "@/hooks/useExpensePreview";
 import { useOrganizationRoleLabels } from "@/hooks/useOrganizationRoleLabels";
 import { formatINR } from "@/lib/format";
 import { ReviewErrorState } from "./ReviewErrorState";
@@ -144,13 +145,12 @@ export function ReviewExpenseDetail({
   const { labels: roleLabels } = useOrganizationRoleLabels();
   const [rejectMode, setRejectMode] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewType, setPreviewType] = useState<string | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
 
   const e = (detail?.expense ?? {}) as Record<string, unknown>;
   const str = (k: string) => (typeof e[k] === "string" ? (e[k] as string) : null);
   const expenseId = str("id");
+  // The preview belongs to the expense that opened it: switching expense closes it on the same render.
+  const preview = useExpensePreview(expenseId);
   const amount = e.total_amount == null ? null : Number(e.total_amount);
 
   const identity = detail
@@ -391,9 +391,7 @@ export function ReviewExpenseDetail({
                             className="shrink-0"
                             data-testid={`review-attachment-view-${a.id}`}
                             onClick={() => {
-                              setPreviewUrl(a.file_url);
-                              setPreviewType(a.content_type);
-                              setPreviewOpen(true);
+                              preview.show(a.file_url, a.content_type ?? null, str("user_id"));
                             }}
                           >
                             View
@@ -617,10 +615,10 @@ export function ReviewExpenseDetail({
       </Dialog>
 
       <AttachmentPreviewDialog
-        open={previewOpen}
-        onOpenChange={setPreviewOpen}
-        url={previewUrl}
-        contentType={previewType}
+        open={preview.open}
+        onOpenChange={preview.setOpen}
+        url={preview.url}
+        contentType={preview.contentType}
         uploadedBy={str("user_id")}
         expenseId={expenseId}
       />

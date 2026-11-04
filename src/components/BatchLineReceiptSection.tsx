@@ -8,6 +8,8 @@ type BatchLineReceiptSectionProps = {
   attachmentLimit: number;
   receiptCount: number;
   onUpload: (storagePath: string, meta: TempUploadMeta) => void;
+  /** The employee removed an uploaded bill: forget its temp path. */
+  onRemove?: (storagePath: string) => void;
   compact?: boolean;
 };
 
@@ -16,6 +18,7 @@ export function BatchLineReceiptSection({
   attachmentLimit,
   receiptCount,
   onUpload,
+  onRemove,
   compact = false,
 }: BatchLineReceiptSectionProps) {
   const required = amount > attachmentLimit;
@@ -40,6 +43,9 @@ export function BatchLineReceiptSection({
       <FileUpload
         expenseId="new"
         required={required}
+        onAttachmentRemoved={(attachment) => {
+          if (attachment?.storage_path) onRemove?.(attachment.storage_path);
+        }}
         onUploadComplete={(attachment) => {
           if (
             attachment?.storage_path &&

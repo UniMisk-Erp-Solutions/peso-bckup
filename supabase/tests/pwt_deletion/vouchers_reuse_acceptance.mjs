@@ -18,7 +18,7 @@ await db.exec(`
   create table public.expenses(id uuid primary key, organization_id uuid, approval_tier text, deleted_at timestamptz, transaction_number text);
 `);
 for (const f of [
-  "20261016120000_pwt_foundation.sql", "20261019100000_pwt_deletion_sync.sql", "20261019140000_pwt_registry_per_company.sql",
+  "20261016120000_pwt_foundation.sql", "20261019110000_pwt_deletion_sync.sql", "20261019140000_pwt_registry_per_company.sql",
   "20261019150000_pwt_resumable_prepare.sql", "20261021140000_pwt_prepare_txns.sql", "20261021160000_pwt_vouchers_reuse_released.sql",
 ]) await db.exec(readFileSync(M + f, "utf8"));
 await db.exec(readFileSync(M + "20261021160000_pwt_vouchers_reuse_released.sql", "utf8")); // idempotent

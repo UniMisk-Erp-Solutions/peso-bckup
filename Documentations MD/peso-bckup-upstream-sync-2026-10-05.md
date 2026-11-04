@@ -2,7 +2,7 @@
 
 **Doc ID:** DOC-143
 **Status:** in progress — code merge committed locally on `sync/mithil-main-20261005` (**NOT merged to `main`, NOT pushed**); live `pesowise` database fully migrated (45/45) and verified. Push + edge-function deploy are held for the owner's go-ahead.
-**Last updated:** 2026-10-05
+**Last updated:** 2026-11-04
 **Owner / area:** Release / repo sync, Supabase backup instance (Coolify project `pesowise`)
 
 ---
@@ -220,6 +220,51 @@ newest commit must be a member of the Vercel team. Consequences and handling:
   history are visible. Backend state on the `pesowise` stack was verified read-only the same day: all `pwt_*`
   tables, 38 `pwt_*` functions and the five Tally edge functions are present.
 
+## 10) Second sync (2026-11-04): upstream `main` @ `51046ec`
+
+Upstream moved by 32 commits (303 files) since the 2026-10-05 base `f387456`: user-account audit history (upstream DOC-158), review attachment
+state race (DOC-159), PWA submit/upload reliability (DOC-157), deactivated users, stale-chunk recovery, scoped report access, attachment
+invariants, daily-project report fixes, `FUTURE_PLANS.md`. Same method as §3: explicit-base three-way merge (base `f387456`), single parent
+on `sync/mithil-main-20261104`, then audited path-by-path against `mithil/main` (the only files that differ are listed below).
+
+**Policy: Tally stays peso-bckup's own.** Upstream's `main` also carries the *production* variants of the Tally files. Not imported: the
+per-organization `tally_integration` flag (`pwtFeature.ts`, registry key, `20261030100000_pwt_org_feature_gate` + rollback + test), the
+production installer and its guard test, `tally-production-rollout-2026-10-23.md`, upstream's Tally rows (DOC-154/155/156), and its Tally
+test/doc variants. The gating in `AppSidebar.tsx`, `Balances.tsx` and `Reports.tsx` stays `VITE_PWT_SYNC` only. Also not imported: three
+deploy-trigger placeholder docs (`DUMMY_DOC*.md`, `deploy-trigger-note.md`). Mixed files: `.gitignore` takes upstream's database-dump
+rules (nothing weakened); `ServerReportExportPanel.tsx` gets upstream's *View Report* button inside the Sync redesign's action row.
+
+**Migration renames (collisions).** Three incoming upstream migrations shared a 14-digit version with peso-bckup's Tally ones
+(`npm run migrations:check` flagged all three), and upstream's tests load theirs by name, so the Tally files were renamed to the names
+production already uses. Contents are identical (100% renames); references in the tests and Tally docs were updated.
+
+| Old | New |
+|---|---|
+| `20261019100000_pwt_deletion_sync` | `20261019110000_pwt_deletion_sync` |
+| `20261023100000_pwt_inbound_match_by_code` | `20261030110000_pwt_inbound_match_by_code` |
+| `20261024100000_pwt_inbound_cash_parent_ci` | `20261030120000_pwt_inbound_cash_parent_ci` |
+| `20261024140000_pwt_inbound_list_batch` | `20261030130000_pwt_inbound_list_batch` |
+
+**Document IDs.** Five IDs name two documents (one per repository): DOC-140, 142, 143, 147, 148. Neither side was renumbered (a text replace
+would corrupt cross-references that mean different documents in each repository); upstream's rows and sections carry the qualifier
+"(upstream)". The Tally guide and system document are DOC-146 / DOC-147 here and DOC-154 / DOC-155 upstream (same files). Next ID: DOC-160.
+
+**Backup database state (read-only check, Coolify project `pesowise` only).** Of the 14 migrations that arrive, the function bodies of
+`20261007120000` to `20261029100000` already match the live database (it was restored from a production snapshot). **Not applied:**
+`20261027100000_profiles_notification_settings_v1` (column `profiles.notification_settings`; the frontend falls back safely),
+`20261031100000_user_account_audit_history_v1` (tables and 24 functions; the audit page has nothing to read until applied),
+`20261031120000_user_roles_privilege_escalation_fix` (the live database still has the permissive `user_roles` policies it removes),
+`20261031130000_user_account_audit_denial_snapshot_fix`, `20261101100000_review_detail_v2_active_attachments_ordered`. Edge functions changed upstream
+(`admin-create-user`, `admin-reset-password`, `admin-set-user-auth-status`, `admin-update-user-email`, `bulk-users-import`,
+`finalize-expense-receipts`, `run-report-export-job`, `_shared/accountAudit.ts`) are not deployed by a git push. **This sync changed no database
+and deployed no edge function;** applying them needs a backup, a rehearsal and the owner's go-ahead.
+
+**Verification.** `tsc`: 611 errors, every one present in the peso-bckup baseline (621) or upstream's (610). Full test run: only the four
+known baseline files fail (15 tests). `resync_perf.test.ts` (an absolute path from a developer machine) was fixed to a relative import.
+Tally database acceptance suites pass on the renamed migrations (inbound 55, deletion 41, edit 22, posting date 4, sliced preparation 17,
+per-company registry 10, voucher reuse 5); `security:secrets` clean; `migrations:check` passes (only the four approved historical
+duplicates); production build with `VITE_PWT_SYNC=1` succeeds.
+
 ## Revision log
 
 | Date | Notes |
@@ -227,3 +272,4 @@ newest commit must be a member of the Vercel team. Consequences and handling:
 | 2026-10-05 | Created. Explicit-base merge prepared on `sync/mithil-main-20261005`; DB 28/45 applied, halted on the Recycle Bin guard (WAL-lab data collision); push held. |
 | 2026-10-05 (later) | Owner authorized a minimal adjustment of the Recycle Bin guard (compare before/after deleted count). Applied it plus the remaining 16 migrations (45/45). Verified: counts/checksums, 115/115 function bodies in sync, anon-exec audit (185 -> 175), lab dry runs (rolled back), PostgREST reload, container health. Push and edge-function deploy still held. |
 | 2026-10-19 | Added §9: Vercel blocked every deployment of the Tally branch's commits (author not a Vercel team member); merged code was not live. Handled with a team-authored follow-up commit; flag and backend state documented. |
+| 2026-11-04 | Added §10: second sync (upstream `51046ec`); Tally kept as peso-bckup's own; four Tally migrations renamed to avoid version collisions; ID collisions qualified; backup database gap recorded (5 upstream migrations not applied). |

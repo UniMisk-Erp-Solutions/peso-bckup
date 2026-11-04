@@ -652,7 +652,7 @@ Each posting now also records the **employee ledger, expense ledger and serial**
 
 | Piece | File |
 |---|---|
-| Migration (tables, triggers, scan, claim/ack, admin RPCs, registry backfill) | `supabase/migrations/20261019100000_pwt_deletion_sync.sql` |
+| Migration (tables, triggers, scan, claim/ack, admin RPCs, registry backfill) | `supabase/migrations/20261019110000_pwt_deletion_sync.sql` |
 | Connector API | `supabase/functions/pwt-deletion/index.ts` (+ `[functions.pwt-deletion]` in `supabase/config.toml`) |
 | Planner records ledgers | `supabase/functions/_shared/pwt/aggregate.ts`, `prepare.ts`, `types.ts` |
 | Tally logic | `connector/pwtally/src/deletion.ts`; polled from `main.ts` after delivery |

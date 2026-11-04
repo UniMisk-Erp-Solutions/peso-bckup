@@ -49,6 +49,7 @@ import {
   missingCredentials,
   planCliResolution,
   checksumMatches,
+  sourcemapUploadRequired,
 } from "./lib/glitchtipCli.mjs";
 
 const DIST = resolve(process.cwd(), "dist");
@@ -240,7 +241,16 @@ async function main() {
     log(`uploading source maps for release ${release}…`);
     runCli(bin, ["sourcemaps", "upload", DIST, "--release", release, "--org", org, "--project", project]);
   } catch {
-    fail("source-map upload failed.");
+    if (sourcemapUploadRequired(process.env)) {
+      fail("source-map upload failed.");
+    }
+    // EMERGENCY MODE (GLITCHTIP_SOURCEMAP_REQUIRED=false), set deliberately while GlitchTip is unreachable. Only this
+    // external upload may be non-blocking; compile, tests, type-check and every earlier step above stay fatal.
+    log("WARNING: GlitchTip unavailable — sourcemap upload skipped/failed. Application build continues.");
+    log("WARNING: GLITCHTIP_SOURCEMAP_REQUIRED=false is an EMERGENCY setting. Stack traces for this release will NOT be");
+    log("WARNING: symbolicated. When GlitchTip is healthy, set GLITCHTIP_SOURCEMAP_REQUIRED=true (or remove it) and rebuild.");
+    pruneMaps("upload failed in non-blocking emergency mode");
+    return;
   }
 
   log("upload complete.");

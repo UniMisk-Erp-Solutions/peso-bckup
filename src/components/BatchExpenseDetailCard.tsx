@@ -79,7 +79,7 @@ export function BatchExpenseDetailCard({
         .order("date"),
       supabase
         .from("attachments")
-        .select("id, filename, content_type, file_url, created_at")
+        .select("*")
         .eq("expense_id", expense.id)
         .eq("organization_id", organizationId)
         .order("created_at"),
@@ -107,7 +107,9 @@ export function BatchExpenseDetailCard({
       })),
     );
     setAttachments(
-      (attRes.data || []).map((a) => ({
+      (attRes.data || [])
+        .filter((a) => !(a as { deleted_at?: string | null }).deleted_at)
+        .map((a) => ({
         ...a,
         file_url: normalizeReceiptPublicUrl(a.file_url || ""),
       })),

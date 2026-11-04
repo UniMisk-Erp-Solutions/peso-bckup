@@ -102,3 +102,16 @@ export function missingCredentials(env) {
     (k) => !env[k],
   );
 }
+
+/**
+ * EMERGENCY, REVERSIBLE switch (DOC-157 follow-up): is a successful source-map UPLOAD required for the build to pass?
+ *
+ * Strict (true) by default. Only an explicit "false" / "0" / "no" / "off" (any case) makes the UPLOAD step non-blocking,
+ * so a typo or an unknown value can never silently weaken the safeguard. This switch affects the network upload
+ * ONLY: CLI install, checksum, execution and debug-ID injection stay fatal, and the .map files are still removed
+ * from dist/ so original sources are never deployed.
+ */
+export function sourcemapUploadRequired(env) {
+  const raw = String(env?.GLITCHTIP_SOURCEMAP_REQUIRED ?? "").trim().toLowerCase();
+  return !["false", "0", "no", "off"].includes(raw);
+}

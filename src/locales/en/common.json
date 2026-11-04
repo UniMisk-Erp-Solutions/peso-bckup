@@ -76,7 +76,7 @@
     "preparing": "Preparing file…",
     "compressing": "Compressing file…",
     "serverCompress": "Trying server-side compression…",
-    "uploading": "Uploading compressed file…",
+    "uploading": "Uploading…",
     "mustLogin": "You must be logged in to upload files",
     "success": "Upload successful",
     "failed": "Upload failed",

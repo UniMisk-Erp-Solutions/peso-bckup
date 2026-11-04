@@ -151,5 +151,14 @@ tmp/**
 
 # PesoWise Tally connector build outputs published for the setup page
 public/downloads/*
-# the connector installer is a public download (embeds only the public API URL + publishable key)
+# The ONE published installer is the exception: it carries only the public API URL and the public (anon) key of this
+# environment, and the setup page links to it. It is rebuilt per release by connector/pwtally (npm run standalone).
+# Its contents are guarded by src/lib/pwt/__tests__/installerDownload.test.ts (right server, anon key only).
 !public/downloads/PesoWise-Tally-Setup.exe
+
+# Database dumps / backups hold real employee and expense data. Never commit (CLAUDE.md section 1).
+*_db.sql
+*_db.sql.gz
+Pesowise-main_*.sql
+updated-peso-backup.sql
+*-peso-backup.sql

@@ -11,20 +11,11 @@ import { useAuth } from "@/contexts/auth-context";
 import { useCashierCapabilities } from "@/hooks/useCashierCapabilities";
 import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
 import {
-  DAILY_PROJECT_REPORT_HEADERS,
   fetchOrganizationDailyReportConfig,
   isDailyReportConfigReady,
-  isDailyReportRowNeedsReview,
   type DailyExpenseReportConfig,
   type DailyProjectExpenseReportRow,
 } from "@/lib/dailyExpenseReportConfig";
-import { dailyReportResultsToRows, type DailyProjectExpenseReportBuildResult } from "@/lib/buildDailyProjectExpenseReport";
-import {
-  runDailyProjectReportExport,
-  DailyReportExportError,
-  type DailyReportExportProgress,
-} from "@/lib/dailyProjectReportPaging";
-import { downloadDailyProjectExpenseReportFile } from "@/lib/exportDailyProjectExpenseReport";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -51,7 +42,6 @@ import {
 } from "@/lib/expenseCustomFieldFilters";
 import { useExpenseCustomFieldFilters } from "@/hooks/useExpenseCustomFieldFilters";
 import { ExpenseCustomFieldFilters } from "@/components/ExpenseCustomFieldFilters";
-import { DailyReportSourceExpensesSheet } from "@/components/DailyReportSourceExpensesSheet";
 import { ServerReportExportPanel } from "@/components/ServerReportExportPanel";
 import { hasApprovalHierarchy, hasTeamsEnabled } from "@/lib/orgFeatureGates";
 import {
@@ -69,6 +59,8 @@ import {
 export type ReportsProps = {
   /** When true, only expenses for My Teams members are shown. */
   teamScoped?: boolean;
+  /** Employee self-report: server scope is hard-fixed to the caller (get_my_report_scope_v1). */
+  selfOnly?: boolean;
 };
 
 function chunkIds<T>(arr: T[], size: number): T[][] {
@@ -522,58 +514,10 @@ async function loadDetailedReport(p: DetailedParams): Promise<DetailedResult> {
   return { expenses, allocations };
 }
 
-interface DailyParams {
-  organizationId: string;
-  teamScoped: boolean;
-  teamMemberUserIds: string[];
-  selectedEmployee: string;
-  dailyPeriodMode: DailyPeriodMode;
-  dailyDateFrom: string;
-  dailyDateTo: string;
-  signal?: AbortSignal;
-  onProgress?: (progress: DailyReportExportProgress) => void;
-}
-
-/**
- * DOC-101 — server-paged Daily Project Report retrieval.
- *
- * Previously this called `fetchDailyProjectExpenseReportRows`, which pulled the
- * whole organization's approved expenses in one unbounded PostgREST request
- * (silently capped at 1000 rows) and then issued one custom-field request per
- * 75 expense ids. Now the server returns already-enriched report rows one
- * bounded page at a time, and the coordinator refuses to produce any result
- * unless it has proven it holds every row of the snapshot.
- *
- * The mapping config is no longer passed from the browser: the RPC reads
- * `organization_settings.daily_expense_report_config` itself.
- */
-async function loadDailyReport(p: DailyParams): Promise<DailyProjectExpenseReportBuildResult[]> {
-  const {
-    organizationId, teamScoped, teamMemberUserIds, selectedEmployee,
-    dailyPeriodMode, dailyDateFrom, dailyDateTo, signal, onProgress,
-  } = p;
-  const isAllTime = dailyPeriodMode === "all_time";
-
-  // A team-scoped report with no resolvable members has an empty population;
-  // asking the server for `user_id = ANY('{}')` would be a needless round trip.
-  if (teamScoped && teamMemberUserIds.length === 0) return [];
-
-  const outcome = await runDailyProjectReportExport({
-    organizationId,
-    dateFrom: isAllTime ? null : dailyDateFrom,
-    dateTo: isAllTime ? null : dailyDateTo,
-    userId: selectedEmployee !== "all" ? selectedEmployee : null,
-    userIds: teamScoped ? teamMemberUserIds : null,
-    teamScoped,
-    signal,
-    onProgress,
-  });
-  return outcome.results;
-}
-
-export default function Reports({ teamScoped = false }: ReportsProps) {
+export default function Reports({ teamScoped = false, selfOnly = false }: ReportsProps) {
   const { t } = useTranslation("reports");
   const {
+    user: authUser,
     organizationId,
     hasOrganizationFeature,
     userRole,
@@ -593,8 +537,16 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
     hasTeamsEnabled(featureCtx) || hasApprovalHierarchy(featureCtx);
   const canViewTeamReports =
     teamScoped &&
-    myTeamsEnabled &&
-    Boolean(userRole && TEAM_REPORTS_LEADER_ROLES.has(userRole));
+    (selfOnly
+      ? // Employee self-report: gated by the same teams_enabled flag, own data only.
+        hasTeamsEnabled(featureCtx) && userRole === "employee"
+      : myTeamsEnabled && Boolean(userRole && TEAM_REPORTS_LEADER_ROLES.has(userRole)));
+  const currentUserId = authUser?.id ?? null;
+  const allEmployeesLabel = selfOnly
+    ? "My expenses"
+    : teamScoped
+      ? "All (my expenses + my team)"
+      : "All employees";
   const canViewReports = teamScoped ? canViewTeamReports : canAccessReports;
   const { toast } = useToast();
   const dailyProjectReportEnabled = hasOrganizationFeature(
@@ -613,7 +565,7 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<
     "verification" | "approval" | "detailed" | "daily"
-  >("verification");
+  >(selfOnly ? "detailed" : "verification");
 
   // Common filters
   const [selectedEmployee, setSelectedEmployee] = useState<string>("all");
@@ -642,16 +594,11 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportTab, setExportTab] = useState<
     "verification" | "approval" | "detailed" | "daily"
-  >("verification");
+  >(selfOnly ? "detailed" : "verification");
 
   const [dailyDateFrom, setDailyDateFrom] = useState(defaultDailyDateFrom);
   const [dailyDateTo, setDailyDateTo] = useState(defaultDailyDateTo);
   const [dailyPeriodMode, setDailyPeriodMode] = useState<DailyPeriodMode>("all_time");
-  const [dailyReportSourceOpen, setDailyReportSourceOpen] = useState(false);
-  /** Live page progress for the server-paged Daily Project Report (DOC-101). */
-  const [dailyProgress, setDailyProgress] = useState<DailyReportExportProgress | null>(null);
-  const [selectedDailyReportResult, setSelectedDailyReportResult] =
-    useState<DailyProjectExpenseReportBuildResult | null>(null);
   const [dailyReportConfig, setDailyReportConfig] = useState<DailyExpenseReportConfig | null>(null);
   const [dailyConfigReady, setDailyConfigReady] = useState(false);
   const [teamMemberUserIds, setTeamMemberUserIds] = useState<string[]>([]);
@@ -707,7 +654,7 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
   // Report data is fetched via React Query (see useQuery hooks below).
   // Changing filters changes the query key → React Query auto-fetches.
 
-  // Daily report is fetched via React Query dailyQuery (see below).
+  // Daily report: generated server-side by ServerReportExportPanel (no browser paging loop).
 
   const employeeFilledSets = useMemo(() => {
     const out: Record<string, Set<string>> = {};
@@ -937,47 +884,6 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
     ...QUERY_DEFAULTS,
   });
 
-  const dailyQuery = useQuery({
-    queryKey: reportKeys.daily(
-      organizationId ?? "",
-      scopeKey,
-      selectedEmployee,
-      dailyPeriodMode,
-      dailyAllTime ? "all" : dailyDateFrom,
-      dailyAllTime ? "all" : dailyDateTo,
-      dailyConfigSignature,
-    ),
-    // React Query gives one in-flight fetch per key and hands us its
-    // AbortController, so a tab change / re-filter / unmount cancels the
-    // in-progress export instead of leaving pages racing (single-flight).
-    queryFn: async ({ signal }) => {
-      setDailyProgress({ received: 0, total: null, pages: 0 });
-      try {
-        return await loadDailyReport({
-          organizationId: organizationId!,
-          teamScoped,
-          teamMemberUserIds,
-          selectedEmployee,
-          dailyPeriodMode,
-          dailyDateFrom,
-          dailyDateTo,
-          signal,
-          onProgress: setDailyProgress,
-        });
-      } finally {
-        setDailyProgress(null);
-      }
-    },
-    enabled:
-      activeTab === "daily" &&
-      dailyProjectReportEnabled &&
-      dailyConfigReady &&
-      Boolean(organizationId) &&
-      canViewReports &&
-      teamScopeReady,
-    ...QUERY_DEFAULTS,
-  });
-
   // ── Realtime: invalidate report queries when expenses change ───────────────
   useEffect(() => {
     if (!organizationId) return;
@@ -1015,27 +921,6 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
   const approvalExpenses = approvalQuery.data ?? [];
   const detailedExpenses = detailedQuery.data?.expenses ?? [];
   const detailedAllocations = detailedQuery.data?.allocations ?? [];
-  const dailyReportResults = dailyQuery.data ?? [];
-  const dailyReportRows = useMemo(
-    () => dailyReportResultsToRows(dailyReportResults),
-    [dailyReportResults],
-  );
-
-  const dailyReviewRowCount = useMemo(
-    () => dailyReportRows.filter(isDailyReportRowNeedsReview).length,
-    [dailyReportRows],
-  );
-
-  // Active query drives RefreshBar and export-disable
-  const activeQuery =
-    activeTab === "verification"
-      ? verificationQuery
-      : activeTab === "approval"
-        ? approvalQuery
-        : activeTab === "detailed"
-          ? detailedQuery
-          : dailyQuery;
-
   const fetchCategories = async () => {
     if (!organizationId) {
       setCategories([]);
@@ -1588,15 +1473,6 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
     }
   };
 
-  const exportDailyProjectReport = (format: "xlsx" | "csv") => {
-    downloadDailyProjectExpenseReportFile({
-      rows: dailyReportRows,
-      dateFrom: dailyAllTime ? null : dailyDateFrom,
-      dateTo: dailyAllTime ? null : dailyDateTo,
-      format,
-    });
-  };
-
   const openExportDialog = (tab: "verification" | "approval" | "detailed" | "daily") => {
     if (tab === "daily" && !dailyConfigReady) {
       toast({
@@ -1614,9 +1490,6 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
     if (exportTab === "verification") exportVerificationList(format);
     else if (exportTab === "approval") exportApprovalList(format);
     else if (exportTab === "detailed") exportDetailedReport(format);
-    else if (exportTab === "daily" && (format === "csv" || format === "xlsx")) {
-      exportDailyProjectReport(format);
-    }
     setExportDialogOpen(false);
   };
 
@@ -1856,20 +1729,11 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
     return (
       <div className="flex items-center justify-center h-64">
         <p className="text-slate-500">
-          {teamScoped
-            ? "Team reports are available to managers, executives, and team leaders when My Teams is enabled."
-            : "Access denied."}
-        </p>
-      </div>
-    );
-  }
-
-  if (teamScoped && teamScopeReady && teamMemberUserIds.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-64 gap-2 px-4 text-center">
-        <p className="text-slate-600 font-medium">No team members found</p>
-        <p className="text-sm text-slate-500">
-          Reports will appear once employees are assigned to you as supervisor or on a formal team.
+          {selfOnly
+            ? "My Reports is not enabled for your organization."
+            : teamScoped
+              ? "Team reports are available to managers, executives, and team leaders when My Teams is enabled."
+              : "Access denied."}
         </p>
       </div>
     );
@@ -1879,12 +1743,16 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
     <div className="space-y-6 p-6">
       <div className="text-center space-y-2">
         <h1 className="text-3xl font-bold">
-          {teamScoped ? "Team Reports" : t("title")}
+          {selfOnly ? "My Reports" : teamScoped ? "Team Reports" : t("title")}
         </h1>
         <p className="text-sm text-slate-600">
-          {teamScoped
-            ? `Expense reports for your team only (${teamMemberUserIds.length} member${teamMemberUserIds.length === 1 ? "" : "s"}).`
-            : t("description")}
+          {selfOnly
+            ? "Scope: My expenses. You can only see your own expense records."
+            : teamScoped
+              ? teamMemberUserIds.length <= 1
+                ? "Scope: My expenses. Employees you manage will appear here automatically."
+                : `Scope: My team (my expenses + ${teamMemberUserIds.length - 1} team member${teamMemberUserIds.length - 1 === 1 ? "" : "s"}).`
+              : t("description")}
         </p>
       </div>
 
@@ -1895,8 +1763,8 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="verification">Claim Verification List</SelectItem>
-              <SelectItem value="approval">Claim Approval List</SelectItem>
+              {!selfOnly && <SelectItem value="verification">Claim Verification List</SelectItem>}
+              {!selfOnly && <SelectItem value="approval">Claim Approval List</SelectItem>}
               <SelectItem value="detailed">Detailed Expense Report</SelectItem>
               {dailyProjectReportEnabled && (
                 <SelectItem value="daily">{t("daily.tabTitle")}</SelectItem>
@@ -1905,10 +1773,14 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
           </Select>
         ) : (
           <TabsList
-            className={`grid w-full ${dailyProjectReportEnabled ? "grid-cols-2 md:grid-cols-4" : "grid-cols-3"}`}
+            className={`grid w-full ${
+              selfOnly
+                ? dailyProjectReportEnabled ? "grid-cols-2" : "grid-cols-1"
+                : dailyProjectReportEnabled ? "grid-cols-2 md:grid-cols-4" : "grid-cols-3"
+            }`}
           >
-            <TabsTrigger value="verification">Claim Verification List</TabsTrigger>
-            <TabsTrigger value="approval">Claim Approval List</TabsTrigger>
+            {!selfOnly && <TabsTrigger value="verification">Claim Verification List</TabsTrigger>}
+            {!selfOnly && <TabsTrigger value="approval">Claim Approval List</TabsTrigger>}
             <TabsTrigger value="detailed">Detailed Expense Report</TabsTrigger>
             {dailyProjectReportEnabled && (
               <TabsTrigger value="daily">{t("daily.tabTitle")}</TabsTrigger>
@@ -1934,10 +1806,10 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                         <SelectValue placeholder="All employees" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All employees</SelectItem>
-                        {users.map((u) => (
+                        <SelectItem value="all">{allEmployeesLabel}</SelectItem>
+                        {!selfOnly && users.map((u) => (
                           <SelectItem key={u.user_id} value={u.user_id}>
-                            {formatReportUserLabel(u)}
+                            {u.user_id === currentUserId ? "My expenses" : formatReportUserLabel(u)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -2027,10 +1899,10 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                         <SelectValue placeholder="All employees" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All employees</SelectItem>
-                        {users.map((u) => (
+                        <SelectItem value="all">{allEmployeesLabel}</SelectItem>
+                        {!selfOnly && users.map((u) => (
                           <SelectItem key={u.user_id} value={u.user_id}>
-                            {formatReportUserLabel(u)}
+                            {u.user_id === currentUserId ? "My expenses" : formatReportUserLabel(u)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -2129,10 +2001,10 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                       <SelectValue placeholder="All employees" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All employees</SelectItem>
-                      {users.map((u) => (
+                      <SelectItem value="all">{allEmployeesLabel}</SelectItem>
+                      {!selfOnly && users.map((u) => (
                         <SelectItem key={u.user_id} value={u.user_id}>
-                          {formatReportUserLabel(u)}
+                          {u.user_id === currentUserId ? "My expenses" : formatReportUserLabel(u)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -2343,76 +2215,26 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                           <SelectValue placeholder="All employees" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="all">All employees</SelectItem>
-                          {users.map((u) => (
+                          <SelectItem value="all">{allEmployeesLabel}</SelectItem>
+                          {!selfOnly && users.map((u) => (
                             <SelectItem key={u.user_id} value={u.user_id}>
-                              {formatReportUserLabel(u)}
+                              {u.user_id === currentUserId ? "My expenses" : formatReportUserLabel(u)}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
                   </div>
-                  <div className="flex gap-2 pt-2">
-                    <Button
-                      onClick={() => void dailyQuery.refetch()}
-                      disabled={dailyQuery.isFetching || !dailyConfigReady}
-                    >
-                      {dailyQuery.isFetching ? t("daily.generating") : t("generate")}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => exportDailyProjectReport("csv")}
-                      disabled={dailyQuery.isFetching || !dailyConfigReady || dailyReportRows.length === 0}
-                      title={dailyQuery.isFetching ? t("liveRefresh.exportWait") : undefined}
-                    >
-                      {t("exportCsv")}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => exportDailyProjectReport("xlsx")}
-                      disabled={dailyQuery.isFetching || !dailyConfigReady || dailyReportRows.length === 0}
-                      title={dailyQuery.isFetching ? t("liveRefresh.exportWait") : undefined}
-                    >
-                      {t("exportXlsx")}
-                    </Button>
-                  </div>
                 </div>
 
-                <p className="text-sm text-muted-foreground">
-                  {t("daily.rowCount", { count: dailyReportRows.length })}
-                  {dailyReviewRowCount > 0 ? (
-                    <span className="ml-2 text-xs font-medium text-amber-700">
-                      {t("daily.reviewCount", { count: dailyReviewRowCount })}
-                    </span>
-                  ) : null}
-                  {dailyQuery.isFetching ? (
-                    <span className="ml-2 text-xs text-muted-foreground" data-testid="daily-progress">
-                      (
-                      {dailyProgress && dailyProgress.total != null
-                        ? t("daily.preparingProgress", {
-                            received: dailyProgress.received,
-                            total: dailyProgress.total,
-                          })
-                        : t("daily.generating")}
-                      )
-                    </span>
-                  ) : null}
-                </p>
-
                 {/*
-                  Server-side background option, ADDED alongside the existing
-                  browser-paged coordinator above rather than replacing it.
-                  Unlike Verification/Approval/Detailed, the Daily tab's
-                  existing client-side pagination already has a fail-closed
-                  completeness gate and a source-expense drill-down
-                  (DailyReportSourceExpensesSheet, click a row) that this
-                  integration deliberately preserves. This panel is for a
-                  large export where staying on the page isn't wanted: it
-                  enqueues a report_export_jobs row that the same worker used
-                  by the other three tabs completes independently, sharing
-                  the identical report_daily_project_rows_v1 core so both
-                  paths always produce the same numbers.
+                  Daily Project Report is generated ONCE, on the server
+                  (create_daily_project_report_export_job_v1 -> worker ->
+                  frozen report_export_job_rows). View Report pages those
+                  rows 50 at a time; Download CSV is the same rows. The tab
+                  deliberately does NOT page the whole report into the
+                  browser to render a table (a 9,000-row report would be
+                  thousands of DOM rows and a second, duplicate computation).
                 */}
                 <ServerReportExportPanel
                   organizationId={organizationId}
@@ -2424,157 +2246,11 @@ export default function Reports({ teamScoped = false }: ReportsProps) {
                   disabled={!dailyConfigReady}
                   enableTallySync={userRole === "admin" && !teamScoped}
                 />
-
-                {/* A failed export must never look like an empty-but-successful
-                    one: say plainly that no file was produced. */}
-                {!dailyQuery.isFetching && dailyQuery.error ? (
-                  <p
-                    className="text-xs text-red-800 bg-red-50 border border-red-200 rounded-md px-3 py-2"
-                    data-testid="daily-report-error"
-                  >
-                    {dailyQuery.error instanceof DailyReportExportError
-                      ? t(`daily.errors.${dailyQuery.error.code}`, {
-                          defaultValue: t("daily.errors.generic"),
-                        })
-                      : t("daily.errors.generic")}
-                  </p>
-                ) : null}
-
-                {dailyReviewRowCount > 0 ? (
-                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-                    {t("daily.reviewHint")}
-                  </p>
-                ) : null}
-
-                {dailyReportRows.length > 0 ? (
-                  <p className="text-xs text-muted-foreground">{t("daily.clickRowHint")}</p>
-                ) : null}
-
-                <ReportLiveRefreshBar query={dailyQuery} />
-                {isMobile ? (
-                  <div className="space-y-2" data-testid="daily-report-card-list">
-                    {dailyQuery.isLoading ? null : dailyReportRows.length === 0 ? (
-                      <div className="py-8 text-center text-slate-500 text-sm">{t("daily.noRows")}</div>
-                    ) : (
-                      dailyReportResults.map((result, idx) => {
-                        const row = result.row;
-                        const needsReview = isDailyReportRowNeedsReview(row);
-                        return (
-                          <button
-                            key={idx}
-                            type="button"
-                            className={`w-full text-left rounded-md border p-3 space-y-1 ${needsReview ? "bg-amber-50 border-l-4 border-l-amber-400" : "hover:bg-slate-50"}`}
-                            onClick={() => {
-                              setSelectedDailyReportResult(result);
-                              setDailyReportSourceOpen(true);
-                            }}
-                            data-testid="daily-report-card"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs text-muted-foreground">{String(row["Track Date"] ?? "-")}</span>
-                              <span className="text-sm font-medium truncate">{String(row["Employee"] ?? "-")}</span>
-                            </div>
-                            <div className="text-xs truncate text-muted-foreground">{String(row["project name"] ?? "-")}</div>
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                ) : (
-                <div className="overflow-x-auto border rounded-lg">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-100 border-b">
-                      <tr>
-                        {DAILY_PROJECT_REPORT_HEADERS.map((h) => (
-                          <th
-                            key={h}
-                            className="px-3 py-2 text-left font-semibold text-slate-700 whitespace-nowrap"
-                          >
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {dailyQuery.isLoading ? (
-                        <tr>
-                          <td
-                            colSpan={DAILY_PROJECT_REPORT_HEADERS.length}
-                            className="px-4 py-8 text-center text-slate-500"
-                          >
-                            {t("daily.generatingReport")}
-                          </td>
-                        </tr>
-                      ) : dailyReportRows.length === 0 ? (
-                        <tr>
-                          <td
-                            colSpan={DAILY_PROJECT_REPORT_HEADERS.length}
-                            className="px-4 py-8 text-center text-slate-500"
-                          >
-                            {t("daily.noRows")}
-                          </td>
-                        </tr>
-                      ) : (
-                        dailyReportResults.map((result, idx) => {
-                          const row = result.row;
-                          const needsReview = isDailyReportRowNeedsReview(row);
-                          return (
-                          <tr
-                            key={idx}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => {
-                              setSelectedDailyReportResult(result);
-                              setDailyReportSourceOpen(true);
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                setSelectedDailyReportResult(result);
-                                setDailyReportSourceOpen(true);
-                              }
-                            }}
-                            className={
-                              needsReview
-                                ? "bg-amber-50 hover:bg-amber-100 border-l-4 border-l-amber-400 cursor-pointer"
-                                : "hover:bg-slate-100 cursor-pointer"
-                            }
-                          >
-                            {DAILY_PROJECT_REPORT_HEADERS.map((h) => (
-                              <td
-                                key={h}
-                                className={`px-3 py-2 whitespace-nowrap ${
-                                  needsReview &&
-                                  (h === "project id" || h === "project name") &&
-                                  !String(row[h] ?? "").trim()
-                                    ? "text-amber-900 font-medium"
-                                    : ""
-                                }`}
-                              >
-                                {typeof row[h] === "number"
-                                  ? Number(row[h]).toLocaleString("en-IN")
-                                  : String(row[h] ?? "")}
-                              </td>
-                            ))}
-                          </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                )}
               </CardContent>
             </Card>
           </TabsContent>
         )}
       </Tabs>
-
-      <DailyReportSourceExpensesSheet
-        open={dailyReportSourceOpen}
-        onOpenChange={setDailyReportSourceOpen}
-        result={selectedDailyReportResult}
-      />
 
       <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
         <DialogContent className="sm:max-w-md">

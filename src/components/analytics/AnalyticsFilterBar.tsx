@@ -17,6 +17,7 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -570,6 +571,7 @@ export function AnalyticsFilterBar({
           <SheetContent side="bottom" className="h-[80dvh] flex flex-col">
             <SheetHeader className="shrink-0">
               <SheetTitle className="text-sm">{t("filters.filtersTitle")}</SheetTitle>
+              <SheetDescription className="sr-only">{t("filters.filtersTitle")}</SheetDescription>
             </SheetHeader>
             <ScrollArea className="flex-1 py-2">
               <MobileFilterContent

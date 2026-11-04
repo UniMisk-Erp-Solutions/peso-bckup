@@ -87,20 +87,24 @@ describe("Detailed Expense tab", () => {
   });
 });
 
-describe("Daily Project Report tab -- additive, not replacing", () => {
+describe("Daily Project Report tab -- one server-side workflow (DOC-101 §11)", () => {
   const block = tabBlock("daily");
 
-  it("keeps the existing client-side coordinator: dailyQuery, its Generate button and the source-expense drill-down are unchanged", () => {
-    expect(block).toContain("dailyQuery.refetch()");
-    expect(block).toContain("setDailyReportSourceOpen(true)");
-  });
-
-  it("adds ServerReportExportPanel alongside it as a background-generation option, with no reportType prop (daily is the default)", () => {
+  it("renders ServerReportExportPanel with no reportType prop (daily is the default)", () => {
     expect(block).toContain("<ServerReportExportPanel");
     const panelStart = block.indexOf("<ServerReportExportPanel");
     const panelEnd = block.indexOf("/>", panelStart);
     const panelProps = block.slice(panelStart, panelEnd);
     expect(panelProps).not.toContain("reportType=");
+  });
+
+  it("no longer runs the duplicate browser paging pipeline or renders every row", () => {
+    expect(src).not.toContain("runDailyProjectReportExport");
+    expect(src).not.toContain("dailyQuery");
+    expect(src).not.toContain("get_daily_project_report_page_v1");
+    expect(block).not.toContain("dailyReportResults.map");
+    expect(block).not.toContain("DAILY_PROJECT_REPORT_HEADERS");
+    expect(block).not.toContain("daily-report-card-list");
   });
 });
 
@@ -112,14 +116,6 @@ describe("disabled client-side queries", () => {
       const declEnd = src.indexOf("...QUERY_DEFAULTS,", declStart);
       expect(src.slice(declStart, declEnd)).toContain("enabled: false,");
     }
-  });
-
-  it("dailyQuery is NOT disabled -- it remains the live foreground experience", () => {
-    const declStart = src.indexOf("const dailyQuery = useQuery(");
-    const declEnd = src.indexOf("...QUERY_DEFAULTS,", declStart);
-    const decl = src.slice(declStart, declEnd);
-    expect(decl).not.toContain("enabled: false,");
-    expect(decl).toContain('activeTab === "daily"');
   });
 
   it("never uses a bare `false &&` chain -- would trip no-constant-binary-expression", () => {

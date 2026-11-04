@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { buildJobPlanFromNormalized, mergeNormalized, normalizeRows, DEFAULT_PWT_CONFIG } from "C:/Users/admin/Desktop/priyanshu intern/test project/peso-bckup-priyanshu/supabase/functions/_shared/pwt/index.ts";
+import { buildJobPlanFromNormalized, mergeNormalized, normalizeRows, DEFAULT_PWT_CONFIG } from "../index";
 
 // A RE-SYNC: every one of 12,609 expenses is already posted, so every row produces an ALREADY_POSTED notice.
 it("planning a full re-sync is fast (no quadratic notice handling)", async () => {

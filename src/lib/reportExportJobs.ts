@@ -505,12 +505,30 @@ export async function fetchReportExportJobPreviewPage(
  */
 export type PreviewColumnKind = "date" | "money" | "text";
 
+/** Daily Project Report fixed columns that are numeric (the exact worker CSV headers). */
+const DAILY_PROJECT_MONEY_COLUMNS: ReadonlySet<string> = new Set([
+  "Petrol Cost", "Material Cost", "Travelling Cost", "Phone Exp.", "Hotel Exp.",
+  "Transport Exp", "Contra Bill", "Other Exp.", "percent",
+]);
+
 export function classifyPreviewColumnKind(column: string): PreviewColumnKind {
-  if (column === "Date") return "date";
+  // "Track Date" (Daily Project) is DD-MM-YYYY like Detailed Expense's "Date".
+  if (column === "Date" || column === "Track Date") return "date";
   if (column === "Credit" || column === "Debit" || column === "Opening Balance" || column === "Closing Balance") {
     return "money";
   }
+  if (DAILY_PROJECT_MONEY_COLUMNS.has(column)) return "money";
   return "text";
+}
+
+/**
+ * Report types whose worker freezes the exact CSV row objects into
+ * report_export_job_rows (and the matching preview_columns) so the on-page
+ * "View Report" shows the same rows the file contains. Claim Verification /
+ * Claim Approval do not store a row set and stay download-only.
+ */
+export function supportsStoredReportPreview(reportType: string): boolean {
+  return reportType === "detailed_expense" || reportType === "daily_project_report";
 }
 
 /**

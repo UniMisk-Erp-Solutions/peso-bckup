@@ -53,7 +53,8 @@ describe("resetSelectedExpenseReview -- the single shared close/cleanup helper",
     expect(helper).toContain("setSelectedExpense(null)");
     expect(helper).toContain('setEngineerComment("")');
     expect(helper).toContain("setLineItems([])");
-    expect(helper).toContain("setAttachments([])");
+    // Attachments live in useExpenseAttachments, which clears itself when selectedExpense becomes null.
+    expect(helper).toContain("detailGuardRef.current.invalidate()");
     expect(helper).toContain("setAuditLogs([])");
     expect(helper).toContain("setCorrectionLogs([])");
     expect(helper).toContain("setTimelineAssignees({})");

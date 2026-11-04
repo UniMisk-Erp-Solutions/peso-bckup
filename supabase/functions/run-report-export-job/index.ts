@@ -39,25 +39,27 @@ import {
   toCsv,
   assertCsvMatchesRows,
   REPORT_TOO_LARGE_MESSAGE,
+  toSafeReportError,
 } from "./expenseReports.ts";
 
 /** Row objects per store_report_export_job_preview_chunk_v1 call. Keeps each
  *  RPC payload small and predictable regardless of report size. */
 const PREVIEW_STORE_CHUNK_SIZE = 500;
 
-/** Best-effort: freezes the exact rows/columns the CSV was built from into
+/** Used by Detailed Expense and Daily Project Report.
+ *  Best-effort: freezes the exact rows/columns the CSV was built from into
  *  report_export_job_rows, so the on-page preview can never drift from the
  *  downloaded file (they are the SAME computed objects, not a re-query). A
  *  failure here must never fail the report itself -- the file already
  *  uploaded successfully is what matters; the preview degrades to
  *  "not available" (get_report_export_job_preview_v1 returns
  *  reason: no_preview_available) rather than blocking anything. */
-async function storeDetailedExpensePreview(
+async function storeReportPreview(
   // deno-lint-ignore no-explicit-any
   svc: any,
   jobId: string,
   headers: string[],
-  rows: Record<string, string>[],
+  rows: Record<string, string | number>[],
 ): Promise<void> {
   try {
     await svc.rpc("clear_report_export_job_preview_v1", { p_job_id: jobId });
@@ -71,8 +73,26 @@ async function storeDetailedExpensePreview(
       });
       if (error) throw new Error(error.message);
     }
+    // The preview total must equal the CSV row count, or it is not offered at
+    // all (a partial row set would silently disagree with the file).
+    const { count, error: countErr } = await svc
+      .from("report_export_job_rows")
+      .select("job_id", { count: "exact", head: true })
+      .eq("job_id", jobId);
+    if (countErr) throw new Error(countErr.message);
+    if (count !== rows.length) {
+      throw new Error(`preview row count ${count} != CSV row count ${rows.length}`);
+    }
   } catch (err) {
-    console.error(`storeDetailedExpensePreview failed for job ${jobId} (non-fatal):`, err);
+    console.error(`storeReportPreview failed for job ${jobId} (non-fatal):`, err);
+    // Leave "no preview" (get_report_export_job_preview_v3 -> no_preview_available)
+    // rather than a partial row set.
+    try {
+      await svc.rpc("clear_report_export_job_preview_v1", { p_job_id: jobId });
+      await svc.from("report_export_jobs").update({ preview_columns: null }).eq("id", jobId);
+    } catch (cleanupErr) {
+      console.error(`storeReportPreview cleanup failed for job ${jobId}:`, cleanupErr);
+    }
   }
 }
 
@@ -95,7 +115,14 @@ const REPORT_FILENAMES: Record<string, string> = {
 };
 
 const BUCKET = "generated-reports";
-const PAGE_SIZE = 250;
+/**
+ * Daily Project Report page size. report_daily_project_rows_v1 is group-first
+ * (20261023100000): page cost no longer depends on the organisation size, so a
+ * larger page just halves the per-page round trips (rows + project-name ambiguity
+ * + heartbeat) with no extra statement-timeout risk (slowest measured page well
+ * under 1 s). The function clamps the size at 2000.
+ */
+const PAGE_SIZE = 500;
 /** Must track DAILY_REPORT_SCHEMA_VERSION in src/lib/dailyProjectReportPaging.ts. */
 const DAILY_REPORT_SCHEMA_VERSION = 1;
 /**
@@ -444,7 +471,7 @@ async function buildDetailedExpenseReport(
   const { headers, rows: builtRows } = buildDetailedRows(filteredRows);
   // Freeze the exact same row objects the CSV is about to be built from into
   // the on-page preview store -- one computation, two consumers.
-  await storeDetailedExpensePreview(svc, jobId, headers, builtRows);
+  await storeReportPreview(svc, jobId, headers, builtRows);
 
   // Employee name/code are already server-resolved onto every timeline row
   // (report_balance_timeline_rows_v3 joins profiles) -- reuse them rather
@@ -622,15 +649,19 @@ Deno.serve(async (req) => {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Export failed";
+      // The raw text (it may be a database error) stays in the worker log; the job
+      // row, which the UI renders verbatim, only ever gets the safe mapping.
+      console.error("report export failed", { jobId, reportType, message });
+      const safe = toSafeReportError(message);
       await svc.rpc("fail_report_export_job_v1", {
         p_job_id: jobId,
         p_worker_id: workerId,
-        p_error_code: "worker_error",
-        p_error_message_safe: message.slice(0, 300),
-        p_retryable: message !== REPORT_TOO_LARGE_MESSAGE,
+        p_error_code: safe.code,
+        p_error_message_safe: safe.message,
+        p_retryable: safe.retryable,
       });
       return jsonResponse(
-        { claimed: true, job_id: jobId, status: "failed", error: message },
+        { claimed: true, job_id: jobId, status: "failed", error: safe.message },
         500,
       );
     }
@@ -740,6 +771,11 @@ Deno.serve(async (req) => {
       });
     if (upErr) throw new Error(`upload: ${upErr.message}`);
 
+    // Freeze the SAME row objects the CSV above was built from (and the exact
+    // CSV header array/order) so "View Report" can never drift from the file.
+    // Stored before complete so a completed job already has its rows.
+    await storeReportPreview(svc, jobId, [...HEADERS], rows);
+
     const { error: doneErr } = await svc.rpc("complete_report_export_job_v1", {
       p_job_id: jobId,
       p_worker_id: workerId,
@@ -757,14 +793,15 @@ Deno.serve(async (req) => {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Export failed";
-    // Message is our own text, never a raw driver payload — it surfaces in the UI.
+    console.error("daily project report failed", { jobId, message });
+    const safe = toSafeReportError(message);
     await svc.rpc("fail_report_export_job_v1", {
       p_job_id: jobId,
       p_worker_id: workerId,
-      p_error_code: "worker_error",
-      p_error_message_safe: message.slice(0, 300),
-      p_retryable: message !== REPORT_TOO_LARGE_MESSAGE,
+      p_error_code: safe.code,
+      p_error_message_safe: safe.message,
+      p_retryable: safe.retryable,
     });
-    return jsonResponse({ claimed: true, job_id: jobId, status: "failed", error: message }, 500);
+    return jsonResponse({ claimed: true, job_id: jobId, status: "failed", error: safe.message }, 500);
   }
 });

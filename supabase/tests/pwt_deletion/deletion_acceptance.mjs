@@ -1,5 +1,5 @@
 /**
- * Acceptance test for the deletion-sync migration (20261019100000_pwt_deletion_sync.sql).
+ * Acceptance test for the deletion-sync migration (20261019110000_pwt_deletion_sync.sql).
  * Runs the pwt migrations in an in-process Postgres (PGlite) with minimal stubs for auth / orgs / expenses. Touches no real database.
  *   npm i --no-save @electric-sql/pglite && node supabase/tests/pwt_deletion/deletion_acceptance.mjs
  *   (PWT_MIGRATIONS=<dir> overrides the migrations folder.)
@@ -20,8 +20,8 @@ await db.exec(`
   create table public.expenses(id uuid primary key, organization_id uuid, approval_tier text, deleted_at timestamptz, transaction_number text);
 `);
 await db.exec(readFileSync(M + "20261016120000_pwt_foundation.sql", "utf8"));
-await db.exec(readFileSync(M + "20261019100000_pwt_deletion_sync.sql", "utf8"));
-await db.exec(readFileSync(M + "20261019100000_pwt_deletion_sync.sql", "utf8")); // idempotent re-run
+await db.exec(readFileSync(M + "20261019110000_pwt_deletion_sync.sql", "utf8"));
+await db.exec(readFileSync(M + "20261019110000_pwt_deletion_sync.sql", "utf8")); // idempotent re-run
 await db.exec(readFileSync(M + "20261019140000_pwt_registry_per_company.sql", "utf8"));
 await db.exec(readFileSync(M + "20261019140000_pwt_registry_per_company.sql", "utf8")); // idempotent re-run
 
@@ -220,7 +220,7 @@ await db.query("insert into public.pwt_vouchers(organization_id, tally_company, 
 await db.query("insert into public.pwt_job_rows(job_id, seq, source_key, content_hash, payload) values ($1,1,'a','a',$2::jsonb), ($1,2,'b','b',$3::jsonb)", [JOB,
   JSON.stringify({ expense_id: id(60), employee_name: "  Dina   Test ", employee_code: "1004", category: "Material Purchase" }),
   JSON.stringify({ id: id(61), user_name: "Ravi", employee_id: "9" })]);
-await db.exec(readFileSync(M + "20261019100000_pwt_deletion_sync.sql", "utf8")); // backfill runs on (re)apply
+await db.exec(readFileSync(M + "20261019110000_pwt_deletion_sync.sql", "utf8")); // backfill runs on (re)apply
 await db.exec(readFileSync(M + "20261019140000_pwt_registry_per_company.sql", "utf8"));
 const l60 = await one("select employee_ledger, expense_ledger, serial from public.pwt_registry where source_id=$1", [L(60)]);
 const l61 = await one("select employee_ledger from public.pwt_registry where source_id=$1", [L(61)]);

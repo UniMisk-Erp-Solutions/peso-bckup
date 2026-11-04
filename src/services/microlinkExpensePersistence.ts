@@ -42,7 +42,28 @@ export interface SubmissionReceipt {
   persisted_core_fields: number;
   persisted_custom_fields: number;
   idempotency_key: string;
+  // Response contract added with the action-scoped receipts migration
+  // (20261007120000). Absent on responses from an older server, so every reader
+  // must treat these as optional.
+  requested_action?: ReceiptAction;
+  receipt_action?: ReceiptAction;
+  /** Canonical status of the expense row at response time (not the receipt's). */
+  actual_status?: string;
+  idempotency_result?: "executed" | "replayed";
 }
+
+export type ReceiptAction = "submit" | "save_draft" | "update_submitted";
+
+type PersistFn =
+  | "submit_microlink_expense_v1"
+  | "save_microlink_expense_draft_v1"
+  | "update_microlink_submitted_expense_v1";
+
+const ACTION_BY_FN: Record<PersistFn, ReceiptAction> = {
+  submit_microlink_expense_v1: "submit",
+  save_microlink_expense_draft_v1: "save_draft",
+  update_microlink_submitted_expense_v1: "update_submitted",
+};
 
 export type SubmissionOutcome =
   | { kind: "committed"; receipt: SubmissionReceipt }
@@ -113,16 +134,32 @@ function rpc<T>(fn: string, args: Record<string, unknown>) {
  */
 export async function lookupSubmissionResult(
   idempotencyKey: string,
+  action?: ReceiptAction,
 ): Promise<SubmissionOutcome> {
-  const { data, error } = await rpc<{ committed: boolean; known: boolean } & SubmissionReceipt>(
+  type Lookup = { committed: boolean; known: boolean } & SubmissionReceipt;
+  // The receipt is identified by (key, action). Ask for the action we are
+  // reconciling so a draft receipt can never stand in for a submit.
+  let { data, error } = await rpc<Lookup>(
     "get_expense_submission_result_v1",
-    { p_idempotency_key: idempotencyKey },
+    action ? { p_idempotency_key: idempotencyKey, p_action: action } : { p_idempotency_key: idempotencyKey },
   );
+  if (error && action && (error.code === "PGRST202" || error.code === "42883")) {
+    // Server not yet on the action-aware lookup: fall back to the key-only form
+    // and re-check the action on the receipt ourselves below.
+    ({ data, error } = await rpc<Lookup>("get_expense_submission_result_v1", {
+      p_idempotency_key: idempotencyKey,
+    }));
+  }
   if (error) {
     const d = describe(error);
     return { kind: "unknown", message: d.message };
   }
   if (data && data.committed) {
+    // Defense in depth: never accept a receipt written for a different action.
+    const stored = data.receipt_action;
+    if (action && stored && stored !== action) {
+      return { kind: "unknown", message: "The submission could not be confirmed yet." };
+    }
     return { kind: "committed", receipt: { ...(data as SubmissionReceipt), replayed: true } };
   }
   // Not found. That is only meaningful once the request can no longer be in
@@ -131,34 +168,85 @@ export async function lookupSubmissionResult(
 }
 
 async function persist(
-  fn:
-    | "submit_microlink_expense_v1"
-    | "save_microlink_expense_draft_v1"
-    | "update_microlink_submitted_expense_v1",
+  fn: PersistFn,
   snapshot: MicroLinkExpenseSnapshotV1,
 ): Promise<SubmissionOutcome> {
+  const action = ACTION_BY_FN[fn];
   try {
     const { data, error } = await rpc<SubmissionReceipt>(fn, { p_snapshot: snapshot });
 
     if (error) {
       if (isAmbiguousTransportError(error)) {
-        return lookupSubmissionResult(snapshot.idempotency_key);
+        return lookupSubmissionResult(snapshot.idempotency_key, action);
       }
       const d = describe(error);
       return { kind: "rejected", code: d.code, message: d.message, conflict: d.code === "PW409" };
     }
     if (!data || data.committed !== true) {
       // HTTP said 200 but the application did not confirm. Never call that success.
-      return lookupSubmissionResult(snapshot.idempotency_key);
+      return lookupSubmissionResult(snapshot.idempotency_key, action);
     }
     return { kind: "committed", receipt: data };
   } catch (thrown) {
     if (isAmbiguousTransportError(thrown)) {
-      return lookupSubmissionResult(snapshot.idempotency_key);
+      return lookupSubmissionResult(snapshot.idempotency_key, action);
     }
     const d = describe(thrown as { code?: string; message?: string });
     return { kind: "rejected", code: d.code, message: d.message, conflict: d.code === "PW409" };
   }
+}
+
+/**
+ * Returns `snapshot` carrying a different idempotency key.
+ *
+ * The server stores ONE receipt per key and answers any repeated key with that
+ * stored receipt WITHOUT looking at the action it was written for
+ * (`_persist_microlink_expense_snapshot_v1`, replay branch). The "attach first,
+ * then submit" flow makes two calls for one logical attempt -- save_draft, then
+ * submit. If both carry the same key, the submit is answered with the old
+ * save_draft receipt (`status: "draft"`) and never runs, so the expense stays a
+ * draft while the form reports success. The draft step therefore needs its own
+ * key; each step still retries safely under its own.
+ */
+export function snapshotWithIdempotencyKey(
+  snapshot: MicroLinkExpenseSnapshotV1,
+  idempotencyKey: string,
+): MicroLinkExpenseSnapshotV1 {
+  return { ...snapshot, idempotency_key: idempotencyKey };
+}
+
+/**
+ * A SUBMIT that the server confirmed as "committed" is only a submission if the
+ * receipt says so. Returns the user-facing failure text when it does not (for
+ * example a replayed draft receipt), or null when the expense really is
+ * submitted. A committed-but-not-submitted receipt must never be reported as a
+ * successful submission.
+ */
+export function unsubmittedReceiptMessage(
+  receipt: Pick<SubmissionReceipt, "status"> &
+    Partial<Pick<SubmissionReceipt, "actual_status" | "receipt_action">>,
+): string | null {
+  const stillDraft = receipt.actual_status === "draft";
+  const wrongAction = !!receipt.receipt_action && receipt.receipt_action !== "submit";
+  if (receipt.status === "submitted" && !stillDraft && !wrongAction) return null;
+  return "Your expense was saved as a draft but was NOT submitted. Open it from My Expenses (Drafts) and submit it again.";
+}
+
+/**
+ * Safe, enumerated facts about a SUBMIT whose receipt did not confirm a
+ * submission (requested action, the action that wrote the receipt, the
+ * canonical status). Used as monitoring tags; contains no ids or amounts.
+ */
+export function semanticMismatchTags(
+  receipt: Pick<SubmissionReceipt, "status"> &
+    Partial<Pick<SubmissionReceipt, "actual_status" | "receipt_action">>,
+  requestedAction: ReceiptAction = "submit",
+): { requestedAction: ReceiptAction; receiptAction: string; actualStatus: string } {
+  return {
+    requestedAction,
+    receiptAction: receipt.receipt_action ?? "unknown",
+    actualStatus: receipt.actual_status ?? receipt.status ?? "unknown",
+  };
 }
 
 /** ONE request. Creates or updates, writes every field, and submits, atomically. */

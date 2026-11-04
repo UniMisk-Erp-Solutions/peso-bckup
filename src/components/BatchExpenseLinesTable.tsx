@@ -50,6 +50,7 @@ type BatchExpenseLinesTableProps = {
   onDuplicate: (index: number) => void;
   onRemove: (clientId: string) => void;
   onReceiptUpload: (clientId: string, path: string, meta: TempUploadMeta) => void;
+  onReceiptRemove?: (clientId: string, path: string) => void;
   baseFieldConfig?: Record<BaseExpenseFieldKey, BaseFieldConfig>;
   baseFieldCustomizationEnabled?: boolean;
   organizationId?: string | null;
@@ -80,6 +81,7 @@ export function BatchExpenseLinesTable({
   onDuplicate,
   onRemove,
   onReceiptUpload,
+  onReceiptRemove,
   baseFieldConfig,
   baseFieldCustomizationEnabled = false,
   organizationId,
@@ -281,6 +283,7 @@ export function BatchExpenseLinesTable({
                     attachmentLimit={attachmentLimit}
                     receiptCount={getReceiptCount(line.clientId)}
                     onUpload={(path, meta) => onReceiptUpload(line.clientId, path, meta)}
+                    onRemove={(path) => onReceiptRemove?.(line.clientId, path)}
                   />
                 </div>
               );

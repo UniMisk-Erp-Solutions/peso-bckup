@@ -17,7 +17,7 @@ await db.exec(`
   create table public.expenses(id uuid primary key, organization_id uuid, approval_tier text, deleted_at timestamptz, transaction_number text);
 `);
 await db.exec(readFileSync(M + "20261016120000_pwt_foundation.sql", "utf8"));
-await db.exec(readFileSync(M + "20261019100000_pwt_deletion_sync.sql", "utf8"));
+await db.exec(readFileSync(M + "20261019110000_pwt_deletion_sync.sql", "utf8"));
 
 const ORG = "11111111-1111-1111-1111-111111111111";
 const J_A = "a0000000-0000-0000-0000-00000000000a", J_B = "b0000000-0000-0000-0000-00000000000b";

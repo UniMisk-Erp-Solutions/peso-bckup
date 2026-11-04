@@ -2,7 +2,7 @@
 
 **Doc ID:** DOC-101
 **Status:** in progress — implemented on branch, migration NOT applied to Production
-**Last updated:** 2026-08-20
+**Last updated:** 2026-10-16
 **Owner / area:** Reports → Daily Project Report, Supabase
 
 ---
@@ -409,8 +409,73 @@ isolation gives exactly 9 failures on **both** branches.
 
 ---
 
+## 10. Group-first paging: Daily Project Report timeouts at 9,000+ rows (2026-10-16)
+
+**Symptom.** MicroLink all-time Daily Project Reports failed with "page 1/2: canceling statement due to statement timeout" (jobs of 8,270 to 9,001 rows, 3 of 3 attempts used) and, earlier, "too large to build in one pass". Detailed Expense reports were healthy (69 completed, 0 failed).
+
+**Production evidence (read-only, 2026-10-16).**
+- Effective report-path `statement_timeout` is **8 s** (`authenticator` role; `service_role` has none of its own). Worker soft deadline 50 s.
+- A full walk of the failed job's parameters (37 pages x 250 rows, 9,001 rows) took **209 s**; page times 1.5 s (pages 1-3), 9.5 s (page 10), 6.3 s (page 20), 3.7 s (page 30), slowest **11.7 s**.
+- `EXPLAIN (ANALYZE, BUFFERS)` of page 10 (4.7 s): seq scan of 23,924 expenses, then ~3.7 s of nested-loop enrichment for ALL of them (four lookups into `expense_form_field_values` plus a branch-definition lookup, 23,924 loops each, 531,853 buffer hits), a GroupAggregate with an external-merge sort spilling to disk (5.2 MB) and a `jsonb_agg` of source expenses for all 9,001 groups; only afterwards the cursor filter, top-N sort and `LIMIT 250`. The page's 250 rows were a tiny fraction of the work.
+
+**Root cause.** `report_daily_project_rows_v1` applied the cursor and `LIMIT` after enriching, grouping and aggregating the entire organisation, on every page: O(pages x organisation) = 209 s, with individual pages above the 8 s timeout.
+
+**Options compared.**
+- *A, two-phase page query (chosen).* Report groups never span an (employee, day) bucket and the cursor orders by (day, employee, project). Pick the first page-size + 1 buckets at/after the cursor from lightweight columns (served by the existing partial index `expenses_daily_report_scope_idx`), then enrich/group/aggregate only those buckets' expenses. Same output, no new table, no continuation state, page cost proportional to the page.
+- *B, materialise once per job.* Would also fix per-page cost but needs a job-scoped staging table, cleanup and consistency handling, and still pays the full enrichment once (seconds on Production). Not needed once A removes the repeated work.
+
+**Fix.** Migration `20261023100000_daily_project_report_group_first_v1.sql` replaces only `report_daily_project_rows_v1` (same signature, owner and grants): `all_f` (cheap scoped population) -> `page_buckets` (`LIMIT size + 1`) -> `filtered` (page expenses only) -> the unchanged enrichment/grouping CTEs; `total_count`/source totals (first page only) come from a group-key count (`total_groups`: one project-id lookup per expense, no enrichment or `jsonb_agg`). Both callers (the export worker and `get_daily_project_report_page_v1`) use it unchanged. The worker's page size is 500 (the producer allows 2,000): database time barely changes with page size, round trips halve.
+
+**Measured (local synthetic organisation shaped like MicroLink; rows and cursor chain byte-identical to the pre-fix Production body in every run).**
+
+| Report groups | Approved expenses | Pre-fix total / slowest page | Group-first total / slowest page |
+|---|---|---|---|
+| 1,000 | 2,660 | 0.39 s / 89 ms | 0.16 s / 49 ms |
+| 5,000 | 13,300 | 11.2 s / 1,065 ms | 1.18 s / 98 ms |
+| 9,000 | 23,940 | 44.1 s / 2,241 ms | 2.44 s / 134 ms |
+| 15,500 | 41,230 | 144 s / 3,763 ms | 5.37 s / 143 ms |
+| 30,000 | 79,800 | 559 s / 8,067 ms | 16.7 s / 257 ms |
+
+Production ran the same 9,000-group walk about 4.7x slower than this machine (209 s vs 44 s), so the projection for the failing report is roughly 11-13 s of database time and a slowest page around 1 s (page size 500), against an 8 s timeout and a 50 s deadline. The worker also makes one project-name ambiguity call per page (about 0.27 s each, measured live) and one heartbeat; at page size 500 that is 19 pages. Cost is now linear (about 0.55 ms per report row locally) instead of quadratic. These are projections until the migration is validated on Production.
+
+**Worker deadline / continuation.** No resumable continuation exists today: a job runs in one Edge invocation (50 s soft deadline); a stale or failed attempt restarts from page 1 with the same frozen parameters, rebuilds the rows in memory, and overwrites the same storage path (`upsert: true`), so retries cannot duplicate rows. The group-first fix brings a 9,000-row report to roughly 40% of the deadline or less; a checkpointed continuation would only be needed beyond roughly 40,000 groups and is deliberately out of scope here.
+
+**Errors.** The worker maps database errors before storing them (`toSafeReportError`; timeouts become "Report generation took too long while processing a large data set. Please try again. If it continues, contact support."); raw text is only logged. The panel also maps the raw text stored on old failed jobs (`friendlyJobFailureMessage`).
+
+**Indexes.** None added: the existing `expenses_daily_report_scope_idx (organization_id, trip_start, user_id) WHERE status = 'approved'` serves bucket selection; `uq_form_field_values_expense_template` and `idx_efv_org_expense_covering` serve the per-page lookups.
+
+**Repo/live drift (recorded, not changed).** Production's `_report_expense_custom_fields_v1` and `_report_humanize_field_key_v1` differ from `20260827170000_server_side_expense_reports.sql`: the live versions return one object for all requested expenses (verified: 5 ids -> 5 keys); the repo version's outer `GROUP BY` returns one row per expense, so a scalar SQL function would return only the first. Production is correct; the repo is stale. This change does not touch either function. Reconciliation plan: the live definitions were captured outside git on 2026-10-16; add them in a NEW forward migration as an idempotent `CREATE OR REPLACE` that exactly matches the live text, applied as the function owner; never apply the old repo text to Production. `report_detailed_expense_rows_v4` and the timeline helpers match the repo apart from cosmetic differences.
+
+**Tests.** `supabase/tests/daily_report_perf/` (`schema.sql`, `legacy.sql`, `prod_state.sql`, `seed.sql`, `parity_bench.sql`: 5 sizes x pre-fix vs new plus 11 filter/mapping scenarios, all IDENTICAL; `behaviour_test.sql`: 10 isolation/determinism/snapshot/grant cases), `dailyProjectGroupFirstMigration.test.ts`, `friendlyJobFailure.test.ts`, worker contract tests.
+
+**Rollback.** Re-apply the previous Production body (captured before deployment); there is no data or schema change to undo.
+
+## 11. Daily Project "View Report" + one server-side workflow (2026-10-16)
+
+**Symptom.** After the group-first fix (§10) the background job completed (9,001 rows) but the panel showed "This report type has no on-page preview..." with no View Report button, and the browser console kept logging HTTP 500 for `get_daily_project_report_page_v1`.
+
+**Why View Report was missing.** `ServerReportExportPanel` gated every preview control on `previewSupported = effectiveType === "detailed_expense"`, and the Daily worker branch never stored its rows (`report_export_job_rows`) or `preview_columns`. Both halves were Detailed-Expense-only by design (DOC-131).
+
+**Why the 500s.** Every logged 500 for the wrapper is `{"code":"57014","message":"canceling statement due to statement timeout"}` (PostgREST log, last on 2026-10-16 06:08:41 UTC, i.e. before the §10 producer swap; none since). They came from a *second, duplicate* pipeline: `Reports.tsx` ran `dailyQuery -> runDailyProjectReportExport -> get_daily_project_report_page_v1` automatically whenever the Daily tab was open, paging the whole report into the browser in parallel with the server job. The wrapper only forwards to `report_daily_project_rows_v1`, so while that producer rebuilt the whole organisation per page, pages exceeded the 8 s `statement_timeout`, and the client then retried each failing page twice (3 identical 8 s requests per page). Post-fix, read-only Production replays through the authenticated wrapper (admin org-wide, admin team-scoped with scope array, single employee, manager team-scoped, date ranges, Patidar admin/manager) all pass: 37 pages / 9,001 rows, slowest page 0.38-0.62 s. No SQL change was needed for the wrapper.
+
+**Changes.**
+- Worker stores the *same* `finalize()` row objects the CSV is rendered from, with the exact CSV header array (`HEADERS`) as `preview_columns`, through the existing `store_report_export_job_preview_chunk_v1` (500-row chunks) after the file upload and before `complete_report_export_job_v1`. It verifies the stored count equals the CSV row count; on any failure it clears the rows and `preview_columns` so there is no preview rather than a partial one (the job itself still completes). No second table.
+- `supportsStoredReportPreview(reportType)` (`reportExportJobs.ts`) enables View Report, inline preview and history View for `daily_project_report` and `detailed_expense`; Claim Verification/Approval stay download-only.
+- Preview reuses `get_report_export_job_preview_v3` (50-row server paging, sort, filter, same authorization incl. requester-scoped users). New migration `20261024100000_daily_project_preview_sort_kinds_v1.sql` only adds sort kinds (Track Date chronological; cost columns and `percent` numeric); body otherwise identical to `20261020100000`.
+- `Reports.tsx`: the auto-running browser paging loop, the duplicate Generate/Export buttons and the all-rows table are removed. One workflow: Generate -> background job -> View Report (paged) -> Download CSV. **Trade-off:** the on-page source-expense drill-down sheet and the browser-built XLSX export of the Daily tab are no longer reachable from this tab (the paging library and sheet component remain in the tree); a server-side XLSX / drill-down is a follow-up.
+- Retry audit: `runDailyProjectReportExport` only retries transport failures (`isTransientPageError`); any database/PostgREST code (57014, 42501, 28000, PGRST*) fails on the first attempt. React Query retry in `Reports.tsx` is `retry: 1` for the other (disabled) queries; the Daily loop no longer exists on the page. Start failures are shown through `reportStartErrorMessage` (no raw database text).
+- Old completed Daily jobs have no stored rows: View shows "Preview wasn't stored for this older report. Download the file to view it." Nothing is backfilled automatically. A rebuild of the latest 9,001-row job is technically possible (its `snapshot_at`, `config_snapshot` and parameters are frozen and the producer was proven digest-identical in §10) but it needs a worker-side preview-only mode that re-runs `finalize()`; not built.
+
+**Auth/console notes (no change).** "Multiple GoTrueClient instances": the app has exactly two clients, the normal one (default `sb-<ref>-auth-token` key) and the maintenance Cloud client (`pw-maintenance-cloud-auth`, distinct key, lazily created by the maintenance status service); distinct keys, so cosmetic. Refresh-token 400: handled by `AuthContext.recoverFromInvalidAuthSession`; unrelated to reports. "Unchecked runtime.lastError" / "Node cannot be found": absent from `src/`, `public/`, `index.html` and the production bundle, i.e. browser-extension output.
+
+**Tests.** `ServerReportExportPanel.viewReport.test.tsx` (Daily: View Report visible, 50 rows/page, 9,001 total, page 2, columns == stored CSV columns, old-job message, Claim reports unchanged), `reportExportWorker.test.ts` (same row objects, header array, store before complete, partial-set guard), `dailyProjectReportPaging.test.ts` (deterministic errors not retried), `friendlyJobFailure.test.ts`, `reportPreviewSortV3.test.ts`, `reportsServerSideGeneration.test.ts`; DB: `supabase/tests/report_scope/daily_preview_test.sql` (16 PASS: columns, total, page 1 = 50, page 2, last page, chronological Track Date, numeric cost sort, blanks last, filters, old job, coworker/cross-org/employee denied, admin allowed) plus the existing `report_view_test.sql` (14 PASS).
+
+**Production status.** See the Revision log: migration/worker deployment and the single validation report are recorded there when done.
+
 ## Revision log
 
 | Date | Rev | Change | By |
 |------|-----|--------|-----|
 | 2026-08-20 | 1.0 | Initial: forensic audit proving the 1,000-row PostgREST cap and the 51,386-call / 7,984.9 ms custom-field timeout from Production `pg_stat_statements`; new `get_daily_project_report_page_v1` contract + helpers + one justified partial index (migration and rollback written, **not applied**); export coordinator with pinned snapshot, keyset cursor, single-flight, cancel, retry, duplicate detection and a hard completeness gate; shared `finalizeDailyReportGroups` so both pipelines produce identical output; 35 new tests. Branch `hotfix/daily-project-report-server-scalability` only — not merged, not pushed, no Production SQL executed. | Agent |
+| 2026-10-16 | 1.1 | Group-first paging for the Daily Project row producer (section 10): Production plan evidence, A vs B, benchmark, error mapping, repo/live drift note. Migration not yet applied. | Claude Code |
+| 2026-10-16 | 1.2 | Section 11: Daily Project View Report from frozen rows, duplicate browser pipeline removed, retry classification, preview sort kinds migration (written + locally tested; Production application pending). | Claude Code |

@@ -117,11 +117,33 @@ export function dailyReportRowIdentity(row: {
 
 export class DailyReportExportError extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  /**
+   * Whether re-requesting the SAME page could plausibly succeed. Defaults to
+   * true so a plain `new DailyReportExportError("page_failed", ...)` keeps its
+   * historical "transient" meaning; deterministic database/auth failures set
+   * it to false so they are never hammered (see isTransientPageError).
+   */
+  readonly retryable: boolean;
+  constructor(code: string, message: string, options?: { retryable?: boolean }) {
     super(message);
     this.name = "DailyReportExportError";
     this.code = code;
+    this.retryable = options?.retryable ?? true;
   }
+}
+
+/**
+ * Only transport-level failures are worth a retry. Anything the database or
+ * PostgREST answered with a code -- statement timeout (57014), permission
+ * (42501), authentication (28000, PGRST3xx), bad request (22023, PGRST1xx) or
+ * any other SQLSTATE -- is deterministic: repeating the identical page cannot
+ * succeed and a timed-out page would just burn another full timeout each time.
+ */
+export function isTransientPageError(error: { code?: string | null; message?: string | null }): boolean {
+  if (error.code) return false;
+  return /failed to fetch|networkerror|network request failed|load failed|etimedout|econnreset|\b(?:502|503|504)\b/i.test(
+    error.message ?? "",
+  );
 }
 
 function num(value: number | string | null | undefined): number {
@@ -245,7 +267,9 @@ export async function fetchDailyProjectReportPage(
     : await builder;
 
   if (error) {
-    throw new DailyReportExportError("page_failed", error.message);
+    throw new DailyReportExportError("page_failed", error.message, {
+      retryable: isTransientPageError(error),
+    });
   }
   return parseDailyReportPage(data);
 }
@@ -341,7 +365,7 @@ export type DailyReportExportOptions = Omit<
 > & {
   signal?: AbortSignal;
   onProgress?: (progress: DailyReportExportProgress) => void;
-  /** Transient-failure retries per page. Default 2 (3 attempts total). */
+  /** Transient-TRANSPORT-failure retries per page. Default 2 (3 attempts total); deterministic database/auth errors are never retried. */
   maxRetriesPerPage?: number;
   /** Injected in tests. */
   fetchPage?: (params: DailyReportPageParams) => Promise<DailyReportPage>;
@@ -425,7 +449,7 @@ export async function runDailyProjectReportExport(
       } catch (err) {
         // A cancellation or a contract violation is terminal — only transient
         // transport failures are worth re-requesting.
-        if (err instanceof DailyReportExportError && err.code !== "page_failed") throw err;
+        if (err instanceof DailyReportExportError && (err.code !== "page_failed" || !err.retryable)) throw err;
         if (signal?.aborted) {
           throw new DailyReportExportError("cancelled", "Report generation was cancelled.");
         }

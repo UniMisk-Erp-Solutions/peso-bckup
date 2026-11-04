@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { registerMyAccountAuditContext } from "@/lib/userAccountAudit";
 import { formatINR } from "@/lib/format";
 import { Wallet, Pencil, Eye, EyeOff, CheckCircle, AlertCircle, CircleHelp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -570,6 +571,9 @@ export function Layout({
                         if (signInError) {
                           throw new Error(t("currentPasswordIncorrect"));
                         }
+
+                        // DOC-158: tell the audit history this is the signed-in user changing their OWN password (event only, no value).
+                        await registerMyAccountAuditContext();
 
                         // Update password
                         const { error: updateError } = await supabase.auth.updateUser({

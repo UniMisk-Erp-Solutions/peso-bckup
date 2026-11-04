@@ -635,13 +635,13 @@ export default function CategoryManagement() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">{t("admin:categories.title")}</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-2xl sm:text-3xl font-bold">{t("admin:categories.title")}</h1>
           <p className="text-muted-foreground">{t("admin:categories.description")}</p>
         </div>
         {activeTab === "categories" && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 [&>button]:flex-1 sm:[&>button]:flex-none">
             <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
               <Upload className="h-4 w-4 mr-2" />
               {t("admin:categories.importCategories")}
@@ -674,17 +674,17 @@ export default function CategoryManagement() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="categories">
-            <Tag className="h-4 w-4 mr-2" />
+        <TabsList className="grid h-auto w-full grid-cols-3">
+          <TabsTrigger value="categories" className="whitespace-normal text-center leading-tight">
+            <Tag className="hidden h-4 w-4 mr-2 sm:inline-block" />
             Categories
           </TabsTrigger>
-          <TabsTrigger value="templates">
-            <Settings className="h-4 w-4 mr-2" />
+          <TabsTrigger value="templates" className="whitespace-normal text-center leading-tight">
+            <Settings className="hidden h-4 w-4 mr-2 sm:inline-block" />
             Form Field Templates
           </TabsTrigger>
-          <TabsTrigger value="assignments">
-            <Link2 className="h-4 w-4 mr-2" />
+          <TabsTrigger value="assignments" className="whitespace-normal text-center leading-tight">
+            <Link2 className="hidden h-4 w-4 mr-2 sm:inline-block" />
             Assignments
           </TabsTrigger>
         </TabsList>

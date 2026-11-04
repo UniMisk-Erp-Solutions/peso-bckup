@@ -19,6 +19,7 @@
  * not a guessed method signature.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { failureReason, newRequestId, recordAuditEvent, registerAuditContext } from "../_shared/accountAudit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -92,6 +93,9 @@ Deno.serve(async (req) => {
 
   const serviceClient = createClient(supabaseUrl, serviceRoleKey);
   let desiredBan: string;
+  // The actor is the authenticated caller (verified above), never a body field (DOC-158).
+  const actorId = userData.user.id;
+  const requestId = newRequestId(req);
 
   if (action === "retry_auth_sync") {
     // Skips the DB RPC entirely (it already succeeded on a prior call) --
@@ -118,13 +122,21 @@ Deno.serve(async (req) => {
           p_user_id: target_user_id,
           p_reason: reason ?? null,
         });
-        if (rpcError) return jsonResponse({ success: false, error: rpcError.message }, 400);
+        if (rpcError) {
+          await recordAuditEvent(serviceClient, { organizationId: organization_id, targetUserId: target_user_id, actorUserId: actorId,
+            eventType: "deactivation_failed", source: "user_management", requestId, metadata: { reason: failureReason(rpcError.message) } });
+          return jsonResponse({ success: false, error: rpcError.message }, 400);
+        }
       } else {
         const { error: rpcError } = await callerClient.rpc("reactivate_organization_member_v1", {
           p_organization_id: organization_id,
           p_user_id: target_user_id,
         });
-        if (rpcError) return jsonResponse({ success: false, error: rpcError.message }, 400);
+        if (rpcError) {
+          await recordAuditEvent(serviceClient, { organizationId: organization_id, targetUserId: target_user_id, actorUserId: actorId,
+            eventType: "reactivation_failed", source: "user_management", requestId, metadata: { reason: failureReason(rpcError.message) } });
+          return jsonResponse({ success: false, error: rpcError.message }, 400);
+        }
       }
     } catch (e) {
       return jsonResponse({ success: false, error: e instanceof Error ? e.message : "Database update failed" }, 400);
@@ -137,6 +149,15 @@ Deno.serve(async (req) => {
   // session keeps working silently -- and conversely, the DB change is the
   // authorization-checked step, so this Auth call never runs on its own
   // authority) does the Auth account itself get suspended/restored.
+  // Register the real human actor so the Auth ban/unban (a service-role write) is attributed to the admin who asked for it.
+  await registerAuditContext(serviceClient, {
+    actorUserId: actorId,
+    organizationId: organization_id,
+    requestId,
+    source: "auth_admin",
+    targetUserIds: [target_user_id],
+    method: desiredBan === BAN_DURATION ? "ban" : "unban",
+  });
   const { error: authError } = await serviceClient.auth.admin.updateUserById(target_user_id, {
     ban_duration: desiredBan,
   });
@@ -159,6 +180,8 @@ Deno.serve(async (req) => {
       p_event_type: failureEventType,
       p_error_message_safe: authError.message,
     });
+    await recordAuditEvent(serviceClient, { organizationId: organization_id, targetUserId: target_user_id, actorUserId: actorId,
+      eventType: failureEventType, source: "auth_admin", requestId, metadata: { reason: failureReason(authError.message) } });
     return jsonResponse({
       success: true,
       warning: `Database updated, but Auth ${desiredBan === BAN_DURATION ? "ban" : "unban"} failed: ${authError.message}. Retry with action "retry_auth_sync".`,
@@ -174,7 +197,9 @@ Deno.serve(async (req) => {
       p_event_type: "auth_sync_recovered",
       p_error_message_safe: null,
     });
+    await recordAuditEvent(serviceClient, { organizationId: organization_id, targetUserId: target_user_id, actorUserId: actorId,
+      eventType: "auth_sync_recovered", source: "auth_admin", requestId });
   }
 
-  return jsonResponse({ success: true });
+  return jsonResponse({ success: true, request_id: requestId });
 });

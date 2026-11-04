@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { failureReason, newRequestId, recordAuditEvent, registerAuditContext } from "../_shared/accountAudit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -79,7 +80,9 @@ Deno.serve(async (req) => {
       );
     }
 
+    // The actor is the authenticated caller. It is NEVER read from the request body (DOC-158).
     const callerId = authUserData.user.id;
+    const requestId = newRequestId(req);
 
     // Ensure caller is an active org admin.
     const { data: callerAdminMemberships, error: callerAdminError } = await serviceClient
@@ -112,13 +115,35 @@ Deno.serve(async (req) => {
       );
     }
 
-    const sameOrg = targetMemberships.some((m: { organization_id: string }) => adminOrgIds.has(m.organization_id));
+    const sharedMembership = targetMemberships.find((m: { organization_id: string }) => adminOrgIds.has(m.organization_id));
+    const sameOrg = Boolean(sharedMembership);
     if (!sameOrg) {
+      await recordAuditEvent(serviceClient, {
+        organizationId: [...adminOrgIds][0] as string,
+        targetUserId: target_user_id,
+        actorUserId: callerId,
+        eventType: "account_change_denied",
+        source: "user_management",
+        requestId,
+        metadata: { requested_action: "email_change", reason: "different_organization" },
+      });
       return new Response(
         JSON.stringify({ success: false, error: "You can only update users in your organization" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
+
+    const orgId = sharedMembership.organization_id as string;
+
+    // Register the REAL human actor before the privileged call: the service-role write below is then attributed to the admin
+    // (execution context stays "service_role"). The context also covers the browser's follow-up profiles.email update.
+    await registerAuditContext(serviceClient, {
+      actorUserId: callerId,
+      organizationId: orgId,
+      requestId,
+      source: "user_management",
+      targetUserIds: [target_user_id],
+    });
 
     const { error: updateError } = await serviceClient.auth.admin.updateUserById(target_user_id, {
       email: normalizedEmail,
@@ -126,6 +151,15 @@ Deno.serve(async (req) => {
     });
 
     if (updateError) {
+      await recordAuditEvent(serviceClient, {
+        organizationId: orgId,
+        targetUserId: target_user_id,
+        actorUserId: callerId,
+        eventType: "email_change_failed",
+        source: "user_management",
+        requestId,
+        metadata: { reason: failureReason(updateError.message) },
+      });
       return new Response(
         JSON.stringify({ success: false, error: updateError.message || "Failed to update auth email" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -133,7 +167,7 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, message: "User email updated successfully", email: normalizedEmail }),
+      JSON.stringify({ success: true, message: "User email updated successfully", email: normalizedEmail, request_id: requestId }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {

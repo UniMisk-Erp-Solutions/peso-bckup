@@ -148,3 +148,24 @@ describe("stale preview responses are dropped (real deferred promises)", () => {
     expect((await p).kind).toBe("stale");
   });
 });
+
+describe("Daily Project Report column kinds + preview capability (DOC-101 §11)", () => {
+  it("Track Date is a date column and the cost/percent columns are numeric; everything else is text", async () => {
+    const { classifyPreviewColumnKind } = await import("@/lib/reportExportJobs");
+    expect(classifyPreviewColumnKind("Track Date")).toBe("date");
+    for (const c of ["Petrol Cost", "Material Cost", "Travelling Cost", "Phone Exp.", "Hotel Exp.", "Transport Exp", "Contra Bill", "Other Exp.", "percent"]) {
+      expect(classifyPreviewColumnKind(c), c).toBe("money");
+    }
+    for (const c of ["Employee", "project name", "Remarks", "Voucher No", "Location"]) {
+      expect(classifyPreviewColumnKind(c), c).toBe("text");
+    }
+  });
+
+  it("only Detailed Expense and Daily Project store a previewable row set", async () => {
+    const { supportsStoredReportPreview } = await import("@/lib/reportExportJobs");
+    expect(supportsStoredReportPreview("daily_project_report")).toBe(true);
+    expect(supportsStoredReportPreview("detailed_expense")).toBe(true);
+    expect(supportsStoredReportPreview("claim_verification")).toBe(false);
+    expect(supportsStoredReportPreview("claim_approval")).toBe(false);
+  });
+});

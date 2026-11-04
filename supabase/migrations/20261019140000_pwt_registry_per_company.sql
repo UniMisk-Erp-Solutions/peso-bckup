@@ -6,7 +6,7 @@
 -- once to each company; duplicates inside one company are still impossible.
 --
 -- ADDITIVE and idempotent. Existing rows are tagged with the company their sync job posted to. Apply manually, PesoWise DB only.
--- Needs 20261016120000_pwt_foundation.sql and 20261019100000_pwt_deletion_sync.sql.
+-- Needs 20261016120000_pwt_foundation.sql and 20261019110000_pwt_deletion_sync.sql.
 
 -- ---------------------------------------------------------------------------------------------
 -- 1. Registry: company column, backfill, new primary key

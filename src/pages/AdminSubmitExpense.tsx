@@ -35,6 +35,7 @@ import { AdminExpenseHistoryTab } from "@/components/AdminExpenseHistoryTab";
 import { BulkExpenseImportPanel } from "@/components/BulkExpenseImportPanel";
 import {
   submitExpenseForEmployee,
+  prepareExpenseForEmployee,
   finalizePendingReceiptsForExpense,
   AdminSubmitExpenseError,
   type AdminSubmitStatusChoice,
@@ -95,6 +96,8 @@ export default function AdminSubmitExpense() {
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState(newIdempotencyKey());
+  // DOC-150: UUID identity of the prepared (attach-first) draft; minted with the idempotency key.
+  const [prepareKey, setPrepareKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     if (!organizationId) return;
@@ -133,6 +136,7 @@ export default function AdminSubmitExpense() {
     resetOptionBranches();
     setPendingReceipts([]);
     setIdempotencyKey(newIdempotencyKey());
+    setPrepareKey(crypto.randomUUID());
   }
 
   function handleCategoryChange(next: string) {
@@ -255,6 +259,49 @@ export default function AdminSubmitExpense() {
     }
     setSubmitting(true);
     try {
+      // DOC-150 ATTACH-FIRST. With receipts: (1) prepare the employee's draft (idempotent on prepareKey),
+      // (2) attach the receipts to THAT draft, (3) promote it. The server refuses the promotion unless a
+      // live bill is attached when the amount is above the organisation threshold, and a failure at any
+      // step leaves exactly ONE reusable draft - a retry resolves to the same row.
+      let existingExpenseId: string | null = null;
+      let receiptSummary = "";
+      if (pendingReceipts.length > 0 && user) {
+        const prepared = await prepareExpenseForEmployee({
+          organizationId,
+          employeeId: selectedEmployee.user_id,
+          title,
+          destination,
+          tripStart,
+          tripEnd,
+          category,
+          amount: Number(amount),
+          purpose: purpose || null,
+          prepareKey,
+        });
+        existingExpenseId = prepared.expenseId;
+        // A retry must not attach the same receipts twice.
+        const { count: liveBills } = await supabase
+          .from("attachments")
+          .select("id", { count: "exact", head: true })
+          .eq("expense_id", prepared.expenseId)
+          .is("deleted_at", null);
+        if (!liveBills) {
+          const outcome = await finalizePendingReceiptsForExpense({
+            expenseId: prepared.expenseId,
+            organizationId,
+            adminUserId: user.id,
+            receipts: pendingReceipts,
+          });
+          if (outcome.attachmentsInserted === 0) {
+            throw new AdminSubmitExpenseError(
+              "RECEIPT_ATTACH_FAILED",
+              "The receipt(s) could not be attached, so nothing was submitted. Your draft was preserved - press Submit again to retry.",
+            );
+          }
+          receiptSummary = ` ${outcome.attachmentsInserted} receipt(s) attached.`;
+        }
+      }
+
       const result = await submitExpenseForEmployee({
         organizationId,
         employeeId: selectedEmployee.user_id,
@@ -269,24 +316,8 @@ export default function AdminSubmitExpense() {
         status,
         statusComment: comment || null,
         idempotencyKey,
+        existingExpenseId,
       });
-
-      let receiptSummary = "";
-      if (pendingReceipts.length > 0 && user) {
-        const outcome = await finalizePendingReceiptsForExpense({
-          expenseId: result.expenseId,
-          organizationId,
-          adminUserId: user.id,
-          receipts: pendingReceipts,
-        });
-        if (outcome.failedCount > 0) {
-          receiptSummary = ` ${outcome.attachmentsInserted}/${pendingReceipts.length} receipt(s) attached — ${outcome.failedCount} pending, retry from the expense detail page.`;
-        } else if (outcome.pendingCount > 0) {
-          receiptSummary = ` Receipts attached (${outcome.pendingCount} awaiting final storage confirmation).`;
-        } else {
-          receiptSummary = ` ${outcome.attachmentsInserted} receipt(s) attached.`;
-        }
-      }
 
       toast({
         title: result.idempotentReplay ? "Already submitted" : "Expense submitted",
@@ -395,7 +426,7 @@ export default function AdminSubmitExpense() {
                     ))}
                   </select>
                   <Dialog open={addCategoryOpen} onOpenChange={setAddCategoryOpen}>
-                    <DialogContent>
+                    <DialogContent aria-describedby={undefined}>
                       <DialogHeader>
                         <DialogTitle>Add category</DialogTitle>
                       </DialogHeader>
@@ -444,6 +475,11 @@ export default function AdminSubmitExpense() {
                 <Label>Receipts (optional)</Label>
                 <FileUpload
                   expenseId="new"
+                  onAttachmentRemoved={(attachment) => {
+                    const removedName =
+                      (attachment.storage_path ?? "").split("/").pop() ?? attachment.filename;
+                    setPendingReceipts((prev) => prev.filter((r) => r.filename !== removedName));
+                  }}
                   onUploadComplete={(attachment) => {
                     const filename = (attachment.storage_path ?? "").split("/").pop() ?? attachment.filename;
                     setPendingReceipts((prev) => [

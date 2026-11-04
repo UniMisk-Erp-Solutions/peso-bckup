@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsPreflightResponse, jsonResponse } from "../_shared/cors.ts";
+import { newRequestId, recordAuditEvent, registerAuditContext } from "../_shared/accountAudit.ts";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ALLOWED_ROLES = new Set([
@@ -111,6 +112,9 @@ Deno.serve(async (req) => {
     }
 
     await assertCallerIsOrgAdmin(serviceClient, authUserData.user.id, organizationId);
+    // The actor is the authenticated caller, never a body field (DOC-158). The password below is never logged or audited.
+    const actorId = authUserData.user.id;
+    const requestId = newRequestId(req);
 
     const { data: existingProfile } = await serviceClient
       .from("profiles")
@@ -148,6 +152,15 @@ Deno.serve(async (req) => {
       }
     }
 
+    // The auth user id does not exist yet, so the human actor is registered against the e-mail; the id-keyed registration follows.
+    await registerAuditContext(serviceClient, {
+      actorUserId: actorId,
+      organizationId,
+      requestId,
+      source: "user_management",
+      targetEmail: email,
+    });
+
     const { data: created, error: createError } = await serviceClient.auth.admin.createUser({
       email,
       password,
@@ -168,6 +181,13 @@ Deno.serve(async (req) => {
     }
 
     const userId = created.user.id;
+    await registerAuditContext(serviceClient, {
+      actorUserId: actorId,
+      organizationId,
+      requestId,
+      source: "user_management",
+      targetUserIds: [userId],
+    });
 
     const { error: assignError } = await serviceClient.rpc("assign_user_to_organization", {
       p_user_id: userId,
@@ -176,6 +196,9 @@ Deno.serve(async (req) => {
     });
 
     if (assignError) {
+      // Record BEFORE the compensating delete so the failure keeps its target snapshot; the delete itself is audited too.
+      await recordAuditEvent(serviceClient, { organizationId, targetUserId: userId, actorUserId: actorId, eventType: "user_creation_failed",
+        source: "user_management", requestId, metadata: { reason: "membership_assignment_failed", rolled_back: true } });
       await serviceClient.auth.admin.deleteUser(userId).catch(() => undefined);
       return jsonResponse(
         {
@@ -210,6 +233,8 @@ Deno.serve(async (req) => {
       // Only clean up the account THIS invocation just created — never an
       // existing, unrelated user. Mirrors the assign_user_to_organization
       // failure path above.
+      await recordAuditEvent(serviceClient, { organizationId, targetUserId: userId, actorUserId: actorId, eventType: "user_creation_failed",
+        source: "user_management", requestId, metadata: { reason: "profile_update_failed", rolled_back: true } });
       await serviceClient.auth.admin.deleteUser(userId).catch(() => undefined);
 
       const isDuplicateEmployeeId =
@@ -231,6 +256,7 @@ Deno.serve(async (req) => {
 
     return jsonResponse({
       success: true,
+      request_id: requestId,
       user: {
         id: userId,
         email: created.user.email ?? email,
