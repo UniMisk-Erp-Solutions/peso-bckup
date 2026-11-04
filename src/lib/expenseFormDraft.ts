@@ -32,6 +32,12 @@ export type ExpenseFormDraft = {
   attachments: string[];
   sessionTempFilenames: string[];
   sessionTempMeta: ExpenseFormDraftTempMeta[];
+  /**
+   * DOC-148: id of THIS logical submission, minted when the form opens and sent with every
+   * Submit. The server maps (org, user, id) to one expense row, so a restored form resumes
+   * the same row. Optional: drafts saved before this existed simply have none.
+   */
+  clientSubmissionId?: string;
 };
 
 /** "new" for create flow, or expense UUID when editing in progress. */
@@ -165,7 +171,10 @@ export function loadExpenseFormDraft(
   const backup = draftBackupKey(userId, organizationId, scope);
 
   const fromMemory = memoryDraftByKey.get(key);
-  if (fromMemory?.pendingSubmit !== false) return fromMemory;
+  // DOC-148: this used to read `fromMemory?.pendingSubmit !== false`, which is TRUE when nothing is in
+  // memory (undefined !== false), so after a reload/restart the function returned undefined and never
+  // reached localStorage -- the "durable" recovery never survived a restart. Require a real entry.
+  if (fromMemory && fromMemory.pendingSubmit !== false) return fromMemory;
 
   if (typeof localStorage !== "undefined") {
     const fromLocal = readFromStore(localStorage, key) ?? readFromStore(localStorage, backup);

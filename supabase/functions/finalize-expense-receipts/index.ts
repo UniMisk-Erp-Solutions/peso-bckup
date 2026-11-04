@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { finalizeOneReceipt, type StorageBucketLike } from "./finalizeReceipt.ts";
 
-const VERSION = "receipt-finalizer-v4";
+const VERSION = "receipt-finalizer-v5";
 
 // Exact origins permitted (no subdomain).
 const ALLOWED_EXACT_ORIGINS = [
@@ -288,109 +289,28 @@ Deno.serve(async (req) => {
           };
         }
 
-        const sourcePath = `temp/${user.id}/${filename}`;
-        const destPath = `${expenseId}/${filename}`;
-
-        // A. Idempotent probe — if destination already exists, skip the write.
-        const { data: existingFiles } = await serviceClient.storage
-          .from("receipts")
-          .list(expenseId, { search: filename, limit: 1 });
-
-        if (existingFiles?.some((f) => f.name === filename)) {
-          const { data: urlData } = serviceClient.storage
-            .from("receipts")
-            .getPublicUrl(destPath);
-          return {
-            filename,
-            sourcePath,
-            desiredFinalPath: destPath,
-            resolvedPath: destPath,
-            status: "finalized",
-            fileUrl: urlData.publicUrl,
-          };
-        }
-
-        // B. Download source.
-        const { data: sourceBlob, error: downloadError } =
-          await serviceClient.storage.from("receipts").download(sourcePath);
-
-        if (downloadError || !sourceBlob) {
-          console.error("[finalize-receipts] source download failed", {
-            requestId,
-            expenseId,
-            sourcePath,
-            error: downloadError?.message,
-          });
-          return {
-            filename,
-            sourcePath,
-            desiredFinalPath: destPath,
-            resolvedPath: null,
-            status: "failed",
-            errorMessage:
-              downloadError?.message ?? "Source file not found or inaccessible",
-          };
-        }
-
-        // C. Upload to destination.
-        const { error: uploadError } = await serviceClient.storage
-          .from("receipts")
-          .upload(destPath, sourceBlob, {
-            upsert: true,
-            contentType: receipt.contentType || "image/jpeg",
-          });
-
-        if (uploadError) {
-          console.warn("[finalize-receipts] upload error (verifying anyway)", {
-            requestId,
-            expenseId,
-            destPath,
-            error: uploadError.message,
-          });
-        }
-
-        // D. Download-verify — the only authoritative proof the write succeeded.
-        const { data: verifyBlob, error: verifyError } =
-          await serviceClient.storage.from("receipts").download(destPath);
-
-        if (!verifyError && verifyBlob) {
-          const { data: urlData } = serviceClient.storage
-            .from("receipts")
-            .getPublicUrl(destPath);
-          return {
-            filename,
-            sourcePath,
-            desiredFinalPath: destPath,
-            resolvedPath: destPath,
-            status: "finalized",
-            fileUrl: urlData.publicUrl,
-          };
-        }
-
-        // E. Temp-path fallback — file is accessible at source but could not be
-        //    written to the destination. Return temp URL so expense can still submit.
-        console.error(
-          "[finalize-receipts] upload verify failed — temp-path fallback",
+        // Temp object -> final object with a server-side COPY (no bytes through this function); the
+        // download/upload/verify sequence remains only as a fallback. See finalizeReceipt.ts.
+        const result = await finalizeOneReceipt(
+          serviceClient.storage.from("receipts") as unknown as StorageBucketLike,
           {
-            requestId,
             expenseId,
-            sourcePath,
-            destPath,
-            uploadError: uploadError?.message,
-            verifyError: verifyError?.message,
+            userId: user.id,
+            filename,
+            contentType: receipt.contentType,
           },
         );
-        const { data: tempUrlData } = serviceClient.storage
-          .from("receipts")
-          .getPublicUrl(sourcePath);
-        return {
-          filename,
-          sourcePath,
-          desiredFinalPath: destPath,
-          resolvedPath: sourcePath,
-          status: "temporary_fallback",
-          fileUrl: tempUrlData.publicUrl,
-        };
+        // Operational visibility without user data: how each receipt was finalized, and any degraded outcome.
+        if (result.status !== "finalized" || result.method === "download_upload") {
+          console.warn("[finalize-receipts] degraded finalization", {
+            requestId,
+            expenseId,
+            status: result.status,
+            method: result.method ?? null,
+            error: result.errorMessage ?? null,
+          });
+        }
+        return result;
       },
     );
 

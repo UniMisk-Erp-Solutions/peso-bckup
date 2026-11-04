@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { supabase } from "@/integrations/supabase/client";
 import type { PostgrestFilterBuilder } from "@supabase/postgrest-js";
 import { fetchMyTeamsOverview } from "@/services/MyTeamsService";
 
@@ -9,10 +10,37 @@ export const TEAM_REPORTS_LEADER_ROLES = new Set([
   "executive",
 ]);
 
-/** All user IDs across teams the current user leads (My Teams RPC). */
+/**
+ * The report scope for the CURRENT user, resolved server-side from auth.uid().
+ *
+ * Always contains the caller's own user id; managers additionally get the
+ * employees they are authorized to manage (formal teams + reporting chain).
+ * This is a convenience for the UI (filters, counts) and is NOT the security
+ * boundary: every report RPC re-derives and enforces the same scope itself
+ * (see 20261019100000_secure_report_scope_v1.sql).
+ */
 export async function fetchTeamMemberUserIds(organizationId: string): Promise<string[]> {
-  const teams = await fetchMyTeamsOverview(organizationId, null, null);
+  // The RPC is newer than the generated Database types.
+  const untyped = supabase as unknown as {
+    rpc: (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ data: unknown; error: { message?: string } | null }>;
+  };
+  const { data, error } = await untyped.rpc("get_my_report_scope_v1", {
+    p_organization_id: organizationId,
+  });
+  if (!error && Array.isArray(data)) {
+    return [...new Set((data as unknown[]).map(String))];
+  }
+
+  // Fail safe when the migration is not installed yet: the caller's own id plus
+  // whatever My Teams already exposes. The report RPCs still enforce scope.
   const ids = new Set<string>();
+  const { data: sessionData } = await supabase.auth.getSession();
+  const selfId = sessionData.session?.user?.id;
+  if (selfId) ids.add(selfId);
+  const teams = await fetchMyTeamsOverview(organizationId, null, null);
   for (const team of teams) {
     for (const member of team.members) {
       if (member.user_id) ids.add(member.user_id);
@@ -70,8 +98,9 @@ export async function fetchTeamScopedExpenses<T extends ExpenseRow>(
     /**
      * When provided and teamScoped is true, the RPC path is used for ALL
      * team-scoped fetches (both single-employee and all-employee).
-     * Security is enforced upstream: teamUserIds comes from list_my_teams_overview
-     * which is SECURITY DEFINER and already scopes to the viewer's teams.
+     * Security is enforced SERVER-SIDE: get_team_expenses_for_members intersects
+     * the requested ids with get_my_report_scope_v1(auth.uid()). teamUserIds is
+     * only a request/filter, never an authorization.
      */
     rpcOptions?: TeamExpensesRpcOptions;
   },

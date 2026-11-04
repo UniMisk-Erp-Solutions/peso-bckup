@@ -18,11 +18,13 @@
  * competing reload implementations.
  */
 
-const CHUNK_RELOAD_KEY = "pesowise-chunk-reload";
-/** After a recovery reload, block another for this long so a genuinely broken
- *  CURRENT deployment can't loop — but a later, unrelated transient failure can
- *  still self-heal (the marker is cleared on the next successful import). */
-const RELOAD_COOLDOWN_MS = 30_000;
+const CHUNK_RELOAD_KEY = "pw_chunk_reload_attempted";
+/** ONE automatic recovery reload per navigation/session: while the flag is set no further
+ *  automatic reload happens, so a genuinely broken CURRENT deployment can never loop. The flag is
+ *  cleared by the next SUCCESSFUL dynamic import (see clearStaleChunkReloadFlag). The expiry is only a
+ *  safety net for a long-lived tab whose flag was never cleared, so a much later deploy can still
+ *  self-heal; it is deliberately far longer than any reload round-trip. */
+const RELOAD_COOLDOWN_MS = 10 * 60_000;
 
 /**
  * True only for JavaScript dynamic-import / chunk LOAD failures, across browsers.
@@ -60,6 +62,11 @@ export function clearStaleChunkReloadFlag(): void {
   } catch {
     /* storage unavailable — ignore */
   }
+}
+
+/** True once the single automatic recovery reload has been used (and not yet cleared). */
+export function hasChunkReloadBeenAttempted(): boolean {
+  return reloadedRecently();
 }
 
 function reloadedRecently(): boolean {

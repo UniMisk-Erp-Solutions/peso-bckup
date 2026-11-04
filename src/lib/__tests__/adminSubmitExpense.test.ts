@@ -20,6 +20,7 @@ vi.mock("@/lib/receiptFinalization", () => ({
 
 import {
   submitExpenseForEmployee,
+  prepareExpenseForEmployee,
   submitBulkExpensesForEmployees,
   finalizePendingReceiptsForExpense,
   AdminSubmitExpenseError,
@@ -62,7 +63,7 @@ describe("submitExpenseForEmployee — success path", () => {
     const result = await submitExpenseForEmployee({ ...validInput, idempotencyKey: "key-1" });
 
     expect(rpcMock).toHaveBeenCalledWith(
-      "admin_submit_expense_for_employee_v2",
+      "admin_submit_expense_for_employee_v3",
       expect.objectContaining({
         p_organization_id: "org-1",
         p_employee_id: "emp-1",
@@ -83,8 +84,8 @@ describe("submitExpenseForEmployee — success path", () => {
     });
     await submitExpenseForEmployee(validInput);
     expect(rpcMock).toHaveBeenCalledWith(
-      "admin_submit_expense_for_employee_v2",
-      expect.objectContaining({ p_status: "submitted", p_idempotency_key: null }),
+      "admin_submit_expense_for_employee_v3",
+      expect.objectContaining({ p_status: "submitted", p_idempotency_key: null, p_existing_expense_id: null }),
     );
   });
 
@@ -283,5 +284,55 @@ describe("finalizePendingReceiptsForExpense — receipt evidence integrity", () 
       expect.anything(),
       expect.objectContaining({ expenseId: "exp-1", userId: "admin-1" }),
     );
+  });
+});
+
+describe("DOC-150 admin attach-first bill flow", () => {
+  const base = {
+    organizationId: "org-1",
+    employeeId: "emp-1",
+    title: "Client visit",
+    destination: "Pune",
+    tripStart: "2026-09-01",
+    tripEnd: "2026-09-02",
+    category: "Travel",
+    amount: 800,
+  };
+
+  it("prepare calls the idempotent prepare RPC with the UUID key and returns the draft id", async () => {
+    rpcMock.mockResolvedValue({ data: { expense_id: "exp-9", status: "draft", created: true }, error: null });
+    const r = await prepareExpenseForEmployee({ ...base, prepareKey: "11111111-1111-4111-8111-111111111111" });
+    expect(rpcMock).toHaveBeenCalledWith(
+      "admin_prepare_expense_for_employee_v1",
+      expect.objectContaining({ p_amount: 800, p_idempotency_key: "11111111-1111-4111-8111-111111111111" }),
+    );
+    expect(r).toEqual({ expenseId: "exp-9", status: "draft", created: true });
+  });
+
+  it("a retry with the same key resolves to the same draft (no second expense)", async () => {
+    rpcMock.mockResolvedValue({ data: { expense_id: "exp-9", status: "draft", created: false }, error: null });
+    const a = await prepareExpenseForEmployee({ ...base, prepareKey: "k" });
+    const b = await prepareExpenseForEmployee({ ...base, prepareKey: "k" });
+    expect(a.expenseId).toBe(b.expenseId);
+  });
+
+  it("submit promotes the prepared draft via p_existing_expense_id", async () => {
+    rpcMock.mockResolvedValue({ data: { expense_id: "exp-9", status: "submitted", custom_fields_saved: 0, idempotent_replay: false }, error: null });
+    await submitExpenseForEmployee({ ...base, existingExpenseId: "exp-9", idempotencyKey: "k-1" });
+    expect(rpcMock).toHaveBeenCalledWith(
+      "admin_submit_expense_for_employee_v3",
+      expect.objectContaining({ p_existing_expense_id: "exp-9" }),
+    );
+  });
+
+  it("maps the server bill refusal to BILL_REQUIRED (no admin override)", async () => {
+    rpcMock.mockResolvedValue({
+      data: null,
+      error: { code: "23514", message: "Bill photos are required for expenses above ₹499. Please upload at least one receipt or bill before submitting." },
+    });
+    await expect(submitExpenseForEmployee({ ...base, idempotencyKey: "k-2" })).rejects.toMatchObject({
+      name: "AdminSubmitExpenseError",
+      code: "BILL_REQUIRED",
+    });
   });
 });

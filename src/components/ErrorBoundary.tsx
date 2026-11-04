@@ -1,5 +1,5 @@
 import React from 'react';
-import { isStaleChunkError, recoverFromStaleChunk } from '@/lib/chunkRecovery';
+import { hasChunkReloadBeenAttempted, isStaleChunkError, recoverFromStaleChunk } from '@/lib/chunkRecovery';
 import { reportError } from '@/lib/monitoring';
 
 interface ErrorBoundaryState {
@@ -58,6 +58,30 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
       if (this.props.fallback) {
         const FallbackComponent = this.props.fallback;
         return <FallbackComponent error={this.state.error} resetError={this.resetError} />;
+      }
+
+      // Known stale-deployment chunk failure: say what happened instead of showing the raw
+      // "error loading dynamically imported module" text. Reload is user-initiated here, so it is
+      // allowed even though the one automatic reload may already have been used.
+      if (isStaleChunkError(this.state.error)) {
+        return (
+          <div className="flex flex-col items-center justify-center min-h-[200px] p-6 text-center">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-6 max-w-md">
+              <h2 className="text-lg font-semibold text-amber-900 mb-2">A new version is available</h2>
+              <p className="text-amber-800 mb-4">
+                {hasChunkReloadBeenAttempted()
+                  ? 'A new version of PesoWise was deployed. Please refresh the page.'
+                  : 'PesoWise was updated while this page was open. Reloading will load the latest version.'}
+              </p>
+              <button
+                onClick={() => window.location.reload()}
+                className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors"
+              >
+                Reload now
+              </button>
+            </div>
+          </div>
+        );
       }
 
       return (

@@ -24,6 +24,15 @@ export type UserManagementListRow = OrganizationUserRow & {
   team_name?: string;
 };
 
+export type UserStatusFilter = "all" | "active" | "deactivated";
+
+/** The ONE status rule for the User Management tabs: Active = active only, Deactivated = inactive only, All = both. */
+export function matchesUserStatus(u: { is_active: boolean }, filter: UserStatusFilter): boolean {
+  if (filter === "active") return u.is_active;
+  if (filter === "deactivated") return !u.is_active;
+  return true;
+}
+
 function isSchemaMismatchError(error: unknown): boolean {
   const e = error as { code?: string; message?: string; status?: number };
   if (!e) return false;
@@ -59,6 +68,41 @@ export async function fetchOrgMembershipRolesMap(
     rolesById[row.user_id] = row.role;
   }
   return rolesById;
+}
+
+export interface OrgMembershipState {
+  role: string;
+  /** organization_memberships.is_active - THE authoritative active/deactivated flag. */
+  is_active: boolean;
+}
+
+/**
+ * Every membership of the org WITH its state - active AND deactivated.
+ *
+ * Source of truth (verified on Production for Patidar Travels): organization_memberships.is_active.
+ * It gates access and seat counting; deactivation sets it false (profiles.is_active /
+ * deactivated_at and auth.users.banned_until are kept in step by deactivate/reactivate). A user who
+ * was REMOVED has no membership row at all, so "has a membership row" is exactly "is listed".
+ *
+ * This must NOT be filtered to is_active = true: User Management's Deactivated tab is built from it,
+ * and an active-only map made every deactivated member vanish (the empty Patidar Travels tab).
+ */
+export async function fetchOrgMembershipStateMap(
+  organizationId: string,
+): Promise<Record<string, OrgMembershipState>> {
+  const { data, error } = await supabase
+    .from("organization_memberships")
+    .select("user_id, role, is_active")
+    .eq("organization_id", organizationId);
+  if (error) throw error;
+  const map: Record<string, OrgMembershipState> = {};
+  for (const row of data || []) {
+    map[row.user_id as string] = {
+      role: String(row.role),
+      is_active: (row as { is_active?: boolean | null }).is_active !== false,
+    };
+  }
+  return map;
 }
 
 /**
@@ -104,7 +148,6 @@ export async function fetchOrganizationUsers(
 /** Full user list for User Management (roles, supervisors, cashiers, locations). */
 export async function fetchUserManagementList(
   organizationId: string,
-  rolesById?: Record<string, string>,
 ): Promise<UserManagementListRow[]> {
   const { data: profiles, error: profilesError } = await supabase
     .from("profiles")
@@ -115,10 +158,8 @@ export async function fetchUserManagementList(
 
   if (profilesError) throw profilesError;
 
-  const roleMap =
-    rolesById && Object.keys(rolesById).length > 0
-      ? rolesById
-      : await fetchOrgMembershipRolesMap(organizationId);
+  // Memberships WITH state (active + deactivated). Never an active-only map: see fetchOrgMembershipStateMap.
+  const membershipByUserId = await fetchOrgMembershipStateMap(organizationId);
 
   const supervisorUserIds = [
     ...new Set(
@@ -223,17 +264,20 @@ export async function fetchUserManagementList(
     teamNameByUserId[uid] = teamNamesById[tid] || "";
   }
 
+  // Listed = has a membership row in THIS org (removed users have none). Active/deactivated is then a
+  // pure status filter applied by the caller BEFORE pagination.
   return (profiles || [])
-    .filter((p) => Boolean(roleMap[p.user_id]))
+    .filter((p) => Boolean(membershipByUserId[p.user_id]))
     .map((p) => ({
     user_id: p.user_id,
     name: p.name || "",
     email: p.email || "",
     employee_id: p.employee_id ?? null,
     balance: Number(p.balance ?? 0),
-    is_active: p.is_active !== false,
+    // Deactivated if EITHER flag says so (they are kept in step; a disagreement must not grant access in the UI).
+    is_active: membershipByUserId[p.user_id].is_active && p.is_active !== false,
     deactivated_at: p.deactivated_at ?? null,
-    role: roleMap[p.user_id] || "employee",
+    role: membershipByUserId[p.user_id].role || "employee",
     assigned_engineer_name: p.reporting_engineer_id
       ? supervisorNamesById[p.reporting_engineer_id] || "Unknown"
       : undefined,

@@ -6,7 +6,8 @@
  * status row, and downloads the finished file straight from Storage via a
  * signed URL, so even a multi-megabyte export never passes through a JS buffer.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Download, Loader2, AlertCircle, FileSpreadsheet, RotateCw, History, ChevronLeft, ChevronRight, Table as TableIcon,
   ArrowUp, ArrowDown, Filter, X, Eye, RefreshCcw,
@@ -16,6 +17,14 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
+import {
+  classifyReportViewError,
+  friendlyJobFailureMessage,
+  reportDownloadErrorMessage,
+  reportStartErrorMessage,
+  reportViewErrorMessage,
+  type ReportViewErrorKind,
+} from "@/lib/reportViewMessages";
 import { createMonthFetchGuardState, invalidateMonthFetch, runMonthFetch } from "@/lib/monthFetchGuard";
 import {
   enqueueDailyProjectReportExport,
@@ -31,6 +40,7 @@ import {
   fetchReportExportJobPreviewPageV2,
   formatHistoryParameterSummary,
   classifyPreviewColumnKind,
+  supportsStoredReportPreview,
   retryReportExportJob,
   type ExportJob,
   type ExpenseReportType,
@@ -39,6 +49,10 @@ import {
   type ColumnFilterSpec,
   type SortDirection,
 } from "@/lib/reportExportJobs";
+import { PwtSyncGroup } from "@/components/PwtSyncControl";
+
+/** PesoWise -> TallyPrime "Sync to Tally" control on the four reports; off unless VITE_PWT_SYNC=1. */
+const PWT_SYNC_ENABLED = import.meta.env.VITE_PWT_SYNC === "1";
 
 const HISTORY_PAGE_SIZE = 5;
 const PREVIEW_PAGE_SIZE = 50;
@@ -324,6 +338,12 @@ interface ServerReportExportPanelProps {
   selectedYear?: string;
   selectedMonth?: string;
   selectedWeek?: string;
+  /** Admin only: show Sync to Tally (never on team-scoped reports). Needs VITE_PWT_SYNC=1. */
+  enableTallySync?: boolean;
+  /** Claim Approval: HO status filter value passed to the sync. */
+  hoStatus?: string | null;
+  /** Claim reports: custom-field filters passed to the sync. */
+  syncCustomFieldFilters?: Record<string, string>;
 }
 
 const POLL_MS = 2000;
@@ -345,11 +365,23 @@ export function ServerReportExportPanel({
   selectedYear,
   selectedMonth,
   selectedWeek,
+  enableTallySync = false,
+  hoStatus,
+  syncCustomFieldFilters,
 }: ServerReportExportPanelProps) {
   const { toast } = useToast();
   const [job, setJob] = useState<ExportJob | null>(null);
   const [starting, setStarting] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  // The Sync to Tally button is shown beside the filters' Clear button when that slot exists on the page (Reports > Detailed Expense).
+  const [syncSlot, setSyncSlot] = useState<HTMLElement | null>(null);
+  const [statusSlot, setStatusSlot] = useState<HTMLElement | null>(null);
+  const [syncHistoryEl, setSyncHistoryEl] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setSyncSlot(document.getElementById("pwt-sync-slot"));
+    setStatusSlot(document.getElementById("pwt-status-slot"));
+  }, []);
+  const syncOn = enableTallySync && PWT_SYNC_ENABLED && reportType === "detailed_expense";
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<ExportHistoryEntry[]>([]);
   const [historyTotal, setHistoryTotal] = useState(0);
@@ -359,6 +391,9 @@ export function ServerReportExportPanel({
   const [preview, setPreview] = useState<ReportPreviewPageV2 | null>(null);
   const [previewPage, setPreviewPage] = useState(1);
   const [previewLoading, setPreviewLoading] = useState(false);
+  // Why the preview could not be shown (never the raw backend message).
+  const [previewError, setPreviewError] = useState<ReportViewErrorKind | null>(null);
+  const previewSectionRef = useRef<HTMLElement | null>(null);
   // Which job's preview (and Download target) is on screen right now --
   // distinct from `job`, which tracks the CURRENTLY GENERATING/latest job's
   // own lifecycle. Viewing an older history row must never overwrite `job`.
@@ -386,9 +421,10 @@ export function ServerReportExportPanel({
   const previewGuardRef = useRef(createMonthFetchGuardState());
 
   const effectiveType = reportType ?? "daily_project_report";
-  // On-page preview is Detailed Expense only for now (DOC-131) — the other
-  // three report types have no stored row set to page through.
-  const previewSupported = effectiveType === "detailed_expense";
+  // On-page preview exists for the report types whose worker stores the exact
+  // CSV rows (Detailed Expense, DOC-131; Daily Project, DOC-101 §11). Claim
+  // Verification / Claim Approval have no stored row set to page through.
+  const previewSupported = supportsStoredReportPreview(effectiveType);
 
   // Every generated report leaves a row; this surfaces them so an
   // earlier file can be re-downloaded instead of regenerated. Paginated
@@ -423,6 +459,7 @@ export function ServerReportExportPanel({
     if (!previewSupported) return;
     const key = contextKeyRef.current;
     setPreviewLoading(true);
+    setPreviewError(null);
     const outcome = await runMonthFetch(
       previewGuardRef.current,
       () => contextKeyRef.current === key,
@@ -439,6 +476,7 @@ export function ServerReportExportPanel({
       // error, but leave a trace so "preview unavailable" is diagnosable.
       console.warn("Report preview could not be loaded:", outcome.error instanceof Error ? outcome.error.message : outcome.error);
       setPreview(null);
+      setPreviewError(classifyReportViewError(outcome.error));
     }
     setPreviewLoading(false);
   }, [previewSupported]);
@@ -522,7 +560,7 @@ export function ServerReportExportPanel({
             stopPolling();
             void loadHistory(0);
             if (next.status === "failed") {
-              setError(next.error_message_safe || "The report could not be generated.");
+              setError(friendlyJobFailureMessage(next.error_message_safe));
             } else if (next.status === "cancelled") {
               setError("This report was cancelled.");
             } else if (next.status === "completed" && previewSupported) {
@@ -560,6 +598,7 @@ export function ServerReportExportPanel({
     setJob(null);
     setError(null);
     setPreview(null);
+    setPreviewError(null);
     setActivePreviewJobId(null);
     setActivePreviewEntry(null);
     setSortColumn(null);
@@ -584,7 +623,7 @@ export function ServerReportExportPanel({
           } else if (latest.status === "queued" || latest.status === "running") {
             poll(latest.id);
           } else if (latest.status === "failed") {
-            setError(latest.error_message_safe || "The report could not be generated.");
+            setError(friendlyJobFailureMessage(latest.error_message_safe));
           } else if (latest.status === "cancelled") {
             setError("This report was cancelled.");
           }
@@ -610,6 +649,7 @@ export function ServerReportExportPanel({
     invalidateMonthFetch(previewGuardRef.current);
     setPreviewLoading(false);
     setPreview(null);
+    setPreviewError(null);
     setActivePreviewJobId(null);
     setActivePreviewEntry(null);
     setSortColumn(null);
@@ -633,7 +673,7 @@ export function ServerReportExportPanel({
       if (initial) setJob(initial);
       poll(res.job_id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start the report.");
+      setError(reportStartErrorMessage(err));
     } finally {
       setStarting(false);
     }
@@ -663,6 +703,18 @@ export function ServerReportExportPanel({
       ? job
       : null;
 
+  /** "View Report": open (or re-open / retry) the on-page preview of the current report. */
+  const viewReport = () => {
+    const target = viewingDifferentJob ? activePreviewEntry?.id : job?.id;
+    if (!target) return;
+    if (activePreviewJobId !== target || !preview || previewError) {
+      setActivePreviewJobId(target);
+      void loadPreview(target, 1, sortColumn, sortDirection, columnFilters);
+    }
+    // Let the section mount, then bring it into view.
+    setTimeout(() => previewSectionRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" }), 0);
+  };
+
   const download = async () => {
     if (!activeDownloadTarget) return;
     setDownloading(true);
@@ -671,7 +723,7 @@ export function ServerReportExportPanel({
     } catch (err) {
       toast({
         title: "Download failed",
-        description: err instanceof Error ? err.message : "Could not download the file.",
+        description: reportDownloadErrorMessage(err),
         variant: "destructive",
       });
     } finally {
@@ -686,7 +738,7 @@ export function ServerReportExportPanel({
     } catch (err) {
       toast({
         title: "Download failed",
-        description: err instanceof Error ? err.message : "Could not download that report.",
+        description: reportDownloadErrorMessage(err),
         variant: "destructive",
       });
       // The file may have just expired; refresh so the row stops offering it.
@@ -708,6 +760,7 @@ export function ServerReportExportPanel({
       });
       setError(null);
       setPreview(null);
+      setPreviewError(null);
       setActivePreviewJobId(null);
       setActivePreviewEntry(null);
       setSortColumn(null);
@@ -755,28 +808,74 @@ export function ServerReportExportPanel({
         The report is built on the server. When it is ready, download it as a CSV.
       </p>
 
+      {(() => {
+        const actionRow = (syncButton: ReactNode) => (
       <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => void generate()} disabled={disabled || busy || !organizationId}>
-          {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-          {busy ? "Generating on server…" : "Generate report"}
-        </Button>
-
-        {activeDownloadTarget && (
-          <Button variant="default" onClick={() => void download()} disabled={downloading}>
-            {downloading
-              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              : <Download className="mr-2 h-4 w-4" />}
-            Download CSV
+          <Button onClick={() => void generate()} disabled={disabled || busy || !organizationId}>
+            {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {busy ? "Generating on server…" : "Generate report"}
           </Button>
-        )}
 
-        {job?.status === "failed" && (
-          <Button variant="outline" onClick={() => void generate()}>
-            <RotateCw className="mr-2 h-4 w-4" />
-            Try again
-          </Button>
-        )}
-      </div>
+          {previewSupported && activeDownloadTarget && (
+            <Button variant="outline" onClick={viewReport} disabled={previewLoading}>
+              {previewLoading
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <Eye className="mr-2 h-4 w-4" />}
+              View Report
+            </Button>
+          )}
+
+          {syncButton}
+
+          {activeDownloadTarget && (
+            <Button variant="default" onClick={() => void download()} disabled={downloading}>
+              {downloading
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <Download className="mr-2 h-4 w-4" />}
+              Download CSV
+            </Button>
+          )}
+
+          {job?.status === "failed" && (
+            <Button variant="outline" onClick={() => void generate()}>
+              <RotateCw className="mr-2 h-4 w-4" />
+              Try again
+            </Button>
+          )}
+        </div>
+        );
+        return syncOn ? (
+          <PwtSyncGroup
+            organizationId={organizationId}
+            disabled={disabled}
+            params={{
+            reportType: reportType ?? "daily_project",
+            category,
+            userId,
+            userIds,
+            engineerStatus,
+            hoStatus,
+            dateFrom,
+            dateTo,
+            customFieldFilters: syncCustomFieldFilters ?? customFieldFilters,
+            selectedYear,
+            selectedMonth,
+            selectedWeek,
+          }}
+          >
+            {({ button, status, history }) => (
+              <>
+                {actionRow(syncSlot ? null : button)}
+                {syncSlot ? createPortal(button, syncSlot) : null}
+                {statusSlot ? createPortal(status, statusSlot) : status}
+                {syncHistoryEl ? createPortal(history, syncHistoryEl) : null}
+              </>
+            )}
+          </PwtSyncGroup>
+        ) : (
+          actionRow(null)
+        );
+      })()}
 
       {busy && job && (
         <p className="text-sm text-muted-foreground tabular-nums">
@@ -816,12 +915,11 @@ export function ServerReportExportPanel({
       {/* On-page preview of the ACTIVELY VIEWED report (the just-generated one
           by default, or an older one opened via "View" below) — the same
           rows the matching download contains, paginated so a 20,000+ row
-          report never lands in the DOM at once. Detailed Expense only for
-          now. Sort/filter here is a server-side VIEW over the frozen rows —
+          report never lands in the DOM at once. Sort/filter here is a server-side VIEW over the frozen rows —
           it never touches the underlying CSV or recalculates Opening/Closing
           Balance. */}
       {previewSupported && activePreviewJobId && (
-        <section aria-label="Generated report" className="rounded-lg border border-border bg-background p-3 shadow-sm space-y-2">
+        <section ref={previewSectionRef} aria-label="Generated report" className="rounded-lg border border-border bg-background p-3 shadow-sm space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2">
             <div className="flex items-center gap-2">
               <TableIcon className="h-4 w-4 text-muted-foreground" />
@@ -858,8 +956,24 @@ export function ServerReportExportPanel({
           {previewLoading && !preview && (
             <p className="text-sm text-muted-foreground">
               <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
-              Loading preview…
+              Loading report…
             </p>
+          )}
+
+          {previewError && !previewLoading && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{reportViewErrorMessage(previewError)}</span>
+              {previewError === "failed" && activePreviewJobId && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void loadPreview(activePreviewJobId, 1, sortColumn, sortDirection, columnFilters)}
+                >
+                  Retry
+                </Button>
+              )}
+            </div>
           )}
 
           {preview && !preview.ready && (
@@ -935,7 +1049,9 @@ export function ServerReportExportPanel({
               </p>
               {sortColumn && (
                 <p className="text-center text-[11px] text-muted-foreground/70">
-                  Sorting changes the display order only — each row's own Opening/Closing Balance stays attached to it.
+                  {effectiveType === "detailed_expense"
+                    ? "Sorting changes the display order only — each row's own Opening/Closing Balance stays attached to it."
+                    : "Sorting changes the display order only — it never changes the report or the downloaded file."}
                 </p>
               )}
               <Pager
@@ -950,7 +1066,8 @@ export function ServerReportExportPanel({
         </section>
       )}
 
-      {/* Generation history for THIS report type. */}
+      {/* Generation history for THIS report type (with the Tally sync history beside it when Tally sync is on). */}
+      <div className={syncOn ? "grid items-start gap-3 lg:grid-cols-2" : undefined}>
       <section aria-label="Report history" className="rounded-lg border border-border bg-background p-3 shadow-sm space-y-2">
         <div className="flex items-center gap-2 border-b border-border pb-2">
           <History className="h-4 w-4 text-muted-foreground" />
@@ -983,7 +1100,7 @@ export function ServerReportExportPanel({
                   </div>
                   {h.status === "failed" && (
                     <p className="mt-0.5 text-xs text-destructive">
-                      {h.error_message_safe || "The report could not be generated."}
+                      {friendlyJobFailureMessage(h.error_message_safe)}
                     </p>
                   )}
                   {(h.status === "queued" || h.status === "running") && (
@@ -1077,6 +1194,8 @@ export function ServerReportExportPanel({
           onNext={() => void loadHistory(historyOffset + HISTORY_PAGE_SIZE)}
         />
       </section>
+      {syncOn && <div ref={setSyncHistoryEl} />}
+      </div>
     </div>
   );
 }

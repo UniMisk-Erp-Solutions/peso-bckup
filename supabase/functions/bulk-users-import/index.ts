@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { clearAuditContext, newRequestId, registerAuditContext, safeBatchId } from "../_shared/accountAudit.ts";
 
 const DEFAULT_SYNTHETIC_EMAIL_DOMAIN = "users.unimisk.com";
 
@@ -114,6 +115,8 @@ function allowedSupervisorRoles(
 type Body = {
   organization_id?: string;
   dry_run?: boolean;
+  /** Groups the chunked requests of one bulk upload in the audit history. Carries no identity. */
+  batch_id?: string;
   skip_welcome_email?: boolean;
   link_supervisors_only?: boolean;
   sync_passwords_only?: boolean;
@@ -345,6 +348,8 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Cleared in `finally`: an organization-wide audit context must never outlive the import that registered it (DOC-158).
+  let auditCleanup: (() => Promise<void>) | null = null;
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -366,6 +371,23 @@ Deno.serve(async (req) => {
     if (authUserError || !authUserData.user) throw new Error("Invalid or expired token");
     const organizationId = await resolveAdminOrg(serviceClient, authUserData.user.id, body.organization_id);
     const dryRun = body.dry_run === true;
+
+    // DOC-158: every create / update this import performs is a service-role write. Register the REAL admin (from the verified
+    // JWT, never the body) for the whole organization for the duration of this request, grouped by a batch id so the chunked
+    // requests of one upload correlate. Dry runs write nothing and register nothing.
+    if (!dryRun) {
+      const auditRequestId = newRequestId(req);
+      await registerAuditContext(serviceClient, {
+        actorUserId: authUserData.user.id,
+        organizationId,
+        requestId: auditRequestId,
+        source: "bulk_upload",
+        batchId: safeBatchId(body.batch_id) ?? auditRequestId,
+        scope: "organization",
+        ttlSeconds: 900,
+      });
+      auditCleanup = () => clearAuditContext(serviceClient, auditRequestId);
+    }
 
     let hierarchyTeamLeader = false;
     let hierarchyExecutive = false;
@@ -1032,5 +1054,7 @@ Deno.serve(async (req) => {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+  } finally {
+    if (auditCleanup) await auditCleanup();
   }
 });

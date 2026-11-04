@@ -59,6 +59,24 @@ import {
   notifyExpenseCorrected,
 } from "./NotificationService";
 
+/** See ExpenseService.loadSubmitContext. */
+const SUBMIT_CONTEXT_TTL_MS = 120_000;
+export type SubmitContext = {
+  organizationId: string;
+  userId: string;
+  loadedAt: number;
+  orgSettingsResult: Awaited<ReturnType<typeof selectFirstOrgSettingsRow>>;
+  isAdmin: boolean;
+  isEngineer: boolean;
+  /** Only loaded for an ordinary employee (neither admin nor engineer): the inputs of the approval routing. */
+  regular?: {
+    profileResult: Awaited<ReturnType<typeof selectFirstProfileRow>>;
+    submitterRole: Awaited<ReturnType<typeof ExpenseService.fetchMembershipRole>>;
+    hierarchyCtx: Awaited<ReturnType<typeof ExpenseService.loadHierarchyContext>>;
+    reportingSupervisorRole: Awaited<ReturnType<typeof ExpenseService.fetchMembershipRole>> | null;
+  };
+};
+
 // Helper function to get user's organization_id
 async function getUserOrganizationId(userId: string): Promise<string | null> {
   const { data, error } = await supabase
@@ -187,6 +205,39 @@ export type BatchSubmitLineResult = {
   transactionNumber?: string | null;
   error?: string;
 };
+
+/** One server-reported reason a submission would be refused (preflight). */
+export type SubmissionPreflightIssue = {
+  label: string;
+  source: string;
+  code: string;
+  severity: string;
+};
+
+/**
+ * Thrown BEFORE any row is created when the server's own required-field
+ * validator would refuse the submission. Nothing was persisted.
+ */
+export class SubmissionPreflightError extends Error {
+  readonly issues: SubmissionPreflightIssue[];
+  readonly lineIndex?: number;
+  constructor(issues: SubmissionPreflightIssue[], lineIndex?: number) {
+    const labels = [...new Set(issues.map((i) => i.label))].join(", ");
+    super(
+      lineIndex == null
+        ? `Required fields are missing: ${labels}. Nothing was submitted.`
+        : `Line ${lineIndex + 1} is missing required fields: ${labels}. Nothing was submitted.`,
+    );
+    this.name = "SubmissionPreflightError";
+    this.issues = issues;
+    this.lineIndex = lineIndex;
+  }
+}
+
+/** The draft-editable columns the update_own_draft_expense_v1 RPC accepts. */
+const DRAFT_EDITABLE_COLUMNS = [
+  "title", "destination", "trip_start", "trip_end", "purpose", "category", "total_amount",
+] as const;
 
 export type BatchSubmitResult = {
   batchId: string;
@@ -404,6 +455,130 @@ export class ExpenseService {
   }
 
   /**
+   * DOC-148: the SERVER decides whether this logical submission already has an expense.
+   * Same (organization, user, client id) always resolves to the same row; a concurrent duplicate
+   * is absorbed by a unique index. The browser never needs to remember the row id.
+   */
+  static async resolveOrCreateExpense(
+    organizationId: string,
+    identity: { clientSubmissionId: string } | { clientBatchId: string; lineIndex: number; batchId?: string },
+    fields: {
+      title: string; destination: string; trip_start: string; trip_end: string;
+      purpose?: string | null; category?: string | null; total_amount?: number;
+    },
+    options?: { dateLockingEnabled?: boolean },
+  ): Promise<{
+    expenseId: string; status: string; created: boolean; idempotentReplay: boolean;
+    inRecycleBin: boolean; transactionNumber: string | null;
+  }> {
+    const isLine = "clientBatchId" in identity;
+    // Same UX preflight createExpense() had: a locked date never becomes a draft.
+    if (options?.dateLockingEnabled && !isLine && (await this.isExpenseDateLockedOnServer(organizationId, fields.trip_start))) {
+      throw new ExpenseDateLockedError({ draftPreserved: false });
+    }
+    const { data, error } = await (supabase as any).rpc("resolve_or_create_expense_v1", {
+      p_organization_id: organizationId,
+      p_client_submission_id: isLine ? null : identity.clientSubmissionId,
+      p_fields: fields,
+      p_client_batch_id: isLine ? identity.clientBatchId : null,
+      p_line_index: isLine ? identity.lineIndex : null,
+      p_batch_id: isLine ? (identity.batchId ?? null) : null,
+    });
+    if (error) {
+      console.error("resolve_or_create_expense_v1 failed", { code: error.code, message: error.message });
+      throw error;
+    }
+    const r = data as Record<string, unknown>;
+    return {
+      expenseId: String(r.expense_id),
+      status: String(r.status),
+      created: r.created === true,
+      idempotentReplay: r.idempotent_replay === true,
+      inRecycleBin: r.in_recycle_bin === true,
+      transactionNumber: (r.transaction_number as string | null) ?? null,
+    };
+  }
+
+  /** DOC-148: one batch parent per client_batch_id; a retry returns the same batch. */
+  static async resolveOrCreateBatch(
+    organizationId: string,
+    clientBatchId: string,
+    batch: { label: string | null; sharedCategory: string | null; sharedExpenseDate: string; totalAmount: number },
+  ): Promise<{ batchId: string; created: boolean }> {
+    const { data, error } = await (supabase as any).rpc("resolve_or_create_expense_batch_v1", {
+      p_organization_id: organizationId,
+      p_client_batch_id: clientBatchId,
+      p_label: batch.label,
+      p_shared_category: batch.sharedCategory,
+      p_shared_expense_date: batch.sharedExpenseDate,
+      p_total_amount: batch.totalAmount,
+    });
+    if (error) throw new Error(error.message || "Failed to create expense batch");
+    const r = data as { batch_id: string; created: boolean };
+    return { batchId: r.batch_id, created: r.created === true };
+  }
+
+  /** DOC-148: give a LEGACY draft an identity when its owner continues it. Best effort; never required for correctness. */
+  static async claimClientSubmissionId(expenseId: string, clientSubmissionId: string): Promise<void> {
+    try {
+      await (supabase as any).rpc("claim_client_submission_id_v1", {
+        p_expense_id: expenseId,
+        p_client_submission_id: clientSubmissionId,
+      });
+    } catch (e) {
+      console.warn("claimClientSubmissionId skipped:", e);
+    }
+  }
+
+  /**
+   * DOC-148: ask the server's own required-field validator whether these
+   * values would be accepted, BEFORE any expense row exists. Persists nothing.
+   * Only an explicit, user-fixable answer blocks; an infrastructure failure
+   * degrades to "unverified" (the server validator stays the final gate).
+   */
+  static async preflightExpenseSubmission(
+    organizationId: string,
+    category: string | null | undefined,
+    values: Array<{ template_id: string | null; branch_field_id: string | null; field_value: string }>,
+  ): Promise<{ ok: boolean; verified: boolean; issues: SubmissionPreflightIssue[] }> {
+    try {
+      const { data, error } = await (supabase as any).rpc("preflight_expense_submission_v1", {
+        p_organization_id: organizationId,
+        p_category: category ?? "",
+        p_values: values.map((v) => ({
+          template_id: v.template_id,
+          branch_field_id: v.branch_field_id,
+          value: v.field_value,
+        })),
+      });
+      if (error) throw error;
+      const issues = ((data as { issues?: SubmissionPreflightIssue[] } | null)?.issues ?? []).filter(
+        (i) => i.severity === "user_fixable",
+      );
+      return { ok: issues.length === 0, verified: true, issues };
+    } catch (e) {
+      console.warn("preflightExpenseSubmission unavailable; server validation remains authoritative:", e);
+      return { ok: true, verified: false, issues: [] };
+    }
+  }
+
+  /**
+   * DOC-148: attach a freshly created DRAFT line to its batch. The previous
+   * inline `.update({ batch_id })` was rejected by RLS since 2026-09-22 and its
+   * error was ignored, silently orphaning every batch child. This THROWS.
+   */
+  static async linkExpenseToBatch(expenseId: string, batchId: string): Promise<void> {
+    const { error } = await (supabase as any).rpc("link_expense_to_batch_v1", {
+      p_expense_id: expenseId,
+      p_batch_id: batchId,
+    });
+    if (error) {
+      console.error("link_expense_to_batch_v1 failed", { expenseId, batchId, code: error.code, message: error.message });
+      throw new Error("The expense could not be added to its batch. It was saved as a draft; retry to continue.");
+    }
+  }
+
+  /**
    * Update an existing expense
    * Recalculates total amount if line items are updated
    */
@@ -482,15 +657,37 @@ export class ExpenseService {
       updated_at: new Date().toISOString(),
     };
 
-    const { data: updatedExpense, error: updateError } = await supabase
-      .from("expenses")
-      .update(updateData)
-      .eq("id", expenseId)
-      .eq("organization_id", organizationId)
-      .select()
-      .maybeSingle();
+    // DOC-148: since 20260922090000 the owner UPDATE policy refuses any change that
+    // leaves a row `draft`, so a draft is edited through the dedicated RPC (7
+    // whitelisted columns, status never changes). Anything else keeps the old path.
+    const draftFields: Record<string, unknown> = {};
+    let onlyDraftColumns = true;
+    for (const [key, value] of Object.entries(updateData as Record<string, unknown>)) {
+      if (key === "updated_at" || value === undefined) continue;
+      if ((DRAFT_EDITABLE_COLUMNS as readonly string[]).includes(key)) draftFields[key] = value;
+      else onlyDraftColumns = false;
+    }
+    const useDraftRpc = currentExpense.status === "draft" && !data.status && onlyDraftColumns;
 
-    if (updateError) throw updateError;
+    let updatedExpense: unknown;
+    if (useDraftRpc) {
+      const { data: rpcRow, error: rpcError } = await (supabase as any).rpc("update_own_draft_expense_v1", {
+        p_expense_id: expenseId,
+        p_fields: draftFields,
+      });
+      if (rpcError) throw rpcError;
+      updatedExpense = rpcRow;
+    } else {
+      const { data: row, error: updateError } = await supabase
+        .from("expenses")
+        .update(updateData)
+        .eq("id", expenseId)
+        .eq("organization_id", organizationId)
+        .select()
+        .maybeSingle();
+      if (updateError) throw updateError;
+      updatedExpense = row;
+    }
     if (!updatedExpense) throw new Error("Failed to update expense (no row returned)");
 
     if (currentExpense.batch_id) {
@@ -505,9 +702,9 @@ export class ExpenseService {
     await this.logAction(expenseId, userId, organizationId, action, data.admin_comment);
 
     return {
-      ...updatedExpense,
+      ...(updatedExpense as Record<string, unknown>),
       expense_line_items: lineItems,
-    };
+    } as ExpenseWithLineItems;
   }
 
   /**
@@ -803,7 +1000,7 @@ export class ExpenseService {
     return buildHierarchyFlags(map);
   }
 
-  private static async fetchMembershipRole(
+  static async fetchMembershipRole(
     organizationId: string,
     userId: string,
   ): Promise<string | null> {
@@ -817,7 +1014,7 @@ export class ExpenseService {
     return (data?.role as string | undefined) ?? null;
   }
 
-  private static async loadHierarchyContext(
+  static async loadHierarchyContext(
     organizationId: string,
     submitterUserId: string,
   ) {
@@ -1498,6 +1695,12 @@ export class ExpenseService {
       attachmentMode: BatchExpenseAttachmentMode;
       sharedTempFilenames?: string[];
       metaByFilename: Record<string, TempUploadMeta>;
+      /**
+       * DOC-148: stable id of this logical batch, minted when the batch form opens and kept for
+       * every retry. The server maps it to ONE batch row, and (id, line index) to ONE expense per
+       * line, so retrying after a reload cannot duplicate rows.
+       */
+      clientBatchId?: string;
     },
   ): Promise<BatchSubmitResult> {
     const organizationId = await getUserOrganizationId(userId);
@@ -1555,25 +1758,41 @@ export class ExpenseService {
           ? lineCategories[0]
           : lineCategories.join(", ");
 
-    const { data: batchRow, error: batchError } = await supabase
-      .from("expense_batches")
-      .insert({
-        organization_id: organizationId,
-        user_id: userId,
-        label: payload.shared.label?.trim() || null,
-        shared_category: sharedCategoryAudit,
-        shared_expense_date: expenseDateStr,
-        line_count: 0,
-        total_amount: totalAmount,
-      })
-      .select("id")
-      .single();
-
-    if (batchError || !batchRow) {
-      throw new Error(batchError?.message || "Failed to create expense batch");
+    // DOC-148: ask the server's validator about EVERY line before anything is
+    // created. A refusal here leaves no batch row, no draft children, no uploads
+    // moved -- previously the server rejected each line only AFTER its draft existed.
+    {
+      const seen = new Map<string, SubmissionPreflightIssue[]>();
+      for (let i = 0; i < payload.lines.length; i++) {
+        const line = payload.lines[i];
+        const values = buildExpenseCustomFieldPayload({
+          templateValues: line.formFieldValues,
+          branchValues: line.branchValues,
+          visibleBranchIds: line.branchValues
+            ? new Set(line.visibleBranchIds?.length ? line.visibleBranchIds : Object.keys(line.branchValues))
+            : undefined,
+        });
+        const cacheKey = JSON.stringify([line.category?.trim() || "other", values]);
+        let issues = seen.get(cacheKey);
+        if (!issues) {
+          const pre = await this.preflightExpenseSubmission(organizationId, line.category?.trim() || "other", values);
+          issues = pre.issues;
+          seen.set(cacheKey, issues);
+        }
+        if (issues.length > 0) throw new SubmissionPreflightError(issues, i);
+      }
     }
 
-    const batchId = batchRow.id as string;
+    // DOC-148: identity is the SERVER's. The same clientBatchId always resolves to the same batch
+    // row, and (clientBatchId, line index) to the same expense row, so a retry -- even after a
+    // reload, with no browser memory at all -- cannot create a second batch or a second child.
+    const clientBatchId = payload.clientBatchId ?? crypto.randomUUID();
+    const { batchId } = await this.resolveOrCreateBatch(organizationId, clientBatchId, {
+      label: payload.shared.label?.trim() || null,
+      sharedCategory: sharedCategoryAudit,
+      sharedExpenseDate: expenseDateStr,
+      totalAmount,
+    });
     const results: BatchSubmitLineResult[] = [];
     let successCount = 0;
     let sharedReceiptSourceExpenseId: string | null = null;
@@ -1581,31 +1800,59 @@ export class ExpenseService {
 
     for (let i = 0; i < payload.lines.length; i++) {
       const line = payload.lines[i];
+      let expenseId: string | undefined;
       try {
         const destination =
           line.destination?.trim() ||
           payload.shared.sharedDestination?.trim() ||
           "—";
 
-        const created = await this.createExpense(userId, {
-          title: line.title.trim(),
-          destination,
-          trip_start: expenseDateStr,
-          trip_end: expenseDateStr,
-          purpose: line.purpose?.trim() || undefined,
-          amount: line.amount,
-          category: line.category?.trim() || "other",
-        });
+        // Resolve-or-create + (draft only) refresh + batch link, in ONE server call.
+        // A link failure raises here, so it FAILS THE LINE visibly and nothing further
+        // (attachments, fields, submit) runs for it.
+        const resolved = await this.resolveOrCreateExpense(
+          organizationId,
+          { clientBatchId, lineIndex: i, batchId },
+          {
+            title: line.title.trim(),
+            destination,
+            trip_start: expenseDateStr,
+            trip_end: expenseDateStr,
+            purpose: line.purpose?.trim() || null,
+            category: line.category?.trim() || "other",
+            total_amount: line.amount,
+          },
+        );
+        expenseId = resolved.expenseId;
+        if (resolved.inRecycleBin) {
+          throw new Error("This line was moved to the Recycle Bin earlier. Restore it or start a new batch.");
+        }
+        // A line an earlier attempt already submitted is NEVER touched again.
+        if (resolved.status !== "draft") {
+          results.push({ lineIndex: i, ok: true, expenseId, transactionNumber: resolved.transactionNumber });
+          successCount += 1;
+          if (!sharedReceiptSourceExpenseId && payload.attachmentMode === "shared") {
+            sharedReceiptSourceExpenseId = expenseId;
+          }
+          continue;
+        }
 
-        const expenseId = created.id;
+        // A reused draft may already hold its receipts (the earlier attempt got that far):
+        // never move/copy them a second time.
+        let alreadyHasReceipts = false;
+        if (resolved.idempotentReplay) {
+          const { data: existingAtt } = await supabase
+            .from("attachments")
+            .select("id")
+            .eq("expense_id", expenseId)
+            .is("deleted_at", null)
+            .limit(1);
+          alreadyHasReceipts = (existingAtt?.length ?? 0) > 0;
+        }
 
-        await supabase
-          .from("expenses")
-          .update({ batch_id: batchId })
-          .eq("id", expenseId)
-          .eq("organization_id", organizationId);
-
-        if (payload.attachmentMode === "per_line") {
+        if (alreadyHasReceipts) {
+          // receipts already attached on a previous attempt
+        } else if (payload.attachmentMode === "per_line") {
           const temps = line.tempReceiptFilenames ?? [];
           if (temps.length > 0) {
             await moveTempFilesToExpense({
@@ -1674,7 +1921,15 @@ export class ExpenseService {
           await this.replaceExpenseFormFieldValues(expenseId, organizationId, payload);
         }
 
-        await this.submitExpense(expenseId, userId);
+        // Retry after a commit whose response was lost: the row may already be submitted.
+        const { data: statusRow } = await supabase
+          .from("expenses")
+          .select("status")
+          .eq("id", expenseId)
+          .maybeSingle();
+        if ((statusRow as { status?: string } | null)?.status === "draft") {
+          await this.submitExpense(expenseId, userId);
+        }
 
         const { data: txnRow } = await supabase
           .from("expenses")
@@ -1691,7 +1946,8 @@ export class ExpenseService {
         successCount += 1;
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
-        results.push({ lineIndex: i, ok: false, error: msg });
+        // Keep the expense id so a retry reuses this exact draft instead of inserting another.
+        results.push({ lineIndex: i, ok: false, expenseId, error: msg });
       }
     }
 
@@ -1822,18 +2078,63 @@ export class ExpenseService {
    * Submit an expense for review
    * If user is admin, automatically approves and deducts from their balance
    */
+  /**
+   * Everything submitExpense reads ABOUT THE SUBMITTER (org attachment threshold, admin/engineer roles and, for an
+   * ordinary employee, profile + reporting chain + approval-hierarchy context). None of it depends on the expense row,
+   * so the form loads it CONCURRENTLY with the first steps of the same Submit press (preflight, resolve, receipt
+   * finalize) instead of after them. The queries are exactly the ones submitExpense used to run; routing is unchanged.
+   * Ignored (and the original sequential path used) when missing, for another user/org, or older than the TTL.
+   */
+  static async loadSubmitContext(organizationId: string, userId: string): Promise<SubmitContext> {
+    const [orgSettingsResult, isAdmin, isEngineer] = await Promise.all([
+      selectFirstOrgSettingsRow(organizationId, "attachment_required_above_amount"),
+      this.hasOrgRole(userId, organizationId, "admin"),
+      this.hasOrgRole(userId, organizationId, "engineer"),
+    ]);
+    let regular: SubmitContext["regular"];
+    if (!isAdmin && !isEngineer) {
+      const [profileResult, submitterRole, hierarchyCtx] = await Promise.all([
+        selectFirstProfileRow(userId, "reporting_engineer_id, name"),
+        this.fetchMembershipRole(organizationId, userId),
+        this.loadHierarchyContext(organizationId, userId),
+      ]);
+      const reportingEngineerId =
+        (profileResult.data?.reporting_engineer_id as string | null | undefined) ?? null;
+      const reportingSupervisorRole = reportingEngineerId
+        ? await this.fetchMembershipRole(organizationId, reportingEngineerId)
+        : null;
+      regular = { profileResult, submitterRole, hierarchyCtx, reportingSupervisorRole };
+    }
+    return { organizationId, userId, loadedAt: Date.now(), orgSettingsResult, isAdmin, isEngineer, regular };
+  }
+
   static async submitExpense(
     expenseId: string,
     userId: string,
-    options?: { skipAttachmentRequirement?: boolean },
+    options?: { skipAttachmentRequirement?: boolean; context?: SubmitContext | null },
   ): Promise<Expense> {
-    // Fetch the expense first so we can use its actual organization_id.
-    // This avoids update mismatches when a user has multiple org memberships.
-    const { data: expense, error: fetchError } = await supabase
-      .from("expenses")
-      .select("*")
-      .eq("id", expenseId)
-      .maybeSingle();
+    // A context is only trusted for the SAME user and when fresh; its organization is confirmed against the expense below.
+    const ctx =
+      options?.context && options.context.userId === userId && Date.now() - options.context.loadedAt < SUBMIT_CONTEXT_TTL_MS
+        ? options.context
+        : null;
+
+    // Fetch the expense so we can use its actual organization_id (avoids update mismatches for users with several
+    // org memberships). With a context the live-bill lookup runs in the SAME round trip: it only needs the expense id
+    // and the organization, and its result is used only when the org threshold says a bill is required.
+    const liveBillQuery = (org: string) =>
+      supabase
+        .from("attachments")
+        .select("id")
+        .eq("expense_id", expenseId)
+        .eq("organization_id", org)
+        .is("deleted_at", null) // DOC-150: a soft-deleted bill is not a bill
+        .limit(1);
+    const [expenseResult, ctxBillLookup] = await Promise.all([
+      supabase.from("expenses").select("*").eq("id", expenseId).maybeSingle(),
+      ctx ? liveBillQuery(ctx.organizationId) : Promise.resolve(null),
+    ]);
+    const { data: expense, error: fetchError } = expenseResult;
 
     if (fetchError) throw fetchError;
     if (!expense) throw new Error("Expense not found or you don't have access");
@@ -1841,12 +2142,17 @@ export class ExpenseService {
     const organizationId = expense.organization_id as string | null;
     if (!organizationId) throw new Error("Expense is missing organization_id");
 
-    // Batch: org settings + both role checks in parallel — eliminates 3 sequential round-trips
-    const [orgSettingsResult, isAdmin, isEngineer] = await Promise.all([
-      selectFirstOrgSettingsRow(organizationId, "attachment_required_above_amount"),
-      this.hasOrgRole(userId, organizationId, "admin"),
-      this.hasOrgRole(userId, organizationId, "engineer"),
-    ]);
+    const useCtx = !!ctx && ctx.organizationId === organizationId;
+
+    // Without a (matching) context this is exactly the original path: org settings + both role checks in one parallel
+    // batch, and the live-bill lookup only AFTER the threshold says a bill is required.
+    const [orgSettingsResult, isAdmin, isEngineer] = useCtx
+      ? [ctx!.orgSettingsResult, ctx!.isAdmin, ctx!.isEngineer]
+      : await Promise.all([
+          selectFirstOrgSettingsRow(organizationId, "attachment_required_above_amount"),
+          this.hasOrgRole(userId, organizationId, "admin"),
+          this.hasOrgRole(userId, organizationId, "engineer"),
+        ]);
 
     const { data: orgSettings, error: orgSettingsSelectError } = orgSettingsResult;
     if (orgSettingsSelectError) throw orgSettingsSelectError;
@@ -1860,12 +2166,7 @@ export class ExpenseService {
     const requiresAttachment = expenseAmount > attachmentLimit;
 
     if (requiresAttachment && !options?.skipAttachmentRequirement) {
-      const { data: attachments, error: attachmentsError } = await supabase
-        .from("attachments")
-        .select("id")
-        .eq("expense_id", expenseId)
-        .eq("organization_id", organizationId)
-        .limit(1);
+      const { data: attachments, error: attachmentsError } = useCtx ? ctxBillLookup! : await liveBillQuery(organizationId);
 
       if (attachmentsError) {
         console.error("Error checking attachments:", attachmentsError);
@@ -2016,20 +2317,26 @@ export class ExpenseService {
     }
 
     // Batch: profile + submitter role + hierarchy context in parallel — eliminates 4 sequential round-trips
-    const [profileResult, submitterRole, hierarchyCtx] = await Promise.all([
-      selectFirstProfileRow(userId, "reporting_engineer_id, name"),
-      this.fetchMembershipRole(organizationId, userId),
-      this.loadHierarchyContext(organizationId, userId),
-    ]);
+    // (already loaded concurrently with the earlier steps of this press when a matching context was supplied).
+    const preloaded = useCtx ? ctx!.regular : undefined;
+    const [profileResult, submitterRole, hierarchyCtx] = preloaded
+      ? [preloaded.profileResult, preloaded.submitterRole, preloaded.hierarchyCtx]
+      : await Promise.all([
+          selectFirstProfileRow(userId, "reporting_engineer_id, name"),
+          this.fetchMembershipRole(organizationId, userId),
+          this.loadHierarchyContext(organizationId, userId),
+        ]);
     const { data: profileRow, error: profileError } = profileResult;
     if (profileError) throw profileError;
     const employeeName = (profileRow?.name as string | undefined) || "Employee";
 
     const reportingEngineerId =
       (profileRow?.reporting_engineer_id as string | null | undefined) ?? null;
-    const reportingSupervisorRole = reportingEngineerId
-      ? await this.fetchMembershipRole(organizationId, reportingEngineerId)
-      : null;
+    const reportingSupervisorRole = preloaded
+      ? preloaded.reportingSupervisorRole
+      : reportingEngineerId
+        ? await this.fetchMembershipRole(organizationId, reportingEngineerId)
+        : null;
 
     const { flags, team, fallbackAdminUserId } = hierarchyCtx;
 

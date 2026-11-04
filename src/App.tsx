@@ -49,6 +49,7 @@ const AdminSubmitExpense = lazyWithRetry(() => import("./pages/AdminSubmitExpens
 const UserManagement = lazyWithRetry(() => import("./pages/UserManagement"));
 const Balances = lazyWithRetry(() => import("./pages/Balances"));
 const Reports = lazyWithRetry(() => import("./pages/Reports"));
+const AdminPwTally = lazyWithRetry(() => import("./pages/AdminPwTally"));
 const Settings = lazyWithRetry(() => import("./pages/Settings"));
 const Analytics = lazyWithRetry(() => import("./pages/Analytics"));
 const CategoryManagement = lazyWithRetry(() => import("./pages/CategoryManagement"));
@@ -59,7 +60,9 @@ const AccountantApprovedExpenses = lazyWithRetry(() => import("./pages/Accountan
 const EmployeeBalanceHistory = lazyWithRetry(() => import("./pages/EmployeeBalanceHistory"));
 const MyTeams = lazyWithRetry(() => import("./pages/MyTeams"));
 const TeamReports = lazyWithRetry(() => import("./pages/TeamReports"));
+const MyReports = lazyWithRetry(() => import("./pages/MyReports"));
 const UserActivityInsights = lazyWithRetry(() => import("./pages/UserActivityInsights"));
+const UserAudit = lazyWithRetry(() => import("./pages/UserAudit"));
 // Independent debug validation surface (DOC-080). Additive: /review is unchanged.
 
 function LazyPage({ children }: { children: React.ReactNode }) {
@@ -283,6 +286,18 @@ const App = () => (
             }
           />
           <Route
+            path="/admin/user-audit"
+            element={
+              <ProtectedRoute allowedRoles={["admin"]}>
+                <Layout>
+                  <LazyPage>
+                    <UserAudit />
+                  </LazyPage>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/admin/user-activity"
             element={
               <ProtectedRoute allowedRoles={["admin"]}>
@@ -301,6 +316,18 @@ const App = () => (
                 <Layout>
                   <LazyPage>
                     <Reports />
+                  </LazyPage>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/pwtally"
+            element={
+              <ProtectedRoute allowedRoles={["admin"]}>
+                <Layout>
+                  <LazyPage>
+                    <AdminPwTally />
                   </LazyPage>
                 </Layout>
               </ProtectedRoute>
@@ -349,6 +376,18 @@ const App = () => (
                 <Layout>
                   <LazyPage>
                     <TeamReports />
+                  </LazyPage>
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/my-reports"
+            element={
+              <ProtectedRoute allowedRoles={["employee"]}>
+                <Layout>
+                  <LazyPage>
+                    <MyReports />
                   </LazyPage>
                 </Layout>
               </ProtectedRoute>

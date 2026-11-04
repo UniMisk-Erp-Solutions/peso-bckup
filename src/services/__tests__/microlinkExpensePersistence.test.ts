@@ -193,7 +193,8 @@ describe("MicroLink atomic persistence — one request, one transaction", () => 
       const out = await submitMicroLinkExpense(snapshot());
 
       expect(rpcMock.mock.calls[1][0]).toBe("get_expense_submission_result_v1");
-      expect(rpcMock.mock.calls[1][1]).toEqual({ p_idempotency_key: KEY });
+      // the lookup is scoped to the action being reconciled (a draft receipt cannot answer a submit)
+      expect(rpcMock.mock.calls[1][1]).toEqual({ p_idempotency_key: KEY, p_action: "submit" });
       expect(out.kind).toBe("committed");
     });
 

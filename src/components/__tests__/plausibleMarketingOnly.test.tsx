@@ -234,3 +234,11 @@ describe("pageview dispatch", () => {
     expect(events().length).toBe(1);
   });
 });
+
+describe("analytics failure safety", () => {
+  it("a throwing plausible() or a failed script load never breaks the app", () => {
+    const src = require("node:fs").readFileSync("src/components/PlausibleAnalytics.tsx", "utf-8");
+    expect(src).toMatch(/script\.onerror = \(\) => \{\}/);
+    expect(src).toMatch(/try \{\s*window\.plausible\?\.\("pageview"\);\s*\} catch/);
+  });
+});

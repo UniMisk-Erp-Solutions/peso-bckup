@@ -297,7 +297,10 @@ export default function ExpenseDetail() {
 
       if (attachmentsError) throw attachmentsError;
       // Normalize attachment URLs to ensure they are valid public URLs from the active bucket
-      const normalizedAttachments = (attachmentsData || []).map((att) => ({
+      // Soft-deleted rows (DOC-078) are attachments the employee removed.
+      const normalizedAttachments = (attachmentsData || [])
+        .filter((att) => !(att as { deleted_at?: string | null }).deleted_at)
+        .map((att) => ({
         ...att,
         file_url: normalizeReceiptPublicUrl(att.file_url || ""),
       }));

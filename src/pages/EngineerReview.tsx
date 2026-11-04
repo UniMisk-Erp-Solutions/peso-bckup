@@ -62,6 +62,9 @@ import { ExpenseFormFieldsDisplay } from "@/components/ExpenseFormFieldsDisplay"
 import { ExpenseBaseFieldsDisplay } from "@/components/ExpenseBaseFieldsDisplay";
 import { useOrganizationExpenseFormConfig } from "@/hooks/useOrganizationExpenseFormConfig";
 import { AttachmentPreviewDialog } from "@/components/AttachmentPreviewDialog";
+import { useExpenseAttachments } from "@/hooks/useExpenseAttachments";
+import { useExpensePreview } from "@/hooks/useExpensePreview";
+import { createLatestRequestGuard, responseStillCurrent } from "@/lib/latestRequestGuard";
 import { ReviewApprovalWarningPanel } from "@/components/ReviewApprovalWarningPanel";
 import { ExpenseCustomFieldFilters } from "@/components/ExpenseCustomFieldFilters";
 import {
@@ -236,6 +239,7 @@ interface LineItem {
 
 interface Attachment {
   id: string;
+  expense_id?: string | null;
   filename: string;
   content_type: string;
   file_url: string;
@@ -459,13 +463,11 @@ export default function ManagerReview() {
     return expenses.find((e) => e.id === selectedExpense.id) ?? selectedExpense;
   }, [selectedExpense, expenses]);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [detailStatus, setDetailStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [engineerComment, setEngineerComment] = useState("");
   const [reviewLoading, setReviewLoading] = useState(false);
-  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
-  const [previewContentType, setPreviewContentType] = useState<string | null>(null);
-  const [previewUploadedBy, setPreviewUploadedBy] = useState<string | null>(null);
+  // Preview state is owned by the expense that opened it: switching expense closes it on the same render.
+  const preview = useExpensePreview(selectedExpense?.id ?? null);
   const [engineerApprovalLimit, setEngineerApprovalLimit] = useState<number>(50000);
   /**
    * True once the REAL organization approval limit has resolved. Until then the
@@ -2644,7 +2646,42 @@ export default function ManagerReview() {
     setExpenses(filtered);
   };
 
+  /** One scoped query for the expense's attachments. Throws on failure; never touches component state. */
+  const loadAttachmentsForExpense = async (expenseId: string): Promise<Attachment[]> => {
+    const { data, error } = await supabase
+      .from("attachments")
+      .select("*")
+      .eq("expense_id", expenseId)
+      .order("created_at");
+    if (error) throw error;
+    // Soft-deleted rows (DOC-078) are attachments the employee removed.
+    return (data || [])
+      .filter((att) => !(att as { deleted_at?: string | null }).deleted_at)
+      .map((att) => ({ ...att, file_url: normalizeReceiptPublicUrl(att.file_url || "") }));
+  };
+
+  // Only the expense on screen may own attachments; late responses for a previous expense are ignored.
+  const { attachments, status: attachmentsStatus, reload: reloadAttachments } = useExpenseAttachments<Attachment>({
+    expenseId: selectedExpense?.id ?? null,
+    load: loadAttachmentsForExpense,
+  });
+
+  // Same rule for the rest of the detail (line items, timeline, assignees, corrections).
+  const detailGuardRef = useRef(createLatestRequestGuard());
+  const detailOwnerRef = useRef<string | null>(null);
+
   const fetchExpenseDetails = async (expenseId: string, expenseRow?: Expense | null) => {
+    const ticket = detailGuardRef.current.begin();
+    const accept = () => responseStillCurrent(ticket, expenseId, detailOwnerRef.current);
+    if (detailOwnerRef.current !== expenseId) {
+      // A different expense: drop the previous one's detail in the same batch as the selection.
+      detailOwnerRef.current = expenseId;
+      setLineItems([]);
+      setAuditLogs([]);
+      setCorrectionLogs([]);
+      setTimelineAssignees({});
+      setDetailStatus("loading");
+    }
     try {
       // Fetch line items
       const { data: lineItemsData, error: lineItemsError } = await supabase
@@ -2655,22 +2692,8 @@ export default function ManagerReview() {
 
       if (lineItemsError) throw lineItemsError;
 
-      // Fetch attachments
-      const { data: attachmentsData, error: attachmentsError } = await supabase
-        .from("attachments")
-        .select("*")
-        .eq("expense_id", expenseId)
-        .order("created_at");
-
-      if (attachmentsError) throw attachmentsError;
-
+      if (!accept()) return;
       setLineItems(lineItemsData || []);
-      setAttachments(
-        (attachmentsData || []).map((att) => ({
-          ...att,
-          file_url: normalizeReceiptPublicUrl(att.file_url || ""),
-        })),
-      );
 
       const { data: logsData, error: logsError } = await supabase
         .from("audit_logs")
@@ -2678,11 +2701,14 @@ export default function ManagerReview() {
         .eq("expense_id", expenseId)
         .order("created_at", { ascending: true });
 
+      if (!accept()) return;
       if (logsError) {
         console.error("Error fetching audit logs:", logsError);
         setAuditLogs([]);
       } else {
-        setAuditLogs(await enrichAuditLogsWithDisplay(logsData || []));
+        const enrichedLogs = await enrichAuditLogsWithDisplay(logsData || []);
+        if (!accept()) return;
+        setAuditLogs(enrichedLogs);
       }
 
       const expenseForTimeline = expenseRow ?? selectedExpense;
@@ -2696,6 +2722,7 @@ export default function ManagerReview() {
           .from("profiles")
           .select("user_id, name")
           .in("user_id", assigneeIds);
+        if (!accept()) return;
         const nameById = new Map(
           (assigneeProfiles ?? []).map((p) => [
             p.user_id,
@@ -2710,18 +2737,20 @@ export default function ManagerReview() {
             ? nameById.get(expenseForTimeline.assigned_engineer_id) ?? null
             : null,
         });
-      } else {
+      } else if (accept()) {
         setTimelineAssignees({});
       }
 
       if (user?.id) {
         const rows = await ExpenseService.listExpenseCorrectionLogs(expenseId, user.id);
+        if (!accept()) return;
         const editorIds = [...new Set(rows.map((r) => r.edited_by))];
         if (editorIds.length > 0) {
           const { data: editorProfiles } = await supabase
             .from("profiles")
             .select("user_id, name")
             .in("user_id", editorIds);
+          if (!accept()) return;
           const editorNames = new Map(
             (editorProfiles ?? []).map((p) => [
               p.user_id,
@@ -2737,11 +2766,18 @@ export default function ManagerReview() {
         } else {
           setCorrectionLogs(rows);
         }
-      } else {
+      } else if (accept()) {
         setCorrectionLogs([]);
       }
+      if (accept()) setDetailStatus("loaded");
     } catch (error) {
+      if (!accept()) return;
       console.error("Error fetching expense details:", error);
+      setLineItems([]);
+      setAuditLogs([]);
+      setCorrectionLogs([]);
+      setTimelineAssignees({});
+      setDetailStatus("error");
     }
   };
 
@@ -2783,6 +2819,7 @@ export default function ManagerReview() {
 
   const openCorrectionDialog = async () => {
     if (!selectedExpense) return;
+    const expenseId = selectedExpense.id;
     setCorrTitle(selectedExpense.title);
     setCorrDestination(selectedExpense.destination);
     const dateSrc = selectedExpense.trip_start || selectedExpense.trip_end;
@@ -2801,9 +2838,11 @@ export default function ManagerReview() {
         selectedExpense.id,
         selectedExpense.category,
       );
+      if (detailOwnerRef.current !== expenseId) return;
       setCorrFieldModel(model);
     }
 
+    if (detailOwnerRef.current !== expenseId) return;
     setCorrectionDialogOpen(true);
   };
 
@@ -2886,6 +2925,7 @@ export default function ManagerReview() {
       });
       await refreshCurrentReviewQuery();
       await fetchExpenseDetails(selectedExpense.id, selectedExpense);
+      reloadAttachments();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to save correction";
       toast({ variant: "destructive", title: t("admin:review.toast.correctionFailed"), description: msg });
@@ -2907,11 +2947,14 @@ export default function ManagerReview() {
   const resetSelectedExpenseReview = () => {
     setSelectedExpense(null);
     setEngineerComment("");
+    // Orphan in-flight detail requests; the attachments hook clears itself when the selection becomes null.
+    detailGuardRef.current.invalidate();
+    detailOwnerRef.current = null;
     setLineItems([]);
-    setAttachments([]);
     setAuditLogs([]);
     setCorrectionLogs([]);
     setTimelineAssignees({});
+    setDetailStatus("idle");
     setCorrectionDialogOpen(false);
   };
 
@@ -3603,8 +3646,8 @@ export default function ManagerReview() {
       evictSettledReviewRows(settledExpenseIds);
     }
     // Close the detail modal if this ran from a single open expense (no-op for
-    // the bulk bar, where nothing is open).
-    setSelectedExpense(null);
+    // the bulk bar, where nothing is open). Also drop in-flight detail writes.
+    resetSelectedExpenseReview();
     // Do not release the action state or report completion until the current
     // filtered page/count has been authoritatively refreshed from the server.
     try {
@@ -4129,18 +4172,15 @@ export default function ManagerReview() {
             onCorrect={openCorrectionDialog}
             onSubmitCorrection={() => void submitExpenseCorrection()}
             onPreviewAttachment={(url, contentType, uploadedBy) => {
-              setImagePreviewUrl(url);
-              setPreviewContentType(contentType);
-              setPreviewUploadedBy(uploadedBy);
-              setImagePreviewOpen(true);
+              preview.show(url, contentType, uploadedBy);
             }}
           />
           <AttachmentPreviewDialog
-            open={imagePreviewOpen}
-            onOpenChange={setImagePreviewOpen}
-            url={imagePreviewUrl}
-            contentType={previewContentType}
-            uploadedBy={previewUploadedBy}
+            open={preview.open}
+            onOpenChange={preview.setOpen}
+            url={preview.url}
+            contentType={preview.contentType}
+            uploadedBy={preview.uploadedBy}
             expenseId={selectedExpense?.id ?? null}
           />
         </>
@@ -4901,7 +4941,15 @@ export default function ManagerReview() {
                                           </CardTitle>
                                         </CardHeader>
                                         <CardContent>
-                                          {lineItems.length === 0 ? (
+                                          {detailStatus === "loading" ? (
+                                            <p className="text-muted-foreground" data-testid="line-items-loading">
+                                              Loading line items…
+                                            </p>
+                                          ) : detailStatus === "error" ? (
+                                            <p className="text-sm text-destructive" data-testid="expense-detail-error">
+                                              Could not load this expense&apos;s details.
+                                            </p>
+                                          ) : lineItems.length === 0 ? (
                                             <p className="text-muted-foreground">No line items found</p>
                                           ) : (
                                             <Table>
@@ -4937,6 +4985,21 @@ export default function ManagerReview() {
                                       </Card>
 
                                       {/* Attachments */}
+                                      {attachmentsStatus === "loading" && attachments.length === 0 && (
+                                        <Card data-testid="attachments-loading">
+                                          <CardHeader className="pb-3">
+                                            <CardTitle className="text-base">Receipts & Attachments</CardTitle>
+                                          </CardHeader>
+                                          <CardContent>
+                                            <p className="text-sm text-muted-foreground">Loading attachments…</p>
+                                          </CardContent>
+                                        </Card>
+                                      )}
+                                      {attachmentsStatus === "error" && (
+                                        <p className="text-sm text-destructive" data-testid="attachments-error">
+                                          Could not load attachments. Close and reopen this expense to retry.
+                                        </p>
+                                      )}
                                       {attachments.length > 0 && (
                                         <Card>
                                           <CardHeader className="pb-3">
@@ -4962,10 +5025,7 @@ export default function ManagerReview() {
                                                     variant="outline"
                                                     size="sm"
                                                     onClick={() => {
-                                                      setImagePreviewUrl(attachment.file_url);
-                                                      setPreviewContentType(attachment.content_type);
-                                                      setPreviewUploadedBy(selectedExpense?.user_id ?? null);
-                                                      setImagePreviewOpen(true);
+                                                      preview.show(attachment.file_url, attachment.content_type, selectedExpense?.user_id ?? null);
                                                     }}
                                                   >
                                                     View
@@ -5001,6 +5061,15 @@ export default function ManagerReview() {
                                           </CardDescription>
                                         </CardHeader>
                                         <CardContent>
+                                          {detailStatus === "loading" ? (
+                                            <p className="text-sm text-muted-foreground" data-testid="audit-loading">
+                                              Loading timeline…
+                                            </p>
+                                          ) : detailStatus === "error" ? (
+                                            <p className="text-sm text-destructive" data-testid="audit-error">
+                                              Could not load the review timeline.
+                                            </p>
+                                          ) : (
                                           <ExpenseReviewTimeline
                                             expense={{
                                               status: selectedExpense.status,
@@ -5022,10 +5091,11 @@ export default function ManagerReview() {
                                             assigneeNames={timelineAssignees}
                                             managerApprovalLimit={engineerApprovalLimit}
                                           />
+                                          )}
                                         </CardContent>
                                       </Card>
 
-                                      {correctionLogs.length > 0 && (
+                                      {detailStatus === "loaded" && correctionLogs.length > 0 && (
                                         <Card>
                                           <CardHeader className="pb-3">
                                             <CardTitle className="text-base">Reviewer corrections (detail)</CardTitle>
@@ -5396,11 +5466,11 @@ export default function ManagerReview() {
       </Dialog>
 
       <AttachmentPreviewDialog
-        open={imagePreviewOpen}
-        onOpenChange={setImagePreviewOpen}
-        url={imagePreviewUrl}
-        contentType={previewContentType}
-        uploadedBy={previewUploadedBy}
+        open={preview.open}
+        onOpenChange={preview.setOpen}
+        url={preview.url}
+        contentType={preview.contentType}
+        uploadedBy={preview.uploadedBy}
         expenseId={selectedExpense?.id ?? null}
       />
       {approvalWarningDialog}

@@ -3,7 +3,7 @@ import { clearLocalAuthStorage } from "@/lib/localAuthStorageKey";
 
 export { clearLocalAuthStorage } from "@/lib/localAuthStorageKey";
 
-const REFRESH_TOKEN_ERROR_PATTERN = /refresh token/i;
+const REFRESH_TOKEN_ERROR_PATTERN = /refresh token|session (from session_id claim in jwt )?(does not exist|not found)/i;
 
 const NETWORK_ERROR_PHRASES = [
   "failed to fetch",
@@ -56,13 +56,27 @@ export function isInvalidAuthSessionError(error: AuthErrorLike): boolean {
   if (isInvalidRefreshTokenError(message)) return true;
 
   if (typeof error === "object" && error) {
-    const { status, name } = error;
+    const { status, name, code } = error;
     if (status === 401 && (name === "AuthApiError" || name === "AuthError")) {
+      return true;
+    }
+    // The server no longer has this session (signed out from another device, revoked, user
+    // deactivated). GoTrue answers 403 `session_not_found` on /user and /logout and 400
+    // `refresh_token_not_found` on /token. The access token still LOOKS valid until it expires, so
+    // without this the app kept calling /auth/v1/user with a dead session and never cleaned up.
+    if (code && REVOKED_SESSION_CODES.has(code)) {
       return true;
     }
   }
   return false;
 }
+
+/** GoTrue error codes meaning "this session / refresh token no longer exists on the server". */
+const REVOKED_SESSION_CODES: ReadonlySet<string> = new Set([
+  "session_not_found",
+  "refresh_token_not_found",
+  "refresh_token_already_used",
+]);
 
 /**
  * Fired once per invalid-refresh-token recovery so exactly one "session expired"

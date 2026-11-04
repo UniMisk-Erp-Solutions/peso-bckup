@@ -49,7 +49,9 @@ describe("worker index.ts", () => {
     expect(index).toContain("Date.now() - startedAt > SOFT_DEADLINE_MS");
     expect(index).toContain("throw new Error(REPORT_TOO_LARGE_MESSAGE)");
     // A deadline failure must never be retried: the same input would time out again.
-    expect(index).toContain("p_retryable: message !== REPORT_TOO_LARGE_MESSAGE");
+    expect(index).toContain("p_retryable: safe.retryable");
+    // the too-large report is mapped to a NON-retryable failure
+    expect(expenseReports).toContain("retryable: false");
   });
 
   it("validates the report contract version every page instead of guessing at an unknown shape", () => {
@@ -84,13 +86,17 @@ describe("worker index.ts", () => {
   });
 
   it("a failed job is reported through fail_report_export_job_v1 as retryable, never silently swallowed", () => {
-    expect(index).toContain('p_error_code: "worker_error"');
+    // DOC-149: the error is mapped (code + message + retryable) before it is written.
+    expect(index).toContain("const safe = toSafeReportError(message)");
+    expect(index).toContain("p_error_code: safe.code");
     // Retryable unless the report is too large for one invocation (retrying would time out again).
-    expect(index).toContain("p_retryable: message !== REPORT_TOO_LARGE_MESSAGE");
+    expect(index).toContain("p_retryable: safe.retryable");
   });
 
   it("truncates the error message before writing it, matching the 500-char column limit enforced in SQL", () => {
-    expect(index).toContain("message.slice(0, 300)");
+    // The mapper truncates any pass-through message to 300 chars and replaces database errors outright.
+    expect(expenseReports).toContain("slice(0, 300)");
+    expect(index).toContain("p_error_message_safe: safe.message");
   });
 
   it("storage path is {orgId}/{jobId}/{filename} for every report type -- unique per job, no collision risk", () => {
@@ -220,7 +226,7 @@ describe("worker expenseReports.ts", () => {
 
   it("the on-page preview is stored from the SAME computed row objects the CSV is built from, not a second derivation", () => {
     expect(index).toContain("buildDetailedRows(filteredRows)");
-    expect(index).toContain("storeDetailedExpensePreview(svc, jobId, headers, builtRows)");
+    expect(index).toContain("storeReportPreview(svc, jobId, headers, builtRows)");
     expect(index).toContain("toCsv(headers, builtRows)");
     // Only one call site fetches the timeline rows for this report type --
     // the preview is stored from what that single fetch already produced,
@@ -278,7 +284,7 @@ describe("worker expenseReports.ts", () => {
       const start = index.indexOf("async function buildDetailedExpenseReport(");
       const body = index.slice(start, index.indexOf("\n}\n", start));
       expect(body).toContain("buildDetailedRows(filteredRows)");
-      expect(body).toContain("storeDetailedExpensePreview(svc, jobId, headers, builtRows)");
+      expect(body).toContain("storeReportPreview(svc, jobId, headers, builtRows)");
       expect(body).toContain("toCsv(headers, builtRows)");
     });
 
@@ -322,5 +328,33 @@ describe("worker expenseReports.ts", () => {
       expect(body).toContain("modern_expense_row_count: result.modernExpenseRowCount");
       expect(body).toContain("legacy_expense_row_count: result.legacyExpenseRowCount");
     });
+  });
+});
+
+describe("Daily Project Report preview storage (DOC-101 §11)", () => {
+  const index = readFileSync(resolve(process.cwd(), "supabase/functions/run-report-export-job/index.ts"), "utf-8").replace(/\r\n/g, "\n");
+  const dailyBranch = index.slice(index.indexOf("const rows = finalize(groups);"));
+
+  it("freezes the SAME finalize() row objects the CSV is built from, with the exact CSV header array", () => {
+    expect(dailyBranch).toContain("const body = toDailyProjectCsv(rows);");
+    expect(dailyBranch).toContain("await storeReportPreview(svc, jobId, [...HEADERS], rows);");
+    // toDailyProjectCsv renders HEADERS in order -- preview columns are that same array.
+    expect(index).toContain("const lines = [HEADERS.map(csvCell).join(\",\")];");
+  });
+
+  it("stores the preview after the file upload and before the job is completed", () => {
+    const upload = dailyBranch.indexOf(".upload(storagePath");
+    const store = dailyBranch.indexOf("storeReportPreview(");
+    const complete = dailyBranch.indexOf('"complete_report_export_job_v1"');
+    expect(upload).toBeGreaterThan(-1);
+    expect(store).toBeGreaterThan(upload);
+    expect(complete).toBeGreaterThan(store);
+  });
+
+  it("uses the existing preview store (no second table) and refuses a partial row set", () => {
+    expect(index).toContain('"store_report_export_job_preview_chunk_v1"');
+    expect(index).toContain('"clear_report_export_job_preview_v1"');
+    expect(index).toContain("preview row count");
+    expect(index).toContain("preview_columns: null");
   });
 });

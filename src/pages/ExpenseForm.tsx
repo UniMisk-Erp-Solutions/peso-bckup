@@ -23,8 +23,29 @@ import { CalendarIcon, Loader2, RotateCcw, Save, Send } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { formatINR, parseLocalDate } from "@/lib/format";
-import { FileUpload } from "@/components/FileUpload";
-import { ExpenseService, CreateExpenseData, UpdateExpenseData } from "@/services/ExpenseService";
+import { FileUpload, type FileUploadAttachment } from "@/components/FileUpload";
+import {
+  buildFinalizeManifest,
+  finalizeAndLinkReceipts,
+  reconcileExpenseAttachments,
+  registerUploadedAttachment,
+  removeAttachmentFromSessionRegistries,
+  tempNamesForAttachmentUrl,
+} from "@/lib/expenseAttachmentManifest";
+import { ExpenseService, CreateExpenseData, UpdateExpenseData, SubmissionPreflightError } from "@/services/ExpenseService";
+import {
+  friendlySubmitFailureMessage,
+  isConnectionDropError,
+  isServerSlowError,
+  isUnknownOutcomeError,
+} from "@/lib/submitFailureMessages";
+import { recordSubmitMetric, startTimer, submitErrorClass } from "@/lib/submitTelemetry";
+import { waitUntilPageVisible } from "@/lib/pageVisibility";
+import { submitWithReconcile } from "@/lib/submitReconcile";
+import { isBillRequired, billRequiredMessage } from "@/lib/attachmentRequirement";
+import {
+  decideAfterResolve, shouldRunSubmit, isSubmittedStatus, newClientSubmissionId,
+} from "@/lib/submitAttemptReuse";
 import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
 import { useExpenseDateLocks } from "@/hooks/useExpenseDateLocks";
 import { getExpenseDateLockMessage } from "@/lib/expenseDateLocks";
@@ -47,12 +68,15 @@ import {
   type CategoryFormFieldLike,
 } from "@/lib/microlinkExpenseSnapshot";
 import {
-  saveMicroLinkExpenseDraft,
   submitMicroLinkExpense,
+  unsubmittedReceiptMessage,
+  semanticMismatchTags,
   updateSubmittedMicroLinkExpense,
   usesAtomicSubmissionV1,
   verifyPersistedExpense,
 } from "@/services/microlinkExpensePersistence";
+import { prepareAttachFirstSubmit } from "@/services/microlinkAttachFirstFlow";
+import { reportMicroLinkSubmitFailure, summarizeAttachmentTypes } from "@/lib/microlinkSubmitMonitoring";
 import { useViewportMode } from "@/hooks/useViewportMode";
 import { MobileExpenseFormLayout } from "@/components/mobile/MobileExpenseFormLayout";
 import { MobileStickyActionBar } from "@/components/mobile/MobileStickyActionBar";
@@ -91,12 +115,7 @@ import {
   saveBackupReceiptsToIndexedDB,
   reuploadBackupReceiptsFromIndexedDB,
 } from "@/lib/expenseSubmittedBackupReceipts";
-import {
-  invokeFinalizeExpenseReceipts,
-  runWithConcurrency,
-  type ReceiptFinalizationResult,
-  type FinalizeReceiptsInput,
-} from "@/lib/receiptFinalization";
+import { type ReceiptFinalizationResult } from "@/lib/receiptFinalization";
 import {
   saveSubmittedExpenseBackup,
   submittedBackupToDraftPayload,
@@ -241,6 +260,20 @@ export default function ExpenseForm() {
 
   const [loading, setLoading] = useState(false);
   const isSavingRef = useRef(false);
+  // PWA first-submit incident: ONE automatic re-check of the logical submission when the outcome of a request is
+  // unknown (dropped connection / gateway timeout). Re-running the same press is safe by construction: the server maps
+  // clientSubmissionId to ONE expense, and a row that is already past draft is never submitted again.
+  const autoReconcileUsedRef = useRef(false);
+  const reconcileRequestedRef = useRef(false);
+  const reconcilingRef = useRef(false);
+  const submitOutcomeRef = useRef<"success" | "failure" | null>(null);
+  /**
+   * DOC-148: id of THIS logical submission. Minted when the form opens, saved with the browser's
+   * recoverable form (so a restored form resumes the same expense) and sent with every Submit;
+   * the SERVER maps it to one row. A fresh id is minted after a successful submit, when the form
+   * is cleared, and when the user opens a new form. Never stored in sessionStorage.
+   */
+  const clientSubmissionIdRef = useRef<string>(newClientSubmissionId());
   const {
     progress: submitProgress,
     startOperation: startSubmitProgress,
@@ -289,6 +322,12 @@ export default function ExpenseForm() {
   // attempt reuses it so the server replays one receipt instead of creating a
   // second expense; it is cleared once the attempt succeeds.
   const submissionAttemptKeyRef = useRef<string | null>(null);
+  // The "attach first, then submit" flow makes TWO server calls for one
+  // attempt (save draft, then submit). They must not share a key: the server
+  // answers a repeated key with the stored receipt of whichever call used it
+  // first, so a shared key turns the submit into a replay of the draft receipt
+  // and the expense silently stays a draft. This key covers the draft step only.
+  const draftAttemptKeyRef = useRef<string | null>(null);
   // The revision this form was loaded at, for optimistic concurrency.
   const loadedRevisionRef = useRef<number | null>(null);
   const [batchInfo, setBatchInfo] = useState<BatchExpenseContextInfo | null>(null);
@@ -620,6 +659,7 @@ export default function ExpenseForm() {
         path,
         ...meta,
       })),
+      clientSubmissionId: clientSubmissionIdRef.current,
     };
   }, []);
 
@@ -633,6 +673,8 @@ export default function ExpenseForm() {
       amount: Number.isFinite(Number(draft.expense.amount)) ? draft.expense.amount : 0,
       category: draft.expense.category,
     };
+    // Resume the SAME logical submission the recovered form belonged to.
+    if (draft.clientSubmissionId) clientSubmissionIdRef.current = draft.clientSubmissionId;
     formStateRef.current = {
       expense: nextExpense,
       formFieldValues: { ...draft.formFieldValues },
@@ -641,6 +683,9 @@ export default function ExpenseForm() {
     };
     setExpense(nextExpense);
     setAttachments(draft.attachments);
+    // The upload list is the attachment set the employee sees. Remount it so the
+    // restored attachments are listed (and can be removed), not only counted.
+    if (draft.attachments.length > 0) setFileUploadResetKey((k) => k + 1);
     setFormFieldValues(draft.formFieldValues);
     setBranchValues(draft.branchValues);
     sessionTempFilenamesRef.current = new Set(draft.sessionTempFilenames);
@@ -803,6 +848,51 @@ export default function ExpenseForm() {
     persistDraft({ force: true });
   }, [activeUserId, effectiveOrganizationId, draftScope, buildDraftPayloadFromRef, persistDraft]);
 
+  /**
+   * The employee removed an attachment from the list. Drop it from every
+   * session registry and from the canonical attachment list NOW, so finalize,
+   * the draft payload and the safety copy can never see it again.
+   */
+  const handleAttachmentRemoved = useCallback(
+    (removed: FileUploadAttachment) => {
+      const url = removed.file_url;
+      removeAttachmentFromSessionRegistries(
+        {
+          tempNames: sessionTempFilenamesRef.current,
+          meta: sessionTempUploadMetaRef.current,
+          pathByUrl: tempStoragePathByUrlRef.current,
+          blobs: sessionBlobCacheRef.current,
+        },
+        { url, storagePath: removed.storage_path, userId: user?.id },
+      );
+      persistedAttachmentUrlsRef.current.delete(url);
+      const next = formStateRef.current.attachments.filter((u) => u !== url);
+      formStateRef.current = { ...formStateRef.current, attachments: next };
+      setAttachments(next);
+      flushExpenseDraftNow();
+    },
+    [user?.id, flushExpenseDraftNow],
+  );
+
+  /** Attachments to list when the upload component mounts (restored draft / backup). */
+  const buildFileUploadSeed = (): FileUploadAttachment[] | undefined => {
+    if (isEditing && id) return undefined;
+    if (attachments.length === 0 || !user?.id) return undefined;
+    return attachments.map((url) => {
+      const path = tempNamesForAttachmentUrl(user.id, url, tempStoragePathByUrlRef.current)[0];
+      const meta = path ? sessionTempUploadMetaRef.current.get(path) : undefined;
+      return {
+        id: `temp-restored-${path ?? url}`,
+        filename: meta?.filename || path || "receipt",
+        content_type: meta?.content_type || "image/jpeg",
+        file_url: url,
+        created_at: new Date().toISOString(),
+        file_size: meta?.file_size,
+        storage_path: path,
+      };
+    });
+  };
+
   const createDefaultExpenseState = useCallback(
     () => ({
       title: "",
@@ -829,6 +919,7 @@ export default function ExpenseForm() {
   }, [user?.id]);
 
   const resetExpenseFormState = useCallback(() => {
+    clientSubmissionIdRef.current = newClientSubmissionId();
     const defaults = createDefaultExpenseState();
     setExpense(defaults);
     setAttachments([]);
@@ -1051,13 +1142,18 @@ export default function ExpenseForm() {
       }
 
       // Fetch existing attachments for this expense
-      const { data: attachmentsData, error: attachmentsError } = await supabase
+      const { data: allAttachmentRows, error: attachmentsError } = await supabase
         .from("attachments")
-        .select("file_url, storage_path, filename, content_type, file_size")
+        .select("*")
         .eq("expense_id", id)
         .eq("organization_id", expenseData.organization_id);
 
-      if (!attachmentsError && attachmentsData && attachmentsData.length > 0) {
+      // Soft-deleted rows (DOC-078) are attachments the employee removed.
+      const attachmentsData = (allAttachmentRows || []).filter(
+        (att) => !(att as { deleted_at?: string | null }).deleted_at,
+      );
+
+      if (!attachmentsError && attachmentsData.length > 0) {
         const existingAttachmentUrls = attachmentsData
           .map(att => att.file_url)
           .filter((url): url is string => Boolean(url));
@@ -1131,7 +1227,7 @@ export default function ExpenseForm() {
 
   const AddCategoryDialog = (
     <Dialog open={addCatOpen} onOpenChange={setAddCatOpen}>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>{t("form.addCategoryTitle")}</DialogTitle>
         </DialogHeader>
@@ -1154,46 +1250,41 @@ export default function ExpenseForm() {
 
   // addLineItem removed
 
+  /**
+   * Finalizes and links the temp uploads for `expenseId`. The finalize manifest
+   * is derived ONLY from the attachments currently visible in the form
+   * (`formStateRef.current.attachments`); the session registries are never the
+   * source of truth. Returns the manifest (bare temp names) it acted on.
+   */
   const moveTempFilesToExpense = async (
     expenseId: string,
-    options?: { requireAtLeastOne?: boolean; attachmentUrls?: string[] },
-  ) => {
+    options?: { requireAtLeastOne?: boolean },
+  ): Promise<string[]> => {
     // IMPORTANT: do NOT scan/list `temp/${userId}` here.
     // Large tenants can have huge temp history; storage list() can time out.
     // We only move the exact temp objects recorded during this form session.
-    if (!user?.id) return;
+    if (!user?.id) return [];
     if (!organizationId) throw new Error("Organization not found");
 
-    const allAttachmentUrls = [
-      ...formStateRef.current.attachments,
-      ...(options?.attachmentUrls ?? attachments),
-    ];
+    // Canonical attachment set: what the employee sees right now.
+    const allAttachmentUrls = [...formStateRef.current.attachments];
 
-    // Only expand from URLs that weren't already saved as DB attachment rows.
     // Persisted-URL attachments already have rows — re-processing them tries to move
     // files that no longer exist at temp and then inserts duplicate rows.
-    const freshAttachmentUrls = allAttachmentUrls.filter(
-      (url) => !persistedAttachmentUrlsRef.current.has(url),
-    );
-    syncSessionTempFilenamesFromAttachments(
-      user.id,
-      freshAttachmentUrls,
-      sessionTempFilenamesRef.current,
-    );
-    for (const name of parseTempStorageNamesFromUrls(freshAttachmentUrls, user.id)) {
-      sessionTempFilenamesRef.current.add(name);
-    }
-    for (const url of freshAttachmentUrls) {
-      const mapped = tempStoragePathByUrlRef.current.get(url);
-      if (mapped) sessionTempFilenamesRef.current.add(mapped);
-    }
+    const tempFileNames = buildFinalizeManifest({
+      userId: user.id,
+      visibleUrls: allAttachmentUrls,
+      persistedUrls: persistedAttachmentUrlsRef.current,
+      pathByUrl: tempStoragePathByUrlRef.current,
+    });
+    // Keep the registry aligned with the visible set; anything else is stale.
+    sessionTempFilenamesRef.current = new Set(tempFileNames);
 
     const startedAt = performance.now();
-    const tempFileNames = Array.from(sessionTempFilenamesRef.current);
     if (tempFileNames.length === 0) {
       if (options?.requireAtLeastOne) {
         const hasExisting = await expenseHasPersistedAttachments(expenseId, organizationId);
-        if (hasExisting) return;
+        if (hasExisting) return [];
 
         const hadAttachmentUrls = allAttachmentUrls.some(Boolean);
         throw new Error(
@@ -1202,74 +1293,29 @@ export default function ExpenseForm() {
             : "Bill photos are required for this expense. Please upload at least one receipt and try again.",
         );
       }
-      return;
+      return [];
     }
 
-    // Build receipt list for the Edge Function.
-    const receipts: FinalizeReceiptsInput[] = tempFileNames
-      .filter(Boolean)
-      .map((fileName) => {
-        const meta = sessionTempUploadMetaRef.current.get(fileName);
-        return {
-          filename: fileName,
-          contentType: meta?.content_type || "image/jpeg",
-          fileSize: meta?.file_size || 0,
-        };
-      });
-
-    // Invoke the edge function — server-side download → upload → download-verify.
-    // No browser-side storage.move / copy / createSignedUrl / download calls.
-    const allResults = await invokeFinalizeExpenseReceipts(supabase, {
+    // Finalize server-side and insert one attachment row per file in the manifest.
+    // Nothing outside the manifest (the visible attachment set) is touched.
+    const validResults = await finalizeAndLinkReceipts(supabase, {
       expenseId,
+      organizationId,
       userId: user.id,
-      receipts,
+      manifest: tempFileNames,
+      meta: sessionTempUploadMetaRef.current,
       blobCache: sessionBlobCacheRef.current,
     });
-
-    // Insert DB attachment rows for each successfully finalized/fallback file.
-    const insertTasks = allResults.map(
-      (result) => async (): Promise<ReceiptFinalizationResult | null> => {
-        if (result.status === "failed") return result;
-
-        const meta = sessionTempUploadMetaRef.current.get(result.filename);
-        const filename = meta?.filename || result.filename;
-        const contentType = meta?.content_type || "image/jpeg";
-        const fileSize = Number.isFinite(meta?.file_size) ? (meta?.file_size as number) : 0;
-
-        const { error: attachmentInsertError } = await supabase
-          .from("attachments")
-          .insert({
-            expense_id: expenseId,
-            organization_id: organizationId,
-            file_url: result.fileUrl || "",
-            filename,
-            content_type: contentType,
-            uploaded_by: user.id,
-            file_size: fileSize > 0 ? fileSize : null,
-            storage_path: result.resolvedPath,
-          });
-
-        if (attachmentInsertError) {
-          console.error("[moveTempFilesToExpense] attachment insert error", {
-            fileName: result.filename,
-            resolvedPath: result.resolvedPath,
-            attachmentInsertError,
-          });
-          return { ...result, status: "failed" as const, resolvedPath: null };
-        }
-
-        return result;
-      },
-    );
-
-    const perFileResults = await runWithConcurrency(insertTasks, 2);
-    const validResults = perFileResults.filter((r): r is ReceiptFinalizationResult => r != null);
     finalizationResultsRef.current = validResults;
 
     const movedCount = validResults.filter((r) => r.status === "finalized").length;
     const tempFallbackCount = validResults.filter((r) => r.status === "temporary_fallback").length;
     const failedCount = validResults.filter((r) => r.status === "failed").length;
 
+    recordSubmitMetric("receipt_finalize_done", {
+      durationMs: performance.now() - startedAt,
+      count: tempFileNames.length,
+    });
     console.info("[moveTempFilesToExpense] done", {
       durationMs: Math.round(performance.now() - startedAt),
       tempCount: tempFileNames.length,
@@ -1299,6 +1345,7 @@ export default function ExpenseForm() {
     if (movedCount === 0 && tempFallbackCount === 0 && tempFileNames.length > 0) {
       throw new Error("Failed to attach uploaded bill photos. Please re-upload and try again.");
     }
+    return tempFileNames;
   };
 
   // Fetch recommended categories based on usage
@@ -1509,6 +1556,20 @@ export default function ExpenseForm() {
     const hasPendingAttachments =
       sessionTempFilenamesRef.current.size > 0 || (attachments?.length ?? 0) > 0;
     const needsAttachmentFirst = !id && requiresAttachment && hasPendingAttachments;
+    // DOC-150: the database now refuses the transition to 'submitted' when an above-threshold expense
+    // has no live bill. An EXISTING draft/rejected row that is being given new bill photos in this
+    // very submit must therefore get them linked BEFORE the submit (previously they were finalized
+    // afterwards, which only worked because nothing checked). No draft save, no status change.
+    const linkBillsBeforeSubmit =
+      !!id && !needsAttachmentFirst && requiresAttachment && sessionTempFilenamesRef.current.size > 0 &&
+      (expenseStatus === "draft" || expenseStatus === "rejected");
+    // Coarse, non-identifying context for monitoring (counts and kinds only).
+    const monitorAttachments = {
+      attachmentCount: sessionTempFilenamesRef.current.size,
+      attachmentTypes: summarizeAttachmentTypes(
+        Array.from(sessionTempUploadMetaRef.current.values()).map((m) => m.content_type),
+      ),
+    };
 
     startSubmitProgress(t("progress.preparing"), {
       description: t("progress.preparingHint"),
@@ -1528,29 +1589,49 @@ export default function ExpenseForm() {
 
     // 3a. Bill required on a brand-new expense: atomic draft, attach, then submit.
     if (needsAttachmentFirst) {
-      const draft = await saveMicroLinkExpenseDraft(snapshot);
-      if (draft.kind !== "committed") {
-        throw new Error(
-          draft.kind === "rejected"
-            ? draft.message
-            : "Your expense could not be saved. Nothing was submitted.",
-        );
+      if (!draftAttemptKeyRef.current) {
+        draftAttemptKeyRef.current = crypto.randomUUID();
       }
+      workingSnapshot = await prepareAttachFirstSubmit(snapshot, draftAttemptKeyRef.current, {
+        onFailure: (stage, error, info) =>
+          reportMicroLinkSubmitFailure(stage, error, { ...monitorAttachments, ...info }),
+        onDraftSaved: () =>
+          updateSubmitProgress(t("progress.savingReceipts"), {
+            description: t("progress.savingReceiptsHint"),
+            currentStep: 2,
+            totalSteps: 3,
+          }),
+        attachFiles: async (expenseId) => {
+          const attached = await moveTempFilesToExpense(expenseId, {
+            requireAtLeastOne: requiresAttachment,
+          });
+          // A retry replays the SAME draft. A file attached by an earlier attempt
+          // and removed since (or attached twice) must not stay active on it.
+          // (An empty manifest on a bill-required expense means "already linked" -- never wipe it.)
+          if (organizationId && (attached.length > 0 || !requiresAttachment)) {
+            await reconcileExpenseAttachments(supabase, {
+              expenseId,
+              organizationId,
+              wantedNames: attached,
+            });
+          }
+          await enforceMaxAttachmentSize(expenseId);
+        },
+      });
+    }
+
+    // 3a'. Existing draft/rejected expense + new bill photos: link them first (same canonical id).
+    if (linkBillsBeforeSubmit && id) {
       updateSubmitProgress(t("progress.savingReceipts"), {
         description: t("progress.savingReceiptsHint"),
-        currentStep: 2,
-        totalSteps: 3,
+        currentStep: 1,
+        totalSteps: 2,
       });
-      await moveTempFilesToExpense(draft.receipt.expense_id, {
-        requireAtLeastOne: requiresAttachment,
-        attachmentUrls: attachments,
-      });
-      await enforceMaxAttachmentSize(draft.receipt.expense_id);
-      workingSnapshot = {
-        ...snapshot,
-        expense_id: draft.receipt.expense_id,
-        expected_revision: draft.receipt.revision,
-      };
+      const attached = await moveTempFilesToExpense(id, { requireAtLeastOne: requiresAttachment });
+      if (organizationId && attached.length > 0) {
+        await reconcileExpenseAttachments(supabase, { expenseId: id, organizationId, wantedNames: attached });
+      }
+      await enforceMaxAttachmentSize(id);
     }
 
     // 3b. THE submit. One request.
@@ -1565,11 +1646,39 @@ export default function ExpenseForm() {
       : await submitMicroLinkExpense(workingSnapshot);
 
     if (outcome.kind === "rejected") {
+      reportMicroLinkSubmitFailure("submit", new Error("microlink submit rejected"), {
+        ...monitorAttachments,
+        errorCode: outcome.code,
+        severity: "warning",
+      });
       // The employee stays on the form with every value intact. Nothing is
       // cleared, nothing is navigated away from, and this is NOT called a draft.
       throw new Error(outcome.message);
     }
+    // The server said "committed", but a committed SUBMIT whose receipt is not
+    // 'submitted' (e.g. a replayed draft receipt) did not submit anything. Do
+    // not report success and do not navigate away as if it had.
+    if (outcome.kind === "committed") {
+      const notSubmitted = unsubmittedReceiptMessage(outcome.receipt);
+      if (notSubmitted && !isSubmittedEdit) {
+        console.error("[ExpenseForm] submit receipt is not 'submitted'", {
+          expenseId: outcome.receipt.expense_id,
+          status: outcome.receipt.status,
+          replayed: outcome.receipt.replayed,
+        });
+        reportMicroLinkSubmitFailure(
+          "submit_not_submitted",
+          new Error("microlink submit requested but receipt does not confirm a submission"),
+          { ...monitorAttachments, ...semanticMismatchTags(outcome.receipt) },
+        );
+        throw new Error(notSubmitted);
+      }
+    }
     if (outcome.kind === "unknown") {
+      reportMicroLinkSubmitFailure("submit_unconfirmed", new Error("microlink submit outcome unknown"), {
+        ...monitorAttachments,
+        severity: "warning",
+      });
       warnSubmitProgress(t("progress.draftWarning"), {
         description: "We could not confirm your submission. Please reload this page before trying again — it may already have been submitted.",
       });
@@ -1587,7 +1696,6 @@ export default function ExpenseForm() {
       try {
         await moveTempFilesToExpense(outcome.receipt.expense_id, {
           requireAtLeastOne: false,
-          attachmentUrls: attachments,
         });
         await enforceMaxAttachmentSize(outcome.receipt.expense_id);
       } catch (attachErr) {
@@ -1608,6 +1716,25 @@ export default function ExpenseForm() {
       status: "submitted",
       transactionNumberPresent: true,
     });
+    // A status mismatch means the expense is NOT in the state the form is about
+    // to announce -- that is a failure, not a "please verify" footnote.
+    if (!isSubmittedEdit && mismatches.some((m) => m.startsWith("status is"))) {
+      console.error("[ExpenseForm] V1 readback status mismatch", {
+        expenseId: outcome.receipt.expense_id,
+        mismatches,
+      });
+      reportMicroLinkSubmitFailure(
+        "submit_not_submitted",
+        new Error("microlink readback status mismatch after submit"),
+        {
+          ...monitorAttachments,
+          ...semanticMismatchTags({ ...outcome.receipt, actual_status: mismatches.find((m) => m.startsWith("status is"))?.match(/^status is ([a-z_]+)/)?.[1] }),
+        },
+      );
+      throw new Error(
+        "Your expense was saved as a draft but was NOT submitted. Open it from My Expenses (Drafts) and submit it again.",
+      );
+    }
     if (mismatches.length > 0) {
       console.error("[ExpenseForm] V1 readback mismatch", {
         expenseId: outcome.receipt.expense_id,
@@ -1621,6 +1748,7 @@ export default function ExpenseForm() {
     }
 
     submissionAttemptKeyRef.current = null;
+    draftAttemptKeyRef.current = null;
     persistSubmittedSafetyCopy(outcome.receipt.expense_id, "submitted");
     completeSubmitProgress(isSubmittedEdit ? t("progress.editComplete") : t("progress.complete"));
     sessionTempFilenamesRef.current.clear();
@@ -1652,26 +1780,16 @@ export default function ExpenseForm() {
   // Save custom form field values via the atomic replace RPC. LEGACY PATH:
   // used by every organization except MicroLink, which now submits atomically.
   // Throws on failure so the overall submit/update aborts (no false success).
-  const saveFormFieldValues = async (expenseId: string) => {
-    if (!organizationId) {
-      throw new Error(
-        "Your expense was not saved because the additional information could not be stored. Please try again.",
-      );
-    }
-
+  /**
+   * The exact custom-field payload the current form would save (DOC-148: also what the
+   * server-side preflight is asked about, so both always see the same values).
+   * Throws if a selected option's conditional configuration is unresolved.
+   */
+  const buildCurrentCustomFieldPayload = () => {
     // Nothing configured for this category: nothing to save or clear.
     if (categoryFormFields.length === 0 && optionBranches.length === 0) {
-      return;
+      return [] as ReturnType<typeof buildExpenseCustomFieldPayload>;
     }
-
-    // INCIDENT hotfix (2026-09): `optionBranches.length === 0` used to be
-    // treated as "this template has no conditional fields", which is
-    // indistinguishable from "the fetch for the selected value hasn't
-    // resolved yet". That let a pending or never-triggered fetch silently
-    // compute visibleBranchIds = new Set() (drop everything) instead of
-    // failing loudly. A currently-selected select-type template's config
-    // must be positively confirmed `ready` before it is safe to derive
-    // which branch values are visible.
     if (allowConditionalDropdown) {
       const unresolvedSelection = categoryFormFields.find((f: any) => {
         const templateId = f.template?.id;
@@ -1688,25 +1806,30 @@ export default function ExpenseForm() {
         );
       }
     }
-
     const visibleBranchIds =
       allowConditionalDropdown && optionBranches.length > 0
-        ? getVisibleBranchIds(
-          optionBranches,
-          formFieldValues,
-          branchValues,
-          allowNestedConditional,
-        )
+        ? getVisibleBranchIds(optionBranches, formFieldValues, branchValues, allowNestedConditional)
         : new Set<string>();
-
-    // One combined payload (regular template + conditional branch values).
-    // The RPC replaces the full saved set atomically, so cleared/hidden fields
-    // disappear and "0"/"false" are preserved.
-    const payload = buildExpenseCustomFieldPayload({
+    return buildExpenseCustomFieldPayload({
       templateValues: formFieldValues,
       branchValues,
       visibleBranchIds,
     });
+  };
+
+  const saveFormFieldValues = async (expenseId: string) => {
+    if (!organizationId) {
+      throw new Error(
+        "Your expense was not saved because the additional information could not be stored. Please try again.",
+      );
+    }
+
+    // Nothing configured for this category: nothing to save or clear.
+    if (categoryFormFields.length === 0 && optionBranches.length === 0) {
+      return;
+    }
+
+    const payload = buildCurrentCustomFieldPayload();
 
     try {
       await ExpenseService.replaceExpenseFormFieldValues(
@@ -1790,7 +1913,7 @@ export default function ExpenseForm() {
 
     const { data: existingAttachments, error } = await supabase
       .from("attachments")
-      .select("file_size")
+      .select("file_size, deleted_at")
       .eq("expense_id", expenseId)
       .eq("organization_id", organizationId);
 
@@ -1798,7 +1921,8 @@ export default function ExpenseForm() {
       throw new Error("Failed to validate total attachment size. Please try again.");
     }
 
-    const totalBytes = (existingAttachments || []).reduce((sum: number, item: any) => {
+    const liveAttachments = (existingAttachments || []).filter((item: any) => !item?.deleted_at);
+    const totalBytes = liveAttachments.reduce((sum: number, item: any) => {
       const size = Number(item?.file_size || 0);
       return sum + (Number.isFinite(size) ? size : 0);
     }, 0);
@@ -1807,14 +1931,17 @@ export default function ExpenseForm() {
       const totalMB = (totalBytes / (1024 * 1024)).toFixed(2);
       throw new Error(`Total attachment size is ${totalMB}MB, which exceeds the 50MB limit. Please remove some files and try again.`);
     }
+    return liveAttachments.length;
   };
 
-  const saveExpense = async () => {
+  const saveExpenseOnce = async () => {
     if (!user) return;
     if (isSavingRef.current) {
       return;
     }
     isSavingRef.current = true;
+    // True once the SERVER has an expense row for this press (so failures can say it was preserved).
+    let draftPreserved = false;
 
     try {
       setLoading(true);
@@ -1939,7 +2066,7 @@ export default function ExpenseForm() {
       // need for another DB round-trip here.
       const currentAttachmentLimit = attachmentRequiredAboveAmount;
       const expenseAmount = validatedExpense.amount;
-      const requiresAttachment = expenseAmount > currentAttachmentLimit;
+      const requiresAttachment = isBillRequired(expenseAmount, currentAttachmentLimit);
 
       if (requiresAttachment) {
         if (user?.id) {
@@ -1959,17 +2086,20 @@ export default function ExpenseForm() {
 
           if (!hasAttachmentsInState && !hasTempUploadsInSession) {
             throw new Error(
-              `Bill photos are required for expenses above ₹${currentAttachmentLimit}. Please upload at least one photo of your receipt or bill.`
+              billRequiredMessage(currentAttachmentLimit)
             );
           }
         } else if (id) {
           const hasAttachmentsInState = attachments && attachments.length > 0;
           if (!hasAttachmentsInState) {
             // Cheap existence check: only current expense_id
+            // Only LIVE attachments count. A bill the employee removed is soft-deleted; counting it
+            // let a Rs 800 expense (threshold Rs 499) be submitted with no bill at all (DOC-150).
             const { data: existingAttachments, error: existingAttachmentsError } = await supabase
               .from("attachments")
               .select("id")
               .eq("expense_id", id)
+              .is("deleted_at", null)
               .limit(1);
 
             if (existingAttachmentsError) {
@@ -1979,7 +2109,7 @@ export default function ExpenseForm() {
             const hasExistingAttachments = (existingAttachments && existingAttachments.length > 0) || false;
             if (!hasExistingAttachments) {
               throw new Error(
-                `Bill photos are required for expenses above ₹${currentAttachmentLimit}. Please upload at least one photo of your receipt or bill.`
+                billRequiredMessage(currentAttachmentLimit)
               );
             }
           }
@@ -2024,6 +2154,8 @@ export default function ExpenseForm() {
 
       if (isEditing && id) {
         updateSubmitProgress(t("progress.saving"), { description: t("progress.savingHint"), currentStep: 1, totalSteps: 3 });
+        // DOC-148: a legacy draft with no logical id gets one once its owner continues it (never inferred).
+        if (expenseStatus === "draft") void ExpenseService.claimClientSubmissionId(id, newClientSubmissionId());
         await ExpenseService.updateExpense(id, user.id, expenseData);
 
         // Attachment processing (move → enforce) and custom field saving are independent
@@ -2033,7 +2165,6 @@ export default function ExpenseForm() {
           (async () => {
             await moveTempFilesToExpense(id, {
               requireAtLeastOne: requiresAttachment,
-              attachmentUrls: attachments,
             });
             await enforceMaxAttachmentSize(id);
           })(),
@@ -2060,28 +2191,75 @@ export default function ExpenseForm() {
         // feature is off for this org (createExpense() skips the RPC
         // entirely in that case) and adds exactly one round-trip when it's
         // on, before any row/attachment/custom-field write happens.
-        const newExpense = await ExpenseService.createExpense(user.id, expenseData as CreateExpenseData, {
-          dateLockingEnabled:
-            organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.expense_date_locking] === true,
-        });
+        // DOC-148 (1/2) PREFLIGHT: ask the server's own required-field validator BEFORE any row
+        // exists. A refusal creates nothing (no orphan draft). Only an explicit answer blocks;
+        // an unreachable preflight falls through to the server's final validation.
+        // Submitter context (org threshold, roles, reporting chain, approval-hierarchy inputs) does not depend on the
+        // expense row: load it NOW, concurrently with preflight / resolve / receipt finalize, so Submit does not
+        // spend 3 sequential round trips on it afterwards. Same queries, same routing; any failure just falls back.
+        const submitContextPromise =
+          organizationId && user ? ExpenseService.loadSubmitContext(organizationId, user.id).catch(() => null) : Promise.resolve(null);
+        if (organizationId) {
+          const pre = await ExpenseService.preflightExpenseSubmission(
+            organizationId,
+            validatedExpense.category,
+            buildCurrentCustomFieldPayload(),
+          );
+          if (!pre.ok) throw new SubmissionPreflightError(pre.issues);
+        }
+
+        // DOC-148 (2/2) SERVER-SIDE IDENTITY: this Submit carries clientSubmissionId, saved with the
+        // browser's recoverable form. The SERVER maps (org, user, id) to exactly one row (unique
+        // index), so a retry -- even after a reload or with ALL browser storage gone -- resolves to
+        // the same expense instead of inserting another. Nothing here depends on sessionStorage.
+        if (!organizationId) throw new Error("Your organization could not be determined. Please reload and try again.");
+        flushExpenseDraftNow(); // save the id with the recoverable form before any write
+        const resolved = await ExpenseService.resolveOrCreateExpense(
+          organizationId,
+          { clientSubmissionId: clientSubmissionIdRef.current },
+          {
+            title: expenseData.title,
+            destination: expenseData.destination,
+            trip_start: expenseData.trip_start,
+            trip_end: expenseData.trip_end,
+            purpose: expenseData.purpose ?? null,
+            category: expenseData.category,
+            total_amount: Number((expenseData as CreateExpenseData).amount || 0),
+          },
+          {
+            dateLockingEnabled:
+              organizationFeatureFlags[ORGANIZATION_FEATURE_KEYS.expense_date_locking] === true,
+          },
+        );
+        draftPreserved = true;
+        const decision = decideAfterResolve(resolved);
+        if (decision === "recycled") {
+          // The row for this logical expense was trashed: never resurrect or duplicate it silently.
+          clientSubmissionIdRef.current = newClientSubmissionId();
+          throw new Error("This expense was moved to the Recycle Bin. Restore it from there, or press Submit again to create a new one.");
+        }
+        const attempt = { how: decision === "already_past_draft" ? "already_past_draft" : resolved.created ? "created" : "reused" };
+        const newExpense = { id: resolved.expenseId };
 
         // Custom field saving and attachment processing are independent — run in parallel.
         updateSubmitProgress(t("progress.savingReceipts"), { description: t("progress.savingReceiptsHint"), currentStep: 3, totalSteps: 4 });
         // enforceMaxAttachmentSize must still run after moveTempFilesToExpense (sequential
         // within the attachment track via the inner async IIFE).
-        const [fieldsResult, attachmentResult] = await Promise.allSettled([
+        // An earlier press already committed this row (the response was lost): do NOT touch its
+        // fields/files again -- go straight to the success path.
+        const settled: PromiseSettledResult<void>[] = attempt.how === "already_past_draft"
+          ? [{ status: "fulfilled", value: undefined }, { status: "fulfilled", value: undefined }]
+          : await Promise.allSettled([
           saveFormFieldValues(newExpense.id),
           (async () => {
             await moveTempFilesToExpense(newExpense.id, {
               requireAtLeastOne: requiresAttachment,
-              attachmentUrls: attachments,
             });
-            await enforceMaxAttachmentSize(newExpense.id);
+            // ONE read: total size AND the number of live bills (it used to be two sequential reads of the same table).
+            const liveCount = await enforceMaxAttachmentSize(newExpense.id);
             if (requiresAttachment) {
-              const hasPersisted = await expenseHasPersistedAttachments(
-                newExpense.id,
-                organizationId,
-              );
+              const hasPersisted =
+                liveCount !== undefined ? liveCount > 0 : await expenseHasPersistedAttachments(newExpense.id, organizationId);
               if (!hasPersisted) {
                 throw new Error(
                   "Bill photos could not be saved to this expense. Please re-upload your receipts and try again.",
@@ -2090,6 +2268,7 @@ export default function ExpenseForm() {
             }
           })(),
         ]);
+        const [fieldsResult, attachmentResult] = settled;
 
         if (attachmentResult.status === "rejected") {
           const attachmentMessage =
@@ -2102,6 +2281,8 @@ export default function ExpenseForm() {
           }
 
           persistSubmittedSafetyCopy(newExpense.id, "draft");
+          // The user is sent to this draft to finish it; it is theirs to resume, not an in-flight attempt.
+          clientSubmissionIdRef.current = newClientSubmissionId();
 
           sessionTempFilenamesRef.current.clear();
           sessionTempUploadMetaRef.current.clear();
@@ -2133,7 +2314,46 @@ export default function ExpenseForm() {
 
         // Both tracks succeeded — submit.
         updateSubmitProgress(t("progress.submitting"), { description: t("progress.submittingHint"), currentStep: 4, totalSteps: 4 });
-        await ExpenseService.submitExpense(newExpense.id, user.id);
+        // A row an earlier attempt already submitted (response was lost) must not be submitted,
+        // logged and notified a second time.
+        // A row THIS press just inserted cannot have been submitted by anyone yet, so its status is known (draft)
+        // without a request. Any reused row is re-read: an earlier attempt may have submitted it.
+        let statusBeforeSubmit: string | undefined;
+        if (attempt.how === "created") {
+          statusBeforeSubmit = "draft";
+        } else {
+          const { data: beforeSubmit } = await supabase
+            .from("expenses")
+            .select("status")
+            .eq("id", newExpense.id)
+            .maybeSingle();
+          statusBeforeSubmit = (beforeSubmit as { status?: string } | null)?.status;
+        }
+        // The status we can already prove without another request: the row's status before this press (already past
+        // draft), or the row ExpenseService.submitExpense just returned (it verifies status from its own UPDATE).
+        let statusAfterSubmit: string | undefined = statusBeforeSubmit;
+        if (shouldRunSubmit(statusBeforeSubmit)) {
+          const serverTimer = startTimer();
+          const submittedRow = await ExpenseService.submitExpense(newExpense.id, user.id, {
+            context: await submitContextPromise,
+          });
+          recordSubmitMetric("submit_server_done", { durationMs: serverTimer() });
+          statusAfterSubmit = (submittedRow as { status?: string } | null | undefined)?.status;
+        }
+        // Never report success unless the row is really past 'draft'. Only when the returned row did not settle
+        // it do we pay one more request to ask the server (saves a sequential round trip on the normal path).
+        if (!isSubmittedStatus(statusAfterSubmit)) {
+          const { data: afterSubmit } = await supabase
+            .from("expenses")
+            .select("status")
+            .eq("id", newExpense.id)
+            .maybeSingle();
+          statusAfterSubmit = (afterSubmit as { status?: string } | null)?.status;
+        }
+        if (!isSubmittedStatus(statusAfterSubmit)) {
+          throw new Error("The expense is still a draft after submitting. Your draft was preserved; please try again.");
+        }
+        clientSubmissionIdRef.current = newClientSubmissionId(); // the next Submit is a NEW logical expense
 
         // Category-usage tracking is non-critical analytics — don't make the user wait on
         // it before the submit completes and we navigate. Runs in the background.
@@ -2142,6 +2362,7 @@ export default function ExpenseForm() {
         persistSubmittedSafetyCopy(newExpense.id, "submitted");
       }
 
+      submitOutcomeRef.current = "success";
       const isResubmission = expenseStatus === "rejected";
       completeSubmitProgress(isEditing ? t("progress.editComplete") : t("progress.complete"));
       sessionTempFilenamesRef.current.clear();
@@ -2168,6 +2389,27 @@ export default function ExpenseForm() {
         state: { refreshExpenses: true, expensesTab: "all" },
       });
     } catch (error: any) {
+      submitOutcomeRef.current = "failure";
+      recordSubmitMetric("submit_failure", {
+        errorClass: submitErrorClass({
+          connection: isConnectionDropError(error),
+          serverSlow: isServerSlowError(error),
+          auth: /jwt|not authenticated|session/i.test(String(error?.message ?? "")),
+          validation: error instanceof z.ZodError || error instanceof SubmissionPreflightError,
+        }),
+        willReconcile: isUnknownOutcomeError(error) && !autoReconcileUsedRef.current,
+      });
+      // Unknown outcome (the request may or may not have reached the server): do NOT report a failure yet. The
+      // wrapper re-checks the SAME logical submission once, automatically, on a fresh connection.
+      if (isUnknownOutcomeError(error) && !autoReconcileUsedRef.current) {
+        autoReconcileUsedRef.current = true;
+        reconcileRequestedRef.current = true;
+        console.warn("[submit] unknown outcome; will re-check the same logical submission once", {
+          connection: isConnectionDropError(error),
+          serverSlow: isServerSlowError(error),
+        });
+        return;
+      }
       failSubmitProgress(
         submitProgress.phase || t("form.toast.error"),
         error?.message || t("form.toast.error"),
@@ -2188,6 +2430,15 @@ export default function ExpenseForm() {
           description: error.errors[0].message,
         });
       } else {
+        const friendly = friendlySubmitFailureMessage(error, { draftPreserved });
+        if (error instanceof SubmissionPreflightError || friendly) {
+          toast({
+            variant: "destructive",
+            title: error instanceof SubmissionPreflightError ? "Required fields are missing" : "Submission failed",
+            description: error instanceof SubmissionPreflightError ? error.message : (friendly as string),
+          });
+          return;
+        }
         // The date-lock trigger's own rejection (PW010 / DETAIL
         // 'EXPENSE_DATE_LOCKED') must never surface as a raw "Database
         // error (PW010): ..." -- recognise it by its stable SQLSTATE first,
@@ -2214,6 +2465,49 @@ export default function ExpenseForm() {
     } finally {
       setLoading(false);
       isSavingRef.current = false;
+    }
+  };
+
+  /**
+   * Submit entry point. Runs the press once; if the outcome of a request was UNKNOWN (dropped connection, gateway
+   * timeout - typically the first request after the camera/file picker on an iOS PWA reuses a dead keep-alive
+   * connection) it waits for the app to be visible, then re-checks the same logical submission once. If the first
+   * request had committed, the re-run lands on the already-submitted row and simply completes; if not, it finishes the
+   * submit. The user never has to press Submit twice.
+   */
+  const saveExpense = async () => {
+    if (reconcilingRef.current || isSavingRef.current) return;
+    autoReconcileUsedRef.current = false;
+    reconcileRequestedRef.current = false;
+    submitOutcomeRef.current = null;
+    const elapsed = startTimer();
+    recordSubmitMetric("submit_start");
+    const result = await submitWithReconcile({
+      runOnce: async () => {
+        await saveExpenseOnce();
+        if (reconcileRequestedRef.current) {
+          reconcileRequestedRef.current = false;
+          return "unknown";
+        }
+        return submitOutcomeRef.current === "success" ? "success" : "failure";
+      },
+      beforeRetry: async () => {
+        reconcilingRef.current = true;
+        setLoading(true);
+        try {
+          updateSubmitProgress("Checking your submission…", {
+            description: "The connection was interrupted. Confirming with the server - please keep this screen open.",
+          });
+          await waitUntilPageVisible(15000);
+          await new Promise((r) => setTimeout(r, 1000));
+          recordSubmitMetric("submit_reconcile", { attempt: 1, durationMs: elapsed() });
+        } finally {
+          reconcilingRef.current = false;
+        }
+      },
+    });
+    if (result.outcome === "success") {
+      recordSubmitMetric("submit_success", { durationMs: elapsed(), attempt: result.attempts });
     }
   };
 
@@ -2699,48 +2993,35 @@ export default function ExpenseForm() {
                       key={`${isEditing && id ? id : "new"}-${fileUploadResetKey}`}
                       expenseId={isEditing && id ? id : "new"}
                       onBeforePickerOpen={flushExpenseDraftNow}
+                      seedAttachments={buildFileUploadSeed()}
+                      onAttachmentRemoved={handleAttachmentRemoved}
                       onUploadComplete={(attachment, blob) => {
                         if (attachment && attachment.file_url) {
-                          const isTempUpload =
-                            typeof attachment.id === "string" && attachment.id.startsWith("temp-");
-                          if (user?.id) {
-                            syncSessionTempFilenamesFromAttachments(
-                              user.id,
-                              [attachment.file_url],
-                              sessionTempFilenamesRef.current,
-                            );
-                            for (const name of parseTempStorageNamesFromUrls(
-                              [attachment.file_url],
-                              user.id,
-                            )) {
-                              sessionTempFilenamesRef.current.add(name);
-                            }
-                          }
-                          if (attachment.storage_path) {
-                            sessionTempFilenamesRef.current.add(attachment.storage_path);
-                            tempStoragePathByUrlRef.current.set(
-                              attachment.file_url,
-                              attachment.storage_path,
-                            );
-                            sessionTempUploadMetaRef.current.set(attachment.storage_path, {
+                          registerUploadedAttachment(
+                            {
+                              tempNames: sessionTempFilenamesRef.current,
+                              meta: sessionTempUploadMetaRef.current,
+                              pathByUrl: tempStoragePathByUrlRef.current,
+                              blobs: sessionBlobCacheRef.current,
+                            },
+                            {
+                              url: attachment.file_url,
+                              storagePath: attachment.storage_path,
                               filename: attachment.filename,
-                              file_size: attachment.file_size ?? 0,
-                              content_type: attachment.content_type || "image/jpeg",
-                            });
-                            if (blob) {
-                              sessionBlobCacheRef.current.set(attachment.storage_path, blob);
-                            }
-                          } else if (isTempUpload && user?.id) {
-                            console.warn("Temp upload missing storage_path; recovered from URL where possible.");
-                          }
-                          setAttachments((prev) => {
-                            const next = [...prev, attachment.file_url];
-                            formStateRef.current = {
-                              ...formStateRef.current,
-                              attachments: next,
-                            };
-                            return next;
-                          });
+                              fileSize: attachment.file_size,
+                              contentType: attachment.content_type,
+                              blob,
+                            },
+                            user?.id,
+                          );
+                          // The canonical list is updated synchronously (like removal), so a
+                          // removal that follows immediately cannot overwrite this upload.
+                          const nextAttachments = [...formStateRef.current.attachments, attachment.file_url];
+                          formStateRef.current = {
+                            ...formStateRef.current,
+                            attachments: nextAttachments,
+                          };
+                          setAttachments(nextAttachments);
                           flushExpenseDraftNow();
                         }
                       }}

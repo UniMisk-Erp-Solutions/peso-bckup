@@ -16,6 +16,8 @@ import { normalizeAppLanguage, type AppLanguage } from "@/i18n/config";
 import {
   getValidatedAuthUser,
   isInvalidRefreshTokenError,
+  isInvalidAuthSessionError,
+  clearLocalAuthStorage,
   recoverFromInvalidAuthSession,
   isSupabaseNetworkError,
 } from "@/lib/authSession";
@@ -62,6 +64,9 @@ function _clearAuthCtxCache(): void {
 
 export { useAuth } from "@/contexts/auth-context";
 export type { AppRole, AuthContextType, Organization, UserProfile } from "@/contexts/auth-context";
+
+/** Single-flight guard for signOut(): rapid repeated clicks share ONE request (DOC-149). */
+let signOutInFlight: Promise<void> | null = null;
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -762,11 +767,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     sessionStorage.removeItem("pesowise:load-all:review");
     sessionStorage.removeItem("pesowise:admin-expenses-page");
     localStorage.removeItem("pesowise-user-activity-leader");
-    try {
-      await supabase.auth.signOut();
-    } catch {
-      await supabase.auth.signOut({ scope: "local" });
+    // DOC-149: sign out THIS device only. The default (global) scope deletes every session of the
+    // user on every device, and Production has users with many concurrent sessions (153 users with
+    // more than one, one with 83) -- one person pressing Sign out killed everyone else's session,
+    // which is exactly the 403 session_not_found / 400 refresh_token_not_found seen in the console.
+    // Single-flight so rapid repeated clicks cannot fire a burst of /logout requests.
+    if (!signOutInFlight) {
+      signOutInFlight = (async () => {
+        try {
+          const { error } = await supabase.auth.signOut({ scope: "local" });
+          if (error && !isInvalidAuthSessionError(error)) console.warn("signOut:", error.message);
+        } catch (err) {
+          console.warn("signOut failed; clearing local auth state:", err);
+        } finally {
+          clearLocalAuthStorage();
+        }
+      })().finally(() => {
+        signOutInFlight = null;
+      });
     }
+    await signOutInFlight;
     setPreferredLanguageState("en");
     void changeAppLanguage("en");
   }, []);

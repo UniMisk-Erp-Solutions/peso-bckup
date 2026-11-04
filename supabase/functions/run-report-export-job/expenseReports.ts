@@ -24,6 +24,36 @@ const DETAILED_PAGE_SIZE = 500;
 export const REPORT_TOO_LARGE_MESSAGE =
   "This report is too large to build in one pass. Narrow the date range or filters and try again.";
 
+/**
+ * What a user sees when a database statement timed out while a large report was
+ * being assembled. The raw Postgres text stays in the worker log, never in the
+ * job row the UI renders.
+ */
+export const REPORT_TIMEOUT_MESSAGE =
+  "Report generation took too long while processing a large data set. Please try again. If it continues, contact support.";
+export const REPORT_GENERIC_FAILURE_MESSAGE =
+  "The report could not be generated. Please try again. If it continues, contact support.";
+
+/**
+ * Map a raw worker error to something safe to store in report_export_jobs
+ * (error_message_safe is rendered verbatim in the UI). Deliberately conservative:
+ * anything that looks like a database error is replaced, not quoted.
+ */
+export function toSafeReportError(raw: string): { code: string; message: string; retryable: boolean } {
+  const m = (raw || "").toLowerCase();
+  if (raw === REPORT_TOO_LARGE_MESSAGE) {
+    return { code: "report_too_large", message: REPORT_TOO_LARGE_MESSAGE, retryable: false };
+  }
+  if (m.includes("statement timeout") || m.includes("canceling statement") || m.includes("57014")) {
+    return { code: "statement_timeout", message: REPORT_TIMEOUT_MESSAGE, retryable: true };
+  }
+  if (/^(timeline )?page \d+:/.test(m) || m.startsWith("plan:") || m.includes("pgrst") || m.includes("violates")
+      || m.includes("relation \"") || m.includes("function public.") || m.includes("syntax error")) {
+    return { code: "database_error", message: REPORT_GENERIC_FAILURE_MESSAGE, retryable: true };
+  }
+  return { code: "worker_error", message: (raw || REPORT_GENERIC_FAILURE_MESSAGE).slice(0, 300), retryable: true };
+}
+
 /** Matches src/lib/format.ts defaultInrFormatter exactly. */
 const INR = new Intl.NumberFormat("en-IN", {
   style: "currency",

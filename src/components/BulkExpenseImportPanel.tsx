@@ -1,6 +1,6 @@
 /**
  * Bulk CSV import for admin-submit-for-employee. See bulkExpenseImportParse.ts
- * for why this is CSV-only. Server (admin_bulk_submit_expenses_v2) is the
+ * for why this is CSV-only. Server (admin_bulk_submit_expenses_v3) is the
  * authoritative validator; this panel's own validation exists only to give
  * fast feedback before a network round trip.
  */

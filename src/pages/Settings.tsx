@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { supabase } from "@/integrations/supabase/client";
+import { useNotificationSettings } from "@/hooks/useNotificationSettings";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useDashboardTheme } from "@/hooks/useDashboardTheme";
@@ -101,13 +102,8 @@ export default function Settings() {
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   
-  // Notification settings
-  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>({
-    popup_enabled: true,
-    sound_enabled: true,
-    desktop_enabled: true, // Enable by default for Windows notifications
-  });
-  const [loadingNotifications, setLoadingNotifications] = useState(true);
+  // Notification settings: ONE shared load per user (src/lib/notificationSettings.ts).
+  const { settings: notificationSettings, loading: loadingNotifications, update: persistNotificationSettings } = useNotificationSettings();
 
   // Location management
   const [locations, setLocations] = useState<{ id: string; name: string }[]>([]);
@@ -149,9 +145,6 @@ export default function Settings() {
       fetchLocations();
       fetchFormBuilderSettings();
       fetchDetailViewFields();
-    }
-    if (user) {
-      loadNotificationSettings();
     }
   }, [userRole, user, organizationId]);
 
@@ -574,68 +567,14 @@ export default function Settings() {
     }
   };
 
-  const loadNotificationSettings = async () => {
-    try {
-      setLoadingNotifications(true);
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("notification_settings")
-        .eq("user_id", user?.id)
-        .maybeSingle();
-
-      if (!error && data?.notification_settings) {
-        setNotificationSettings({
-          popup_enabled: data.notification_settings.popup_enabled ?? true,
-          sound_enabled: data.notification_settings.sound_enabled ?? true,
-          desktop_enabled: data.notification_settings.desktop_enabled ?? false,
-        });
-      } else {
-        const stored = localStorage.getItem(`notification_settings_${user?.id}`);
-        if (stored) {
-          try {
-            setNotificationSettings(JSON.parse(stored));
-          } catch {
-            // use defaults
-          }
-        }
-      }
-    } catch {
-      // 400 etc. (e.g. notification_settings column missing) – use localStorage or defaults
-      const stored = localStorage.getItem(`notification_settings_${user?.id}`);
-      if (stored) {
-        try {
-          setNotificationSettings(JSON.parse(stored));
-        } catch {
-          // use defaults
-        }
-      }
-    } finally {
-      setLoadingNotifications(false);
-    }
-  };
-
   const saveNotificationSettings = async (newSettings: NotificationSettings) => {
     try {
-      setNotificationSettings(newSettings);
-      
-      // Save to localStorage immediately
-      localStorage.setItem(`notification_settings_${user?.id}`, JSON.stringify(newSettings));
-
-      // Try to save to database
-      const { error } = await supabase
-        .from("profiles")
-        .update({
-          notification_settings: newSettings,
-        })
-        .eq("user_id", user?.id);
-
-      if (error) {
-        console.error("Error saving to database, using localStorage only:", error);
-      }
-
+      const { persisted } = await persistNotificationSettings(newSettings);
       toast({
         title: "Settings saved",
-        description: "Your notification preferences have been updated",
+        description: persisted
+          ? "Your notification preferences have been updated"
+          : "Saved on this device. They will sync to your account once the server supports it.",
       });
     } catch (error) {
       console.error("Error saving notification settings:", error);

@@ -62,6 +62,9 @@ import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
 import { expenseRowMatchesSearch } from "@/lib/expenseListSearch";
 import { useOrganizationIdentityMode } from "@/hooks/useOrganizationIdentityMode";
 import { AttachmentPreviewDialog } from "@/components/AttachmentPreviewDialog";
+import { useExpenseAttachments } from "@/hooks/useExpenseAttachments";
+import { useExpensePreview } from "@/hooks/useExpensePreview";
+import { applyExpenseScopeChange, createLatestRequestGuard, responseStillCurrent } from "@/lib/latestRequestGuard";
 import { AttachmentThumbnail } from "@/components/AttachmentThumbnail";
 import { normalizeReceiptPublicUrl } from "@/lib/attachmentPreview";
 import { ExpenseCustomFieldFilters } from "@/components/ExpenseCustomFieldFilters";
@@ -100,6 +103,7 @@ interface User {
 
 interface Attachment {
   id: string;
+  expense_id?: string | null;
   filename: string;
   content_type: string;
   file_url: string;
@@ -169,15 +173,13 @@ export default function AdminPanel() {
   const { isMobile } = useViewportMode();
 
   const [users, setUsers] = useState<User[]>([]);
-  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
-  const [previewContentType, setPreviewContentType] = useState<string | null>(null);
-  const [previewUploadedBy, setPreviewUploadedBy] = useState<string | null>(null);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [expensesLoading, setExpensesLoading] = useState(true);
   const [expensesEnriching, setExpensesEnriching] = useState(false);
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
+  // Preview state is owned by the expense that opened it: switching expense closes it on the same render.
+  const preview = useExpensePreview(selectedExpense?.id ?? null);
   /** Live row from expenses list (includes async custom_fields enrichment). */
   const reviewExpense = useMemo(() => {
     if (!selectedExpense) return null;
@@ -189,7 +191,6 @@ export default function AdminPanel() {
   const [engineers, setEngineers] = useState<User[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [correctionDialogOpen, setCorrectionDialogOpen] = useState(false);
@@ -206,6 +207,9 @@ export default function AdminPanel() {
   const [corrAmount, setCorrAmount] = useState("");
   const [corrAdminComment, setCorrAdminComment] = useState("");
   const [auditLogs, setAuditLogs] = useState<EnrichedAuditLog[]>([]);
+  const [auditStatus, setAuditStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
+  const [correctionStatus, setCorrectionStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
+  const [detailScopeId, setDetailScopeId] = useState<string | null>(null);
   const [timelineAssignees, setTimelineAssignees] = useState<{
     reviewer?: string | null;
     engineer?: string | null;
@@ -309,34 +313,58 @@ export default function AdminPanel() {
     }
   };
 
-  const fetchAttachments = async (expenseId: string) => {
-    try {
-      if (!organizationId) return;
-
-      const { data, error } = await supabase
-        .from("attachments")
-        .select("id, filename, content_type, file_url, created_at")
-        .eq("expense_id", expenseId)
-        .eq("organization_id", organizationId)
-        .order("created_at");
-
-      if (error) throw error;
-
-      const normalized = (data || []).map((a) => ({
-        ...a,
-        file_url: normalizeReceiptPublicUrl(a.file_url || ""),
-      }));
-
-      setAttachments(normalized);
-    } catch (e) {
-      console.error("Error fetching attachments:", e);
-      setAttachments([]);
-    }
+  /** One scoped query for the expense's attachments. Throws on failure; never touches component state. */
+  const loadAttachmentsForExpense = async (expenseId: string): Promise<Attachment[]> => {
+    if (!organizationId) return [];
+    const { data, error } = await supabase
+      .from("attachments")
+      .select("*")
+      .eq("expense_id", expenseId)
+      .eq("organization_id", organizationId)
+      .order("created_at");
+    if (error) throw error;
+    // Soft-deleted rows (DOC-078) are attachments the employee removed.
+    return (data || [])
+      .filter((a) => !(a as { deleted_at?: string | null }).deleted_at)
+      .map((a) => ({ ...a, file_url: normalizeReceiptPublicUrl(a.file_url || "") }));
   };
 
+  // Late responses for a previous expense are ignored, and the previous expense's rows are never rendered.
+  const { attachments, status: attachmentsStatus } = useExpenseAttachments<Attachment>({
+    expenseId: selectedExpense?.id ?? null,
+    load: loadAttachmentsForExpense,
+  });
+
+  // Late responses for a previously selected expense must not overwrite the current expense's timeline.
+  const auditGuardRef = useRef(createLatestRequestGuard());
+  const correctionGuardRef = useRef(createLatestRequestGuard());
+  const detailExpenseIdRef = useRef<string | null>(null);
+
+  // Drop the previous expense's timeline on the same render as the selection change, and kill its
+  // ticket before a response queued as a microtask can write. The fetch itself stays in the effect.
+  const selectedExpenseId = selectedExpense?.id ?? null;
+  const detailScope = applyExpenseScopeChange(detailScopeId, selectedExpenseId, () => {
+    auditGuardRef.current.invalidate();
+    correctionGuardRef.current.invalidate();
+  });
+  if (detailScope.changed) {
+    detailExpenseIdRef.current = selectedExpenseId;
+    setDetailScopeId(selectedExpenseId);
+    setAuditLogs([]);
+    setCorrectionLogs([]);
+    setTimelineAssignees({});
+    setAuditStatus(selectedExpenseId ? "loading" : "idle");
+    setCorrectionStatus(selectedExpenseId ? "loading" : "idle");
+  }
+
   const fetchAuditLogs = async (expenseId: string, expenseRow?: Expense | null) => {
+    const ticket = auditGuardRef.current.begin();
+    const accept = () => responseStillCurrent(ticket, expenseId, detailExpenseIdRef.current);
     try {
-      if (!organizationId) return;
+      if (!organizationId) {
+        if (accept()) setAuditStatus("idle");
+        return;
+      }
 
       const { data: logsData, error: logsError } = await supabase
         .from("audit_logs")
@@ -346,7 +374,9 @@ export default function AdminPanel() {
 
       if (logsError) throw logsError;
 
-      setAuditLogs(await enrichAuditLogsWithDisplay(logsData || []));
+      const enrichedLogs = await enrichAuditLogsWithDisplay(logsData || []);
+      if (!accept()) return;
+      setAuditLogs(enrichedLogs);
 
       const expenseForTimeline = expenseRow ?? selectedExpense;
       const assigneeIds = [
@@ -359,6 +389,7 @@ export default function AdminPanel() {
           .from("profiles")
           .select("user_id, name")
           .in("user_id", assigneeIds);
+        if (!accept()) return;
         const nameById = new Map(
           (assigneeProfiles ?? []).map((p) => [
             p.user_id,
@@ -373,29 +404,37 @@ export default function AdminPanel() {
             ? nameById.get(expenseForTimeline.assigned_engineer_id) ?? null
             : null,
         });
-      } else {
+      } else if (accept()) {
         setTimelineAssignees({});
       }
+      if (accept()) setAuditStatus("loaded");
     } catch (error) {
+      if (!accept()) return;
       console.error("Error fetching audit logs:", error);
       setAuditLogs([]);
       setTimelineAssignees({});
+      setAuditStatus("error");
     }
   };
 
   const fetchCorrectionLogs = async (expenseId: string) => {
     if (!user?.id) return;
+    const ticket = correctionGuardRef.current.begin();
+    const accept = () => responseStillCurrent(ticket, expenseId, detailExpenseIdRef.current);
     try {
       const rows = await ExpenseService.listExpenseCorrectionLogs(expenseId, user.id);
+      if (!accept()) return;
       const editorIds = [...new Set(rows.map((r) => r.edited_by))];
       if (editorIds.length === 0) {
         setCorrectionLogs(rows);
+        setCorrectionStatus("loaded");
         return;
       }
       const { data: editorProfiles } = await supabase
         .from("profiles")
         .select("user_id, name")
         .in("user_id", editorIds);
+      if (!accept()) return;
       const editorNames = new Map(
         (editorProfiles ?? []).map((p) => [
           p.user_id,
@@ -408,8 +447,11 @@ export default function AdminPanel() {
           edited_by: editorNames.get(r.edited_by) ?? r.edited_by,
         })),
       );
+      setCorrectionStatus("loaded");
     } catch {
+      if (!accept()) return;
       setCorrectionLogs([]);
+      setCorrectionStatus("error");
     }
   };
 
@@ -426,6 +468,7 @@ export default function AdminPanel() {
 
   const openCorrectionDialog = async () => {
     if (!selectedExpense) return;
+    const expenseId = selectedExpense.id;
     setCorrTitle(selectedExpense.title);
     setCorrDestination(selectedExpense.destination);
     const dateSrc = selectedExpense.trip_start || selectedExpense.trip_end;
@@ -444,9 +487,11 @@ export default function AdminPanel() {
         selectedExpense.id,
         selectedExpense.category,
       );
+      if (detailExpenseIdRef.current !== expenseId) return;
       setCorrFieldModel(model);
     }
 
+    if (detailExpenseIdRef.current !== expenseId) return;
     setCorrectionDialogOpen(true);
   };
 
@@ -540,16 +585,11 @@ export default function AdminPanel() {
   };
 
   useEffect(() => {
-    if (selectedExpense) {
-      fetchAttachments(selectedExpense.id);
-      fetchAuditLogs(selectedExpense.id);
-      if (user?.id) void fetchCorrectionLogs(selectedExpense.id);
-    } else {
-      setAttachments([]);
-      setAuditLogs([]);
-      setCorrectionLogs([]);
-      setTimelineAssignees({});
-    }
+    // Scope reset already happened during render. This effect only starts the current expense's fetches.
+    if (!selectedExpense) return;
+    void fetchAuditLogs(selectedExpense.id, selectedExpense);
+    if (user?.id) void fetchCorrectionLogs(selectedExpense.id);
+    else setCorrectionStatus("idle");
   }, [selectedExpense]);
 
   const fetchUsers = async () => {
@@ -1036,7 +1076,6 @@ export default function AdminPanel() {
 
       setSelectedExpense(null);
       setAdminComment("");
-      setAttachments([]);
       setDialogOpen(false);
       fetchExpenses();
     } catch (error: any) {
@@ -1753,10 +1792,7 @@ export default function AdminPanel() {
             }}
             organizationId={organizationId}
             onImagePreviewOpen={(url, ct, by) => {
-              setImagePreviewUrl(url);
-              setPreviewContentType(ct);
-              setPreviewUploadedBy(by);
-              setImagePreviewOpen(true);
+              preview.show(url, ct, by);
             }}
             employeeIdLoginEnabled={employeeIdLoginEnabled}
             timelineAssignees={timelineAssignees}
@@ -1930,11 +1966,11 @@ export default function AdminPanel() {
         </Dialog>
 
         <AttachmentPreviewDialog
-          open={imagePreviewOpen}
-          onOpenChange={setImagePreviewOpen}
-          url={imagePreviewUrl}
-          contentType={previewContentType}
-          uploadedBy={previewUploadedBy}
+          open={preview.open}
+          onOpenChange={preview.setOpen}
+          url={preview.url}
+          contentType={preview.contentType}
+          uploadedBy={preview.uploadedBy}
           expenseId={selectedExpense?.id ?? null}
         />
       </>
@@ -2527,6 +2563,7 @@ export default function AdminPanel() {
                 <div ref={reviewDialogContentRef} className="overflow-y-auto flex-1 p-4 sm:p-6 min-h-0">
                   <DialogHeader>
                     <DialogTitle>Review and manage this expense submission</DialogTitle>
+                    <DialogDescription>Check the details, then set a status and leave a comment.</DialogDescription>
                   </DialogHeader>
 
                   {selectedExpense && (
@@ -2637,6 +2674,17 @@ export default function AdminPanel() {
                         </>
                       )}
 
+                      {attachmentsStatus === "loading" && attachments.length === 0 && (
+                        <div className="space-y-2" data-testid="attachments-loading">
+                          <label className="text-sm font-medium">Receipts & Attachments</label>
+                          <p className="text-sm text-muted-foreground">Loading attachments…</p>
+                        </div>
+                      )}
+                      {attachmentsStatus === "error" && (
+                        <p className="text-sm text-destructive" data-testid="attachments-error">
+                          Could not load attachments. Close and reopen this expense to retry.
+                        </p>
+                      )}
                       {attachments.length > 0 && (
                         <div className="space-y-2">
                           <label className="text-sm font-medium">Receipts & Attachments</label>
@@ -2665,10 +2713,7 @@ export default function AdminPanel() {
                                   variant="outline"
                                   size="sm"
                                   onClick={() => {
-                                    setImagePreviewUrl(a.file_url);
-                                    setPreviewContentType(a.content_type);
-                                    setPreviewUploadedBy(selectedExpense?.user_id ?? null);
-                                    setImagePreviewOpen(true);
+                                    preview.show(a.file_url, a.content_type, selectedExpense?.user_id ?? null);
                                   }}
                                 >
                                   View
@@ -2679,7 +2724,17 @@ export default function AdminPanel() {
                         </div>
                       )}
 
-                      {correctionLogs.length > 0 && (
+                      {correctionStatus === "loading" && (
+                        <p className="text-sm text-muted-foreground" data-testid="corrections-loading">
+                          Loading corrections…
+                        </p>
+                      )}
+                      {correctionStatus === "error" && (
+                        <p className="text-sm text-destructive" data-testid="corrections-error">
+                          Could not load reviewer corrections.
+                        </p>
+                      )}
+                      {correctionStatus === "loaded" && correctionLogs.length > 0 && (
                         <div className="space-y-2 border-t pt-4 mt-4">
                           <label className="text-sm font-medium">Reviewer corrections (audit)</label>
                           <ExpenseCorrectionAuditList logs={correctionLogs} maxHeightClassName="max-h-72" />
@@ -2693,6 +2748,15 @@ export default function AdminPanel() {
                               defaultValue: "Review timeline",
                             })}
                           </label>
+                          {auditStatus === "loading" ? (
+                            <p className="text-sm text-muted-foreground" data-testid="audit-loading">
+                              Loading timeline…
+                            </p>
+                          ) : auditStatus === "error" ? (
+                            <p className="text-sm text-destructive" data-testid="audit-error">
+                              Could not load the review timeline.
+                            </p>
+                          ) : (
                           <ExpenseReviewTimeline
                             expense={{
                               status: selectedExpense.status,
@@ -2714,6 +2778,7 @@ export default function AdminPanel() {
                             roleLabels={roleLabels}
                             assigneeNames={timelineAssignees}
                           />
+                          )}
                         </div>
                       ) : null}
                     </div>
@@ -2863,11 +2928,11 @@ export default function AdminPanel() {
           </CardContent>
         </Card>
         <AttachmentPreviewDialog
-          open={imagePreviewOpen}
-          onOpenChange={setImagePreviewOpen}
-          url={imagePreviewUrl}
-          contentType={previewContentType}
-          uploadedBy={previewUploadedBy}
+          open={preview.open}
+          onOpenChange={preview.setOpen}
+          url={preview.url}
+          contentType={preview.contentType}
+          uploadedBy={preview.uploadedBy}
           expenseId={selectedExpense?.id ?? null}
         />
       </div>

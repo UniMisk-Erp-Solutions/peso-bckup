@@ -5,6 +5,8 @@
  * the SQL/worker contract tests).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ServerReportExportPanel } from "../ServerReportExportPanel";
 import * as reportExportJobs from "@/lib/reportExportJobs";
@@ -962,5 +964,10 @@ describe("ServerReportExportPanel", () => {
 
       expect(screen.queryByText(/Page \d+ of \d+/)).not.toBeInTheDocument();
     });
+  });
+
+  it("the PesoWise-Tally sync control is rendered only for Detailed Expense (flag VITE_PWT_SYNC is build-time, so checked in source)", () => {
+    const src = readFileSync(resolve(process.cwd(), "src/components/ServerReportExportPanel.tsx"), "utf8");
+    expect(src).toContain(`enableTallySync && PWT_SYNC_ENABLED && reportType === "detailed_expense"`);
   });
 });

@@ -13,11 +13,19 @@ import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { isStandaloneDisplayMode } from "@/lib/pwa";
-import { compressUploadFile, shouldUseServerFallback } from "@/lib/uploadCompression";
+import {
+  RECEIPT_OPTIMIZE,
+  alreadyPreparedResult,
+  isOptimizableImage,
+  optimizeReceiptImage,
+  uploadBlockedMessage,
+  type OptimizeResult,
+} from "@/lib/receiptImageOptimizer";
+import { recordSubmitMetric, startTimer } from "@/lib/submitTelemetry";
 import { isAllowedUploadMime, resolveUploadMimeType } from "@/lib/uploadMimeType";
 import { useTranslation } from "react-i18next";
 
-interface Attachment {
+export interface FileUploadAttachment {
   id: string;
   filename: string;
   content_type: string;
@@ -27,6 +35,8 @@ interface Attachment {
   /** Object name under `temp/{userId}/` or `{expenseId}/` in the receipts bucket */
   storage_path?: string;
 }
+
+type Attachment = FileUploadAttachment;
 
 type ReceiptUploadState = "queued" | "uploading" | "uploaded" | "failed";
 
@@ -45,6 +55,15 @@ interface FileUploadProps {
   onBeforePickerOpen?: () => void;
   onUploadComplete?: (attachment: Attachment, blob?: Blob) => void;
   onUploadError?: (error: string) => void;
+  /**
+   * Called once the employee has removed an attachment from the list (after any
+   * persisted row was unlinked). Parents that keep their own copy of the
+   * uploads MUST drop it here: the list shown by this component is the
+   * attachment set the employee believes they are submitting.
+   */
+  onAttachmentRemoved?: (attachment: Attachment) => void;
+  /** Attachments already present when the component mounts (restored draft). Read once. */
+  seedAttachments?: Attachment[];
   className?: string;
   required?: boolean;
   /** Force mobile UX: camera/file buttons full-width with 44px tap targets. */
@@ -57,6 +76,8 @@ export function FileUpload({
   onBeforePickerOpen,
   onUploadComplete,
   onUploadError,
+  onAttachmentRemoved,
+  seedAttachments,
   className,
   required = false,
   variant,
@@ -64,12 +85,19 @@ export function FileUpload({
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState<string>("");
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>(() => seedAttachments ?? []);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [previewContentType, setPreviewContentType] = useState<string | null>(null);
   const [previewFilename, setPreviewFilename] = useState<string | undefined>(undefined);
-  const totalSizeRef = useRef(0);
+  const totalSizeRef = useRef((seedAttachments ?? []).reduce((sum, att) => sum + (att.file_size || 0), 0));
+  /** Uploads accepted by the picker that have not finished yet (queued or in flight). */
+  const [pendingUploads, setPendingUploads] = useState<{ id: string; filename: string }[]>([]);
+  /** Stable ids of pending uploads the employee cancelled; their completion must be ignored. */
+  const cancelledUploadsRef = useRef<Set<string>>(new Set());
+  /** Attachment ids already removed, so a double click cannot remove (or report) twice. */
+  const removedAttachmentIdsRef = useRef<Set<string>>(new Set());
+  const mountedRef = useRef(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
@@ -85,6 +113,13 @@ export function FileUpload({
 
   const getTotalSize = (list: Attachment[]) =>
     list.reduce((sum, att) => sum + (att.file_size || 0), 0);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Load existing attachments when expenseId is provided (not "new")
   useEffect(() => {
@@ -103,9 +138,12 @@ export function FileUpload({
             return;
           }
 
-          if (data && data.length > 0) {
+          // Soft-deleted rows (DOC-078) are removed attachments: never show them again.
+          const activeRows = (data ?? []).filter((att) => !(att as { deleted_at?: string | null }).deleted_at);
+
+          if (activeRows.length > 0) {
             // Map data to include file_size (default to 0 if not available)
-            const attachmentsWithSize = data.map((att) => ({
+            const attachmentsWithSize = activeRows.map((att) => ({
               ...att,
               file_size: att.file_size || 0
             }));
@@ -141,11 +179,47 @@ export function FileUpload({
     }
   };
 
+  const newUploadId = () => `upload-${Date.now()}-${Math.random().toString(36).substring(2)}`;
+
   const processFiles = async (files: FileList | File[]) => {
-    for (const file of Array.from(files)) {
-      if (!file.size) continue;
-      await uploadFile(file);
+    const batch = Array.from(files)
+      .filter((file) => file.size)
+      .map((file) => ({ id: newUploadId(), file }));
+    if (batch.length === 0) return;
+    setPendingUploads((prev) => [
+      ...prev,
+      ...batch.map((b) => ({ id: b.id, filename: b.file.name || "receipt" })),
+    ]);
+    // Bounded pipeline: while photo N uploads, photo N+1 is being prepared (compressed). The optimizer itself runs one
+    // image at a time, so at most two photos are in memory (one decoding, one being sent).
+    const preparing = new Map<string, Promise<OptimizeResult>>();
+    const startPrepare = (item?: { id: string; file: File }) => {
+      if (!item || preparing.has(item.id) || cancelledUploadsRef.current.has(item.id)) return;
+      const f = item.file;
+      const needsWork =
+        isOptimizableImage(f) && (f.size > RECEIPT_OPTIMIZE.skipBelowBytes || /heic|heif/i.test(`${f.type}${f.name}`));
+      preparing.set(item.id, needsWork ? optimizeReceiptImage(f) : Promise.resolve(alreadyPreparedResult(f)));
+    };
+    for (let i = 0; i < batch.length; i++) {
+      const { id, file } = batch[i];
+      if (!mountedRef.current) return;
+      if (cancelledUploadsRef.current.has(id)) {
+        // Removed while still queued: it was never uploaded and never will be.
+        cancelledUploadsRef.current.delete(id);
+        preparing.delete(id);
+        continue;
+      }
+      startPrepare(batch[i]);
+      startPrepare(batch[i + 1]);
+      await uploadFile(file, id, preparing.get(id));
+      preparing.delete(id);
     }
+  };
+
+  /** Remove a not-yet-finished upload from the list. Its completion is ignored. */
+  const cancelPendingUpload = (uploadId: string) => {
+    cancelledUploadsRef.current.add(uploadId);
+    setPendingUploads((prev) => prev.filter((p) => p.id !== uploadId));
   };
 
   const handleDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
@@ -209,8 +283,24 @@ export function FileUpload({
 
   // PDF compression removed as requested
 
-  const uploadFile = async (file: File) => {
+  const uploadFile = async (file: File, uploadId: string = newUploadId(), prepared?: Promise<OptimizeResult>) => {
+    const isCancelled = () => !mountedRef.current || cancelledUploadsRef.current.has(uploadId);
+    const uploadElapsed = startTimer();
+    let failedRetryFile: File = file; // after optimization a retry re-uses the OPTIMIZED file (never compressed twice)
+    // Never spin silently: after 20 s say so, and keep the screen open (a backgrounded PWA can pause the transfer).
+    const slowTimer = setTimeout(() => {
+      if (mountedRef.current && !cancelledUploadsRef.current.has(uploadId)) {
+        setUploadStatus(t("uploadFile.slow", { defaultValue: "Upload is taking longer than expected. Please keep this screen open." }));
+        recordSubmitMetric("upload_done", { slow: true, durationMs: uploadElapsed(), sizeKb: file.size / 1024 });
+      }
+    }, 20000);
     try {
+      recordSubmitMetric("upload_start", { sizeKb: file.size / 1024 });
+      setPendingUploads((prev) =>
+        prev.some((p) => p.id === uploadId)
+          ? prev
+          : [...prev, { id: uploadId, filename: file.name || "receipt" }],
+      );
       setUploading(true);
       setUploadProgress(0);
       setUploadStatus(t("uploadFile.preparing"));
@@ -236,9 +326,36 @@ export function FileUpload({
         }
       }
 
+      // ONE optimization pass, on the device, before any byte is sent. Large phone photos are accepted and
+      // shrunk (never rejected); PDFs and small images pass through untouched. Compression happens here and
+      // nowhere else: Submit reuses this exact File and never decodes or compresses it again.
+      const willOptimize =
+        isOptimizableImage(file) && (file.size > RECEIPT_OPTIMIZE.skipBelowBytes || /heic|heif/i.test(`${file.type}${file.name}`));
+      setUploadProgress(5);
+      setUploadStatus(
+        willOptimize
+          ? t("uploadFile.compressing", { defaultValue: "Compressing photo…" })
+          : t("uploadFile.preparing", { defaultValue: "Preparing photo…" }),
+      );
+      const prepTimer = startTimer();
+      const prep = await (prepared ?? (willOptimize ? optimizeReceiptImage(file) : Promise.resolve(alreadyPreparedResult(file))));
+      if (isCancelled()) return;
+      const uploadSource = prep.file;
+      failedRetryFile = uploadSource;
+      recordSubmitMetric("compression_done", {
+        compressionMs: prep.ms,
+        prepareMs: prepTimer(),
+        originalBytes: prep.originalBytes,
+        optimizedBytes: prep.outputBytes,
+        slow: prep.reason === "timeout",
+      });
+      // Storage refuses objects over 10 MiB. Say exactly why, in plain words (never a generic "photo too large").
+      const blocked = uploadBlockedMessage(prep);
+      if (blocked) throw new Error(blocked);
+
       const uploadFileName =
-        file.name && file.name !== "image" && file.name.includes(".")
-          ? file.name
+        uploadSource.name && uploadSource.name !== "image" && uploadSource.name.includes(".")
+          ? uploadSource.name
           : resolvedMime === "application/pdf"
             ? `receipt-${Date.now()}.pdf`
             : `receipt-${Date.now()}.jpg`;
@@ -257,24 +374,29 @@ export function FileUpload({
       const bucketName = 'receipts';
 
       // Size check
-      if (currentTotalSize + file.size > MAX_TOTAL_SIZE) {
+      if (currentTotalSize + uploadSource.size > MAX_TOTAL_SIZE) {
         const maxMB = (MAX_TOTAL_SIZE / (1024 * 1024)).toFixed(0);
-        throw new Error(`File too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Max total is ${maxMB} MB.`);
+        throw new Error(`Bills attached to this expense are too large in total (limit ${maxMB} MB). Remove one and try again.`);
       }
 
       setUploadProgress(30);
 
       const uploadResult = await supabase.storage
         .from('receipts')
-        .upload(uploadPath, file, { cacheControl: '3600', upsert: true });
+        .upload(uploadPath, uploadSource, { cacheControl: '3600', upsert: true });
 
       if (uploadResult.error) {
         throw new Error(`Failed to upload file: ${uploadResult.error.message}`);
       }
 
       setUploadProgress(70);
+      recordSubmitMetric("upload_done", { uploadMs: uploadElapsed(), optimizedBytes: uploadSource.size });
 
-      const fileToUpload = file;
+      // Removed (or the form was reset) while the bytes were in flight: the object
+      // stays in temp storage as an orphan, but it is never linked or reported.
+      if (isCancelled()) return;
+
+      const fileToUpload = uploadSource;
       const publicUrl = supabase.storage.from(bucketName).getPublicUrl(uploadPath).data.publicUrl;
 
       setUploadProgress(85);
@@ -293,7 +415,7 @@ export function FileUpload({
             organization_id: organizationId,
             line_item_id: lineItemId,
             file_url: publicUrl,
-            filename: file.name,
+            filename: uploadSource.name,
             content_type: fileToUpload.type,
             uploaded_by: user?.id,
             file_size: fileToUpload.size,
@@ -309,6 +431,18 @@ export function FileUpload({
         attachmentData = data
           ? { ...data, storage_path: fileName }
           : data;
+
+        if (isCancelled()) {
+          // Removed while the row was being written: unlink it straight away.
+          if (data?.id) {
+            await removeAttachmentSafely(supabase, {
+              attachmentId: data.id,
+              reason: "removed_while_uploading",
+              source: "file_upload_component",
+            }).catch((e) => console.error("Could not unlink cancelled upload:", e));
+          }
+          return;
+        }
       }
 
       setUploadProgress(100);
@@ -316,7 +450,7 @@ export function FileUpload({
       // Create a temporary attachment object for new expenses
       const tempAttachment = {
         id: `temp-${Date.now()}-${fileName}`,
-        filename: file.name,
+        filename: uploadSource.name,
         content_type: fileToUpload.type,
         file_url: publicUrl,
         created_at: new Date().toISOString(),
@@ -331,8 +465,8 @@ export function FileUpload({
         title: t("uploadFile.success"),
         description:
           fileToUpload.size < file.size
-            ? `${file.name} compressed ${formatFileSize(file.size)} -> ${formatFileSize(fileToUpload.size)}`
-            : `${file.name} uploaded (${formatFileSize(fileToUpload.size)})`,
+            ? `${uploadSource.name} optimized ${formatFileSize(file.size)} -> ${formatFileSize(fileToUpload.size)}`
+            : `${uploadSource.name} uploaded (${formatFileSize(fileToUpload.size)})`,
       });
 
       if (onUploadComplete) {
@@ -340,12 +474,13 @@ export function FileUpload({
       }
     } catch (error: any) {
       console.error("Upload error:", error);
+      if (isCancelled()) return;
       const errorMessage = error.message || t("uploadFile.uploadFailedHint");
 
       const failedId = `failed-${Date.now()}-${Math.random().toString(36).substring(2)}`;
       setFailedUploads((prev) => [
         ...prev,
-        { id: failedId, file, filename: file.name || "receipt", errorMessage, state: "failed" as ReceiptUploadState },
+        { id: failedId, file: failedRetryFile, filename: failedRetryFile.name || "receipt", errorMessage, state: "failed" as ReceiptUploadState },
       ]);
 
       toast({
@@ -356,6 +491,11 @@ export function FileUpload({
 
       onUploadError?.(errorMessage);
     } finally {
+      clearTimeout(slowTimer);
+      cancelledUploadsRef.current.delete(uploadId);
+      if (mountedRef.current) {
+        setPendingUploads((prev) => prev.filter((p) => p.id !== uploadId));
+      }
       setUploading(false);
       setUploadProgress(0);
       setUploadStatus("");
@@ -367,13 +507,16 @@ export function FileUpload({
 
   const retryUpload = async (failedUpload: FailedUpload) => {
     setFailedUploads((prev) => prev.filter((f) => f.id !== failedUpload.id));
-    await uploadFile(failedUpload.file);
+    // The stored file is already the optimized one: pass it through, never compress it a second time.
+    await uploadFile(failedUpload.file, undefined, Promise.resolve(alreadyPreparedResult(failedUpload.file)));
   };
 
   const deleteAttachment = async (attachmentId: string) => {
     try {
       const attachment = attachments.find(a => a.id === attachmentId);
       if (!attachment) return;
+      if (removedAttachmentIdsRef.current.has(attachmentId)) return;
+      removedAttachmentIdsRef.current.add(attachmentId);
 
       // Extract file path from URL
       // Handle both public URLs and paths
@@ -412,12 +555,15 @@ export function FileUpload({
       // Remove from local state
       setAttachments(prev => prev.filter(a => a.id !== attachmentId));
       totalSizeRef.current = Math.max(0, totalSizeRef.current - (attachment.file_size || 0));
+      // Tell the parent, so its copy of the uploads cannot outlive this list.
+      onAttachmentRemoved?.(attachment);
 
       toast({
         title: t("uploadFile.deleted"),
         description: t("uploadFile.deletedHint", { name: attachment.filename }),
       });
     } catch (error: any) {
+      removedAttachmentIdsRef.current.delete(attachmentId);
       console.error("❌ Delete error:", error);
       toast({
         variant: "destructive",
@@ -592,7 +738,7 @@ export function FileUpload({
           )}
 
           {/* Attachments List */}
-          {attachments.length > 0 && (
+          {(attachments.length > 0 || pendingUploads.length > 0) && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <h4 className="font-medium">{t("uploadFile.uploadedFiles")}</h4>
@@ -604,6 +750,27 @@ export function FileUpload({
                 </p>
               </div>
               <div className="space-y-2">
+                {pendingUploads.map((pending) => (
+                  <div
+                    key={pending.id}
+                    data-testid="pending-upload-item"
+                    className={cn("flex items-center justify-between p-3 border border-dashed rounded-lg", forceMobileLayout && "min-w-0 w-full max-w-full")}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-sm truncate" title={pending.filename}>{pending.filename}</p>
+                      <p className="text-xs text-muted-foreground">{t("uploadFile.uploading")}</p>
+                    </div>
+                    <Button
+                      data-testid="cancel-pending-upload"
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Remove"
+                      onClick={() => cancelPendingUpload(pending.id)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
                 {attachments.filter(attachment => attachment).map((attachment) => (
                   <div
                     key={attachment.id || attachment.file_url}
@@ -642,8 +809,10 @@ export function FileUpload({
                         <Eye className="h-4 w-4" />
                       </Button>
                       <Button
+                        data-testid="remove-attachment"
                         variant="ghost"
                         size="sm"
+                        aria-label="Remove"
                         onClick={() => deleteAttachment(attachment.id)}
                       >
                         <X className="h-4 w-4" />

@@ -41,15 +41,20 @@ import { UserHierarchySubordinates } from "@/components/UserHierarchySubordinate
 import { useOrganizationRoleLabels } from "@/hooks/useOrganizationRoleLabels";
 import { invokeAdminEdgeFunction } from "@/lib/invokeAdminEdgeFunction";
 import { runBulkUsersImportInChunks } from "@/lib/bulkUsersImportClient";
-import { fetchUserManagementList, type UserManagementListRow } from "@/lib/orgUsers";
+import { fetchUserManagementList, matchesUserStatus, type UserManagementListRow } from "@/lib/orgUsers";
 import { fetchProfilesByUserIds } from "@/lib/supabaseInQuery";
 import { formatApiError } from "@/lib/formatApiError";
-import { useOrgMembershipRoles } from "@/hooks/useOrgMembershipRoles";
 import { useViewportMode } from "@/hooks/useViewportMode";
 import { useOperationProgress } from "@/hooks/useOperationProgress";
 import { AsyncOperationProgress } from "@/components/AsyncOperationProgress";
 import { useOrganizationIdentityMode } from "@/hooks/useOrganizationIdentityMode";
 import { ListPagination } from "@/components/ListPagination";
+import { History as HistoryIcon } from "lucide-react";
+import { UserAuditHistoryDialog } from "@/components/UserAuditHistoryDialog";
+import {
+  confirmIdentityChange, fetchIdentityHistorySummary, identityChangeNeedsWarning, IDENTITY_WARNING_TEXT,
+  type IdentityHistorySummary,
+} from "@/lib/userAccountAudit";
 import { paginateItems, clampPage } from "@/lib/listPagination";
 
 const ORG_ROLES = [
@@ -107,7 +112,6 @@ export default function UserManagement() {
   const { roleLabels } = useOrganizationRoleLabels();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { data: cachedRolesById } = useOrgMembershipRoles(organizationId);
   const { isMobile } = useViewportMode();
   const { policy: identityPolicy, getSearchPlaceholderKey } = useOrganizationIdentityMode();
   const teamLeaderLabel = getRoleLabel("team_leader", roleLabels);
@@ -208,6 +212,20 @@ export default function UserManagement() {
   const [searchTerm, setSearchTerm] = useState("");
   const [teamFilter, setTeamFilter] = useState<string>("all");
   const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false);
+  // DOC-158: per-user Audit History dialog and the "name + email on an account with history" confirmation.
+  const [auditUser, setAuditUser] = useState<{ user_id: string; name: string } | null>(null);
+  const [identityPrompt, setIdentityPrompt] = useState<{ summary: IdentityHistorySummary | null } | null>(null);
+  const identityPromptResolver = useRef<((ok: boolean) => void) | null>(null);
+  const askIdentityConfirmation = (summary: IdentityHistorySummary | null) =>
+    new Promise<boolean>((resolve) => {
+      identityPromptResolver.current = resolve;
+      setIdentityPrompt({ summary });
+    });
+  const settleIdentityPrompt = (ok: boolean) => {
+    identityPromptResolver.current?.(ok);
+    identityPromptResolver.current = null;
+    setIdentityPrompt(null);
+  };
   const [adminPassword, setAdminPassword] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [showAdminPassword, setShowAdminPassword] = useState(false);
@@ -256,11 +274,15 @@ export default function UserManagement() {
   const [orgSeatSummaryLoading, setOrgSeatSummaryLoading] = useState(false);
   const [userStatusFilter, setUserStatusFilter] = useState<"all" | "active" | "deactivated">("active");
 
+  const statusCounts = useMemo(() => {
+    const active = users.filter((u) => u.is_active).length;
+    return { active, deactivated: users.length - active, all: users.length };
+  }, [users]);
+
   const filteredUsers = useMemo(
     () =>
       users.filter(u => {
-        if (userStatusFilter === "active" && !u.is_active) return false;
-        if (userStatusFilter === "deactivated" && u.is_active) return false;
+        if (!matchesUserStatus(u, userStatusFilter)) return false;
         if (teamFilter !== "all") {
           if (teamFilter === "none") { if (u.team_id) return false; }
           else if (u.team_id !== teamFilter) return false;
@@ -437,7 +459,7 @@ export default function UserManagement() {
           return;
         }
         setListLoading(true);
-        const combined = await fetchUserManagementList(organizationId, cachedRolesById);
+        const combined = await fetchUserManagementList(organizationId);
         setUsers(combined);
       } catch (e) {
         console.error("Error loading users list:", e);
@@ -1170,6 +1192,34 @@ export default function UserManagement() {
         throw new Error("Email is required");
       }
 
+      // DOC-158: changing BOTH the name and the login email of an account that already has history may hand one person's
+      // history to another. Warn, require an explicit confirmation, and record that confirmation in the audit trail. A genuine
+      // correction is never blocked; if the summary cannot be loaded the warning is still shown (without counts).
+      if (
+        emailChanged &&
+        organizationId &&
+        identityChangeNeedsWarning({
+          oldName: String(userToEdit.name || ""),
+          newName: String(editFormData.name || ""),
+          oldEmail: previousEmail,
+          newEmail: normalizedEmail,
+        })
+      ) {
+        const historySummary = await fetchIdentityHistorySummary(organizationId, userToEdit.user_id);
+        if (!historySummary || historySummary.has_history) {
+          const confirmed = await askIdentityConfirmation(historySummary);
+          if (!confirmed) return;
+          if (historySummary) {
+            await confirmIdentityChange({
+              organizationId,
+              userId: userToEdit.user_id,
+              newName: String(editFormData.name || "").trim(),
+              newEmail: normalizedEmail,
+            });
+          }
+        }
+      }
+
       if (emailChanged) {
         let emailUpdateResult: { success?: boolean; error?: string };
         try {
@@ -1470,7 +1520,7 @@ export default function UserManagement() {
       if (organizationId) {
         setListLoading(true);
         try {
-          setUsers(await fetchUserManagementList(organizationId, cachedRolesById));
+          setUsers(await fetchUserManagementList(organizationId));
         } catch (e) {
           console.error("Error loading users list:", e);
         } finally {
@@ -1641,7 +1691,7 @@ export default function UserManagement() {
       if (organizationId) {
         setListLoading(true);
         try {
-          setUsers(await fetchUserManagementList(organizationId, cachedRolesById));
+          setUsers(await fetchUserManagementList(organizationId));
         } catch (e) {
           console.error("Error loading users list:", e);
         } finally {
@@ -1677,7 +1727,7 @@ export default function UserManagement() {
       void queryClient.invalidateQueries({ queryKey: ["org-membership-roles", organizationId] });
       setListLoading(true);
       try {
-        setUsers(await fetchUserManagementList(organizationId, cachedRolesById));
+        setUsers(await fetchUserManagementList(organizationId));
       } finally {
         setListLoading(false);
       }
@@ -1764,6 +1814,18 @@ export default function UserManagement() {
                 <CardDescription className="text-xs sm:text-sm">{t("admin:users.allUsersDescription")}</CardDescription>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
+                {userRole === "admin" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigate("/admin/user-audit")}
+                    className="text-xs sm:text-sm"
+                  >
+                    <HistoryIcon className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                    <span className="hidden sm:inline">User Audit</span>
+                    <span className="sm:hidden">Audit</span>
+                  </Button>
+                )}
                 {userRole === "admin" && activityInsightsEnabled && (
                   <Button
                     variant="outline"
@@ -1851,7 +1913,7 @@ export default function UserManagement() {
                   onClick={() => setUserStatusFilter(status)}
                   className="text-xs sm:text-sm capitalize"
                 >
-                  {status === "active" ? "Active" : status === "deactivated" ? "Deactivated" : "All"}
+                  {status === "active" ? "Active" : status === "deactivated" ? "Deactivated" : "All"} ({statusCounts[status]})
                 </Button>
               ))}
             </div>
@@ -2003,6 +2065,16 @@ export default function UserManagement() {
                             </Button>
                               <Button variant="outline" size="sm" onClick={() => openEditDialog(u)} className="px-2 sm:px-3">
                                 <Edit className="h-3 w-3 sm:h-4 sm:w-4" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setAuditUser({ user_id: u.user_id, name: u.name })}
+                                className="px-2 sm:px-3"
+                                title="Audit history"
+                                aria-label={`Audit history for ${u.name}`}
+                              >
+                                <HistoryIcon className="h-3 w-3 sm:h-4 sm:w-4" />
                               </Button>
                               {u.is_active ? (
                                 <Button variant="destructive" size="sm" onClick={() => openDeleteDialog(u)} className="px-2 sm:px-3" title="Deactivate user">
@@ -3566,6 +3638,47 @@ export default function UserManagement() {
             >
               {deleting ? "Deactivating..." : "Deactivate User"}
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <UserAuditHistoryDialog
+        open={auditUser !== null}
+        onOpenChange={(o) => { if (!o) setAuditUser(null); }}
+        organizationId={organizationId ?? null}
+        userId={auditUser?.user_id ?? null}
+        userName={auditUser?.name}
+      />
+
+      <AlertDialog open={identityPrompt !== null} onOpenChange={(o) => { if (!o) settleIdentityPrompt(false); }}>
+        <AlertDialogContent data-testid="identity-reassignment-warning">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Change name and login email together?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>{IDENTITY_WARNING_TEXT}</p>
+                {identityPrompt?.summary && (
+                  <ul className="list-disc pl-5">
+                    <li>Historical expenses: {identityPrompt.summary.expense_count}</li>
+                    <li>
+                      Account created:{" "}
+                      {identityPrompt.summary.account_created_at ? new Date(identityPrompt.summary.account_created_at).toLocaleDateString() : "unknown"}
+                    </li>
+                    {identityPrompt.summary.audit_log_count + identityPrompt.summary.balance_ledger_count + identityPrompt.summary.batch_count > 0 && (
+                      <li>
+                        Other records: {identityPrompt.summary.audit_log_count} review entries, {identityPrompt.summary.balance_ledger_count} balance entries,{" "}
+                        {identityPrompt.summary.batch_count} batches
+                      </li>
+                    )}
+                  </ul>
+                )}
+                <p>All existing records stay with this account. Your confirmation is recorded in the audit history.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => settleIdentityPrompt(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => settleIdentityPrompt(true)}>I understand, save changes</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

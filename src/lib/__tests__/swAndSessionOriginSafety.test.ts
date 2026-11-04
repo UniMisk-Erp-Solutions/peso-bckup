@@ -69,7 +69,7 @@ describe("service worker — origin safety", () => {
   });
 
   it("bumps the cache version and deletes only PesoWise caches", () => {
-    expect(swRaw).toContain('const CACHE_VERSION = "pesowise-v13"');
+    expect(swRaw).toContain('const CACHE_VERSION = "pesowise-v14"');
     expect(sw).toContain("k.startsWith(CACHE_NAME_PREFIX) && k !== CACHE_VERSION");
   });
 

@@ -37,6 +37,12 @@ import { addFunds, adjustBalance, validateImportBatchV2, applyImportBatchV2 } fr
 import { createImportBatch, insertImportRows, type StagedImportRow } from "@/services/BalanceImportService";
 import { ImportBalancesDialog } from "@/components/balances/ImportBalancesDialog";
 import { ImportHistoryDialog } from "@/components/balances/ImportHistoryDialog";
+import { SyncFromTallyDialog } from "@/components/balances/SyncFromTallyDialog";
+import { TallyHistoryDialog } from "@/components/balances/TallyHistoryDialog";
+import { BalanceCreditHistory } from "@/components/balances/BalanceCreditHistory";
+
+/** Employee payments entered in TallyPrime -> balances. Shown only when the Tally integration is enabled (VITE_PWT_SYNC=1). */
+const TALLY_SYNC_ENABLED = import.meta.env.VITE_PWT_SYNC === "1";
 
 interface ProfileRow {
   user_id: string;
@@ -143,6 +149,8 @@ export default function Balances() {
   // component/parser/services, never two separate implementations.
   const [importDialogInitialSource, setImportDialogInitialSource] = useState<"template" | "tally">("template");
   const [importHistoryDialogOpen, setImportHistoryDialogOpen] = useState(false);
+  const [tallyHistoryOpen, setTallyHistoryOpen] = useState(false);
+  const [syncFromTallyOpen, setSyncFromTallyOpen] = useState(false);
 
   const {
     progress: loadProgress,
@@ -1207,6 +1215,7 @@ export default function Balances() {
       </div>
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "balances" | "history" | "offers")} className="w-full">
+        <div className="flex flex-wrap items-center gap-3">
         <TabsList className={`grid w-full max-w-lg ${transferAcceptanceEnabled ? "grid-cols-3" : "grid-cols-2"}`}>
           <TabsTrigger value="balances">{t("balances:balancesTab")}</TabsTrigger>
           {transferAcceptanceEnabled ? (
@@ -1217,6 +1226,16 @@ export default function Balances() {
             {t("balances:history")}
           </TabsTrigger>
         </TabsList>
+        {userRole === 'admin' && TALLY_SYNC_ENABLED && (
+          <Button
+            className="bg-emerald-600 text-white hover:bg-emerald-700"
+            onClick={() => setSyncFromTallyOpen(true)}
+            data-testid="sync-from-tally-button"
+          >
+            Sync from Tally
+          </Button>
+        )}
+        </div>
 
         <TabsContent value="balances" className="space-y-6">
           <Card>
@@ -1266,6 +1285,15 @@ export default function Balances() {
                       }}
                     >
                       Import from Tally
+                    </Button>
+                  )}
+                  {userRole === 'admin' && TALLY_SYNC_ENABLED && (
+                    <Button
+                      variant="outline"
+                      onClick={() => setTallyHistoryOpen(true)}
+                      data-testid="tally-history-button"
+                    >
+                      Tally History
                     </Button>
                   )}
                   {userRole === 'admin' && (
@@ -2108,6 +2136,21 @@ export default function Balances() {
               initialSource={importDialogInitialSource}
             />
           )}
+          {userRole === 'admin' && organizationId && TALLY_SYNC_ENABLED && (
+            <SyncFromTallyDialog
+              open={syncFromTallyOpen}
+              onOpenChange={setSyncFromTallyOpen}
+              organizationId={organizationId}
+              onSynced={fetchProfiles}
+            />
+          )}
+          {userRole === 'admin' && organizationId && TALLY_SYNC_ENABLED && (
+            <TallyHistoryDialog
+              open={tallyHistoryOpen}
+              onOpenChange={setTallyHistoryOpen}
+              organizationId={organizationId}
+            />
+          )}
           {userRole === 'admin' && organizationId && (
             <ImportHistoryDialog
               open={importHistoryDialogOpen}
@@ -2386,6 +2429,10 @@ export default function Balances() {
               )}
             </CardContent>
           </Card>
+
+          {userRole === "admin" && organizationId ? (
+            <BalanceCreditHistory organizationId={organizationId} refreshKey={Number(syncFromTallyOpen)} />
+          ) : null}
 
           {/* Edit transfer date (backdate) modal - admin only */}
           <Dialog open={editTransferModalOpen} onOpenChange={(open) => { if (!open) { setEditTransferModalOpen(false); setEditTransferRow(null); setEditTransferNewDate(""); } }}>

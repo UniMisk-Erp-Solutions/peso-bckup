@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { failureReason, newRequestId, recordAuditEvent, registerAuditContext } from "../_shared/accountAudit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -70,7 +71,9 @@ Deno.serve(async (req) => {
       );
     }
 
+    // The actor is the authenticated caller, never a body field (DOC-158). The password is never logged or audited.
     const callerId = authUserData.user.id;
+    const requestId = newRequestId(req);
 
     // Ensure caller is an active admin in at least one org.
     const { data: adminMemberships, error: adminCheckError } = await serviceClient
@@ -103,8 +106,18 @@ Deno.serve(async (req) => {
       );
     }
 
-    const sameOrg = targetMemberships.some((m: { organization_id: string }) => adminOrgIds.has(m.organization_id));
+    const sharedMembership = targetMemberships.find((m: { organization_id: string }) => adminOrgIds.has(m.organization_id));
+    const sameOrg = Boolean(sharedMembership);
     if (!sameOrg) {
+      await recordAuditEvent(serviceClient, {
+        organizationId: [...adminOrgIds][0] as string,
+        targetUserId: target_user_id,
+        actorUserId: callerId,
+        eventType: "account_change_denied",
+        source: "password_reset",
+        requestId,
+        metadata: { requested_action: "admin_password_reset", reason: "different_organization" },
+      });
       return new Response(
         JSON.stringify({ success: false, error: "You can only reset passwords for users in your organization" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -122,25 +135,64 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (targetAdminMembership) {
+      await recordAuditEvent(serviceClient, {
+        organizationId: sharedMembership.organization_id as string,
+        targetUserId: target_user_id,
+        actorUserId: callerId,
+        eventType: "account_change_denied",
+        source: "password_reset",
+        requestId,
+        metadata: { requested_action: "admin_password_reset", reason: "target_is_administrator" },
+      });
       return new Response(
         JSON.stringify({ success: false, error: "Admin passwords cannot be reset through this interface" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
+    const orgId = sharedMembership.organization_id as string;
+    await registerAuditContext(serviceClient, {
+      actorUserId: callerId,
+      organizationId: orgId,
+      requestId,
+      source: "password_reset",
+      targetUserIds: [target_user_id],
+      method: "admin_reset",
+    });
+
     const { error: updateError } = await serviceClient.auth.admin.updateUserById(target_user_id, {
       password: new_password,
     });
 
     if (updateError) {
+      await recordAuditEvent(serviceClient, {
+        organizationId: orgId,
+        targetUserId: target_user_id,
+        actorUserId: callerId,
+        eventType: "password_reset_failed",
+        source: "password_reset",
+        requestId,
+        metadata: { reason: failureReason(updateError.message) },
+      });
       return new Response(
         JSON.stringify({ success: false, error: updateError.message || "Failed to reset password" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
+    // Event only: no password, hash or token is ever part of an audit row.
+    await recordAuditEvent(serviceClient, {
+      organizationId: orgId,
+      targetUserId: target_user_id,
+      actorUserId: callerId,
+      eventType: "admin_password_reset",
+      source: "password_reset",
+      requestId,
+      metadata: { method: "admin_reset" },
+    });
+
     return new Response(
-      JSON.stringify({ success: true, message: "Password reset successful" }),
+      JSON.stringify({ success: true, message: "Password reset successful", request_id: requestId }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {

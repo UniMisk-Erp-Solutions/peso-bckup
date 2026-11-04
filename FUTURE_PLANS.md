@@ -1685,3 +1685,60 @@ preserve/backup current dev ref
 Because both branches touched application routing/documentation, expect at least `src/App.tsx` / documentation-index review during reconciliation. Do not rebase/force-push the shared `dev` history merely to make the graph linear; preserving the already-reviewed DEV commits and applied-migration history is more important.
 
 **Do not perform the branch reconciliation or implement this section until the owner explicitly starts that work.**
+
+
+---
+
+## 30. User Account Audit History
+
+**Status:** IMPLEMENTED — PRODUCTION (DOC-158; PR #26 merged 2026-10-24; migrations `20261031100000`, `20261031120000`, `20261031130000` applied to Production, five edge functions deployed, frontend live)
+**Priority:** High (found during the Patidar Travels deactivated-user audit, 2026-10-23)  
+**Not part of:** the PWA bill-photo performance hotfix (`hotfix/pwa-submit-upload-reliability-v2`).
+
+### Why
+
+A real Patidar Travels account was deactivated, reactivated by an admin, and 2.5 minutes later its login email and display name were changed to a different person's. Only the service role appears as the actor for the email change, the profile has no history, and "Deactivated (0)" looked like a bug. Today the only trace is GoTrue's own audit log (and only because that log happened to hold the old email). There is no first-class, immutable record of who changed what on a user account.
+
+### Requirements
+
+- **Immutable user account audit history.** Append-only table (no UPDATE/DELETE for any role, enforced by trigger and revoked grants), one row per account mutation, with `organization_id`, `target_user_id`, `event_type`, `before`/`after` (only the changed fields), `created_at`, `actor_user_id`, `actor_kind` (`admin` | `self` | `system` | `service`), and a request id.
+- **Human actor preservation through service-role calls.** Edge functions that use the service role (`admin-update-user-email`, `admin-set-user-auth-status`, `admin-reset-password`, `admin-create-user`, bulk import) must receive and record the verified calling admin's id (from the caller's JWT, checked before the privileged call). A row whose actor is only "service_role" is a defect.
+- **Events to capture:** name, email, role, team and supervisor/reporting-engineer changes; employee id; deactivate and reactivate (with reason); cashier/location assignments; account creation and removal; membership moves between organizations.
+- **Password events without passwords:** record `password_reset_by_admin`, `password_changed_by_user`, `password_reset_requested` as events only. Never store, log or return a password, hash or token value.
+- **Identity timeline.** A per-user timeline that shows the account as one continuous identity: every email/name it has had, with dates and actors, so history (expenses, approvals) is never silently attributed to a different person.
+- **Account-reassignment warning.** When an admin changes the email or name of an account that has history (expenses, approvals, balance, previous sign-ins), require an explicit confirmation that states the history stays attached to the same account, and offer "create a new account instead". Flag in the audit log when the new name does not resemble the old one.
+- **Admin Audit History screen.** Read-only page for organization admins: filter by user, event type, actor and date; export; link from User Management rows and from the user drawer. Master admin can see across organizations.
+- **Backfill (read-only first):** seed the timeline from `account_audit_events` (deactivate/reactivate) and GoTrue `audit_log_entries` where available, clearly marked as reconstructed.
+
+### Implementation status (2026-10-24)
+
+Delivered in DOC-158: append-only table + triggers on every mutation table (including `auth.users`), human actor preserved through the service role (actor from the verified JWT, re-checked by the database, fail-closed), frozen target and actor snapshots, per-user identity timeline, name + e-mail reassignment warning with recorded confirmation, per-user Audit History dialog and Administration → User Audit page, bulk-import batch correlation, no credential ever stored.  
+**Still open (deliberately):** reconstructing past events from GoTrue `audit_log_entries` / Logflare (evidence-by-evidence, separate step); export; localisation of the audit UI; review of the Production `user_roles` self-service policies; a controlled retention/archive mechanism.
+
+### Acceptance sketch
+
+- Changing a user's email through any path produces exactly one history row naming the human admin.
+- The history table rejects UPDATE and DELETE for every application role.
+- A reactivate followed by a rename shows as two linked events on one timeline and triggers the reassignment warning.
+- No password, hash or token value appears in any column, log or API response.
+
+---
+
+## 31. Orphan Temp-Object Cleanup (receipts bucket)
+
+**Status:** PLANNED — NOT IMPLEMENTED  
+**Not part of:** the PWA bill-photo performance hotfix. Nothing is deleted by that change.
+
+### Why
+
+Receipt uploads are written to `receipts/temp/<user>/<file>` first and only copied to the expense folder at Submit; the temp object is never removed. Read-only audit on 2026-10-23: 15,803 objects, about 6.85 GB; 308 under 2 days old, 401 from 2-7 days, 5,916 from 7-30 days and 9,178 older than 30 days. Only 174 are referenced by an attachment row (the "temporary fallback" receipts, which must be kept). About 14,920 unreferenced objects older than 7 days (about 6.4 GB) are candidates.
+
+### Requirements
+
+- **Retention period:** keep unreferenced temp objects for at least 14 days (configurable per organization is not needed), so an abandoned-then-resumed form still finds its photo.
+- **Reference verification before any delete:** an object is only eligible if no `attachments.storage_path` equals its path, no `attachments.file_url` contains its path (legacy rows), and no open draft or recoverable form (`expense_form_drafts`) references it. Re-check immediately before deleting.
+- **Dry run first:** a report-only mode that writes the candidate list (path hash, age, size, reason) and totals; a human reviews the first dry run before enabling deletion.
+- **Safe deletion batching:** small batches (for example 200 objects), a delay between batches, a hard stop when database load is high, a per-run cap, and a persisted checkpoint so a run can resume. Every deletion is logged (count, bytes, batch id), never the file contents or names of anything sensitive.
+- **Scheduler:** weekly, off-hours, as a worker job (not in the browser, not in an edge request path).
+- **Never delete:** objects referenced by an attachment row, objects younger than the retention period, or anything outside `receipts/temp/`.
+- **Also consider:** removing the temp object right after a successful finalize copy (once the final object is confirmed), which would stop new orphans at the source.
