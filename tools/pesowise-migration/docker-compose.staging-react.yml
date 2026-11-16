@@ -1,0 +1,13 @@
+name: pesowise-react-migration-staging
+
+services:
+  web:
+    container_name: pesowise-react-migration-staging
+    build:
+      context: ../..
+      dockerfile: tools/pesowise-migration/Dockerfile.staging-react
+      args:
+        VITE_API_URL: http://127.0.0.1:18787
+    ports:
+      - "127.0.0.1:5175:80"
+    restart: unless-stopped

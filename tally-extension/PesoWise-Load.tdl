@@ -1,0 +1,7 @@
+;; Load BOTH files in TallyPrime (F12 → specify path C:\pesowise):
+;;   1. PesoWise-Bootstrap.tdl
+;;   2. PesoWise-Load.tdl
+;; Quit and restart TallyPrime. Gateway → PesoWise Reports → Daily Project.
+;; Do NOT load PesoWise-Reports-SafeMenu.tdl — that is an empty recovery shell only.
+
+[Include : PesoWise-Reports.tdl]

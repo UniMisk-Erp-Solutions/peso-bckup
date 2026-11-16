@@ -1,0 +1,3 @@
+# JWT is verified inside the handler (service-role key OR a valid user token).
+[functions.run-tally-sync-job]
+verify_jwt = false

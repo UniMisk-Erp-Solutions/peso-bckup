@@ -1,0 +1,35 @@
+{
+  "name": "@pesowise/tally-connector",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "description": "PesoWise TallyPrime Windows connector (outbound HTTPS, local Tally only)",
+  "bin": {
+    "pesowise-tally-connector": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "dev": "node --experimental-strip-types src/main.ts",
+    "package:win": "npm run build && node scripts/build-win-exe.mjs"
+  },
+  "dependencies": {
+    "minimist": "^1.2.8"
+  },
+  "devDependencies": {
+    "@types/minimist": "^1.2.5",
+    "@types/node": "^22.10.0",
+    "pkg": "^5.8.1",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pkg": {
+    "scripts": "dist/**/*.js",
+    "assets": [
+      "bundle/**/*"
+    ],
+    "outputPath": "dist"
+  }
+}

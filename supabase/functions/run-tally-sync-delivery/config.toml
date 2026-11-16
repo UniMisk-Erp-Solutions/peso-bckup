@@ -1,0 +1,2 @@
+[functions.run-tally-sync-delivery]
+verify_jwt = false

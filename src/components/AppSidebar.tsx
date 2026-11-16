@@ -32,6 +32,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { OrganizationLogo } from "@/components/OrganizationLogo";
 import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
+import { isPwtSyncEnabled } from "@/lib/pwtSyncGate";
 import { hasApprovalHierarchy, hasTeamsEnabled } from "@/lib/orgFeatureGates";
 import { useAllowCashierExpenseSubmission } from "@/hooks/useAllowCashierExpenseSubmission";
 import { useCashierCapabilities } from "@/hooks/useCashierCapabilities";
@@ -120,7 +121,7 @@ export function AppSidebar() {
     { titleKey: "manageUsers", url: "/admin/users", icon: Users },
     { titleKey: "categories", url: "/admin/categories", icon: Tag },
     { titleKey: "reports", url: "/admin/reports", icon: FileText },
-    ...(import.meta.env.VITE_PWT_SYNC === "1" ? [{ titleKey: "tallyIntegration", url: "/admin/pwtally", icon: Plug }] : []),
+    ...(isPwtSyncEnabled(hasOrganizationFeature) ? [{ titleKey: "tallyIntegration", url: "/admin/pwtally", icon: Plug }] : []),
     { titleKey: "analytics", url: "/analytics", icon: BarChart3 },
     { titleKey: "notifications", url: "/notifications", icon: Bell },
     { titleKey: "settings", url: "/settings", icon: SettingsIcon },

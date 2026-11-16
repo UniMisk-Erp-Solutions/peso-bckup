@@ -1,0 +1,37 @@
+# Isolated PesoWise migration PostgreSQL (NOT production Supabase).
+# Deploy only on 192.168.23.46; does not touch kar0ro1k6jiyfxzzw7acnsza stack.
+name: pesowise-migration-v2
+
+networks:
+  pesowise_migration_internal:
+    name: pesowise_migration_internal
+    internal: false
+
+volumes:
+  pesowise_postgres_migration_v2_data:
+    name: pesowise_postgres_migration_v2_data
+
+services:
+  postgres:
+    container_name: pesowise-postgres-migration-v2
+    image: postgres:15-alpine
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: pesowise
+      POSTGRES_USER: pesowise_migration
+    volumes:
+      - pesowise_postgres_migration_v2_data:/var/lib/postgresql/data
+      - /tmp/pesowise-migration-backup/wal-archive-v2:/wal_archive
+    ports:
+      - "127.0.0.1:15432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pesowise_migration -d pesowise"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pesowise_migration_internal

@@ -1,0 +1,581 @@
+[Report : PW Claim Approval List]
+Use : DSP Template
+Form : PW CA List Form
+Title : "Claim Approval List (PesoWise)"
+
+[Form : PW CA List Form]
+Set : PW Active Title : "Claim Approval List"
+Part : PW Shell Header Part, PW CA Grid Part, PW CA Footer Part
+Height : 100% Screen
+
+[Part : PW CA Grid Part]
+Lines : PW CA Col Head Line, PW CA Data Line
+Repeat : PW CA Data Line : PW Claim Ap Latest
+Scroll : Both
+Common Border : Yes
+
+[Line : PW CA Col Head Line]
+Border : Thin Bottom
+Fields : PW CA C1, PW CA C2, PW CA C3, PW CA C4, PW CA C5, PW CA C6, PW CA C7, PW CA C8, PW CA C9, PW CA C10, PW CA C11, PW CA C12, PW CA C13, PW CA C14, PW CA C15, PW CA C16, PW CA C17, PW CA C18, PW CA C19
+
+[Field : PW CA C1]
+Use : Short Name Field
+Space Left : 2
+Set as : "User"
+Style : PW List Head Style
+Width : 18
+[Field : PW CA C2]
+Use : Short Name Field
+Space Left : 2
+Set as : "Employee ID"
+Style : PW List Head Style
+Width : 13
+[Field : PW CA C3]
+Use : Short Name Field
+Space Left : 2
+Set as : "Employee Email"
+Style : PW List Head Style
+Width : 24
+[Field : PW CA C4]
+Use : Short Name Field
+Space Left : 2
+Set as : "Transaction #"
+Style : PW List Head Style
+Width : 14
+[Field : PW CA C5]
+Use : Short Name Field
+Space Left : 2
+Set as : "Title"
+Style : PW List Head Style
+Width : 20
+[Field : PW CA C6]
+Use : Short Name Field
+Space Left : 2
+Set as : "Purpose"
+Style : PW List Head Style
+Width : 24
+[Field : PW CA C7]
+Use : Short Name Field
+Space Left : 2
+Set as : "Destination"
+Style : PW List Head Style
+Width : 18
+[Field : PW CA C8]
+Use : Short Name Field
+Space Left : 2
+Set as : "Batch"
+Style : PW List Head Style
+Width : 16
+[Field : PW CA C9]
+Use : Short Name Field
+Space Left : 2
+Set as : "Expense Type"
+Style : PW List Head Style
+Width : 14
+[Field : PW CA C10]
+Use : Short Name Field
+Space Left : 2
+Set as : "Bill Date"
+Style : PW List Head Style
+Width : 11
+[Field : PW CA C11]
+Use : Short Name Field
+Space Left : 2
+Set as : "Trip End"
+Style : PW List Head Style
+Width : 11
+[Field : PW CA C12]
+Use : Short Name Field
+Space Left : 2
+Set as : "Bill Amount"
+Style : PW List Head Style
+Width : 12
+Align : Right
+
+[Field : PW CA C13]
+Use : Short Name Field
+Space Left : 2
+Set as : "Status"
+Style : PW List Head Style
+Width : 16
+[Field : PW CA C14]
+Use : Short Name Field
+Space Left : 2
+Set as : "Manager Approval"
+Style : PW List Head Style
+Width : 18
+[Field : PW CA C15]
+Use : Short Name Field
+Space Left : 2
+Set as : "HO Approval"
+Style : PW List Head Style
+Width : 16
+[Field : PW CA C16]
+Use : Short Name Field
+Space Left : 2
+Set as : "Submitted On"
+Style : PW List Head Style
+Width : 12
+[Field : PW CA C17]
+Use : Short Name Field
+Space Left : 2
+Set as : "Opening Balance"
+Style : PW List Head Style
+Width : 14
+Align : Right
+
+[Field : PW CA C18]
+Use : Short Name Field
+Space Left : 2
+Set as : "Closing Balance"
+Style : PW List Head Style
+Width : 14
+Align : Right
+
+[Field : PW CA C19]
+Use : Short Name Field
+Space Left : 2
+Set as : "LPO Number"
+Style : PW List Head Style
+Width : 16
+[Line : PW CA Data Line]
+Key : PW CA Line Enter
+Fields : PW CA D1, PW CA D2, PW CA D3, PW CA D4, PW CA D5, PW CA D6, PW CA D7, PW CA D8, PW CA D9, PW CA D10, PW CA D11, PW CA D12, PW CA D13, PW CA D14, PW CA D15, PW CA D16, PW CA D17, PW CA D18, PW CA D19
+
+
+[Field : PW CA D1]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:1
+Width : 18
+Style : PW List Row Style
+
+[Field : PW CA D2]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:2
+Width : 13
+Style : PW List Row Style
+
+[Field : PW CA D3]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:3
+Width : 24
+Style : PW List Row Style
+
+[Field : PW CA D4]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:4
+Width : 14
+Style : PW List Row Style
+
+[Field : PW CA D5]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:5
+Width : 20
+Style : PW List Row Style
+
+[Field : PW CA D6]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:6
+Width : 24
+Style : PW List Row Style
+
+[Field : PW CA D7]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:7
+Width : 18
+Style : PW List Row Style
+
+[Field : PW CA D8]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:8
+Width : 16
+Style : PW List Row Style
+
+[Field : PW CA D9]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:9
+Width : 14
+Style : PW List Row Style
+
+[Field : PW CA D10]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:10
+Width : 11
+Style : PW List Row Style
+
+[Field : PW CA D11]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:11
+Width : 11
+Style : PW List Row Style
+
+[Field : PW CA D12]
+Use : Number Field
+Space Left : 2
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:12) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:12)
+Width : 12
+Style : PW List Row Style
+Align : Right
+
+[Field : PW CA D13]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:13
+Width : 16
+Style : PW List Row Style
+
+[Field : PW CA D14]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:14
+Width : 18
+Style : PW List Row Style
+
+[Field : PW CA D15]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:15
+Width : 16
+Style : PW List Row Style
+
+[Field : PW CA D16]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:16
+Width : 12
+Style : PW List Row Style
+
+[Field : PW CA D17]
+Use : Number Field
+Space Left : 2
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:17) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:17)
+Width : 14
+Style : PW List Row Style
+Align : Right
+
+[Field : PW CA D18]
+Use : Number Field
+Space Left : 2
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:18) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:18)
+Width : 14
+Style : PW List Row Style
+Align : Right
+
+[Field : PW CA D19]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:19
+Width : 16
+Style : PW List Row Style
+
+[Part : PW CA Footer Part]
+Lines : PW CA Footer Line
+Border : Thin Top
+
+[Line : PW CA Footer Line]
+Field : PW CA Foot Count
+
+[Field : PW CA Foot Count]
+Use : Name Field
+Set as : "All 19 fixed claim fields, including mapped LPO. Scroll horizontally and vertically; Enter opens details."
+Width : 80
+
+[Key : PW CA Line Enter]
+Key : Enter
+Action : CALL : PW CA Show Detail
+
+[Function : PW CA Show Detail]
+01 : SET : SV PW Ledger Name : $Name
+02 : Display : PW Claim Approval Detail
+
+[Report : PW Claim Approval Detail]
+Use : DSP Template
+Form : PW CA Detail Form
+Title : "Claim Approval Details"
+
+[Form : PW CA Detail Form]
+Part : PW CA Det Head, PW CA Det Body
+Height : 100% Screen
+Width : 100% Screen
+
+[Part : PW CA Det Head]
+Lines : PW CA Det Title, PW CA Det Hint
+[Line : PW CA Det Title]
+Field : PW CA Det Title F
+[Field : PW CA Det Title F]
+Use : Name Field
+Set as : "Claim Approval Details"
+Style : PW Title Style
+Full Width : Yes
+[Line : PW CA Det Hint]
+Field : PW CA Det Hint F
+[Field : PW CA Det Hint F]
+Use : Name Field
+Set as : "Press Esc to return to the list."
+Style : PW Subtitle Style
+Full Width : Yes
+
+[Part : PW CA Det Body]
+Part : PW CA Det Block
+Repeat : PW CA Det Block : PW Selected Ledger One
+Scroll : Vertical
+
+[Part : PW CA Det Block]
+Lines : PW CA Det R1, PW CA Det R2, PW CA Det R3, PW CA Det R4, PW CA Det R5, PW CA Det R6, PW CA Det R7, PW CA Det R8, PW CA Det R9, PW CA Det R19
+Lines : PW CA Det R10, PW CA Det R11, PW CA Det R12, PW CA Det R13, PW CA Det R14, PW CA Det R15, PW CA Det R16, PW CA Det R17, PW CA Det R18
+Border : Thin Box
+
+[Line : PW CA Det R1]
+Fields : PW CA Det L1, PW CA Det V1
+[Field : PW CA Det L1]
+Use : Name Field
+Set as : "User"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V1]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:1
+Width : 52
+
+[Line : PW CA Det R2]
+Fields : PW CA Det L2, PW CA Det V2
+[Field : PW CA Det L2]
+Use : Name Field
+Set as : "Employee ID"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V2]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:2
+Width : 52
+
+[Line : PW CA Det R3]
+Fields : PW CA Det L3, PW CA Det V3
+[Field : PW CA Det L3]
+Use : Name Field
+Set as : "Employee Email"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V3]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:3
+Width : 52
+
+[Line : PW CA Det R4]
+Fields : PW CA Det L4, PW CA Det V4
+[Field : PW CA Det L4]
+Use : Name Field
+Set as : "Transaction #"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V4]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:4
+Width : 52
+
+[Line : PW CA Det R5]
+Fields : PW CA Det L5, PW CA Det V5
+[Field : PW CA Det L5]
+Use : Name Field
+Set as : "Title"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V5]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:5
+Width : 52
+
+[Line : PW CA Det R6]
+Fields : PW CA Det L6, PW CA Det V6
+[Field : PW CA Det L6]
+Use : Name Field
+Set as : "Purpose"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V6]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:6
+Width : 52
+
+[Line : PW CA Det R7]
+Fields : PW CA Det L7, PW CA Det V7
+[Field : PW CA Det L7]
+Use : Name Field
+Set as : "Destination"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V7]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:7
+Width : 52
+
+[Line : PW CA Det R8]
+Fields : PW CA Det L8, PW CA Det V8
+[Field : PW CA Det L8]
+Use : Name Field
+Set as : "Batch"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V8]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:8
+Width : 52
+
+[Line : PW CA Det R9]
+Fields : PW CA Det L9, PW CA Det V9
+[Field : PW CA Det L9]
+Use : Name Field
+Set as : "Expense Type"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V9]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:9
+Width : 52
+
+[Line : PW CA Det R10]
+Fields : PW CA Det L10, PW CA Det V10
+[Field : PW CA Det L10]
+Use : Name Field
+Set as : "Bill Date"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V10]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:10
+Width : 52
+
+[Line : PW CA Det R11]
+Fields : PW CA Det L11, PW CA Det V11
+[Field : PW CA Det L11]
+Use : Name Field
+Set as : "Trip End"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V11]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:11
+Width : 52
+
+[Line : PW CA Det R12]
+Fields : PW CA Det L12, PW CA Det V12
+[Field : PW CA Det L12]
+Use : Name Field
+Set as : "Bill Amount"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V12]
+Use : Number Field
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:12) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:12)
+Width : 52
+
+[Line : PW CA Det R13]
+Fields : PW CA Det L13, PW CA Det V13
+[Field : PW CA Det L13]
+Use : Name Field
+Set as : "Status"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V13]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:13
+Width : 52
+
+[Line : PW CA Det R14]
+Fields : PW CA Det L14, PW CA Det V14
+[Field : PW CA Det L14]
+Use : Name Field
+Set as : "Manager Approval"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V14]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:14
+Width : 52
+
+[Line : PW CA Det R15]
+Fields : PW CA Det L15, PW CA Det V15
+[Field : PW CA Det L15]
+Use : Name Field
+Set as : "HO Approval"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V15]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:15
+Width : 52
+
+[Line : PW CA Det R16]
+Fields : PW CA Det L16, PW CA Det V16
+[Field : PW CA Det L16]
+Use : Name Field
+Set as : "Submitted On"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V16]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:16
+Width : 52
+
+[Line : PW CA Det R17]
+Fields : PW CA Det L17, PW CA Det V17
+[Field : PW CA Det L17]
+Use : Name Field
+Set as : "Opening Balance"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V17]
+Use : Number Field
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:17) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:17)
+Width : 52
+
+[Line : PW CA Det R18]
+Fields : PW CA Det L18, PW CA Det V18
+[Field : PW CA Det L18]
+Use : Name Field
+Set as : "Closing Balance"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V18]
+Use : Number Field
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:18) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:18)
+Width : 52
+
+[Line : PW CA Det R19]
+Fields : PW CA Det L19, PW CA Det V19
+[Field : PW CA Det L19]
+Use : Name Field
+Set as : "LPO Number"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CA Det V19]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:19
+Width : 52

@@ -1,0 +1,101 @@
+;; Crash-isolation shells: menu targets with NO collections (static UI only).
+
+[Report : PW Safe Claim Verification List]
+Use : DSP Template
+Form : PW Safe CV Form
+Title : "Claim Verification List (PesoWise)"
+
+[Form : PW Safe CV Form]
+Part : PW Safe CV Part
+Height : 100 % Screen
+Width : 100 % Screen
+
+[Part : PW Safe CV Part]
+Lines : PW Safe CV T, PW Safe CV M
+[Line : PW Safe CV T]
+Field : PW Safe CV TF
+[Field : PW Safe CV TF]
+Use : Name Field
+Set as : "Claim Verification List"
+Full Width : Yes
+[Line : PW Safe CV M]
+Field : PW Safe CV MF
+[Field : PW Safe CV MF]
+Use : Name Field
+Set as : "Safe shell — no ledger collection. Load PesoWise-Reports.tdl for data rows after stability check."
+Full Width : Yes
+
+[Report : PW Safe Claim Approval List]
+Use : DSP Template
+Form : PW Safe CA Form
+Title : "Claim Approval List (PesoWise)"
+
+[Form : PW Safe CA Form]
+Part : PW Safe CA Part
+Height : 100 % Screen
+Width : 100 % Screen
+
+[Part : PW Safe CA Part]
+Lines : PW Safe CA T, PW Safe CA M
+[Line : PW Safe CA T]
+Field : PW Safe CA TF
+[Field : PW Safe CA TF]
+Use : Name Field
+Set as : "Claim Approval List"
+Full Width : Yes
+[Line : PW Safe CA M]
+Field : PW Safe CA MF
+[Field : PW Safe CA MF]
+Use : Name Field
+Set as : "Wrong TDL loaded. F12: load PesoWise-Bootstrap.tdl + PesoWise-Load.tdl from C:\pesowise, quit Tally, restart, Sync again."
+Full Width : Yes
+
+[Report : PW Safe Detailed Expense List]
+Use : DSP Template
+Form : PW Safe DE Form
+Title : "Detailed Expense Report (PesoWise)"
+
+[Form : PW Safe DE Form]
+Part : PW Safe DE Part
+Height : 100 % Screen
+Width : 100 % Screen
+
+[Part : PW Safe DE Part]
+Lines : PW Safe DE T, PW Safe DE M
+[Line : PW Safe DE T]
+Field : PW Safe DE TF
+[Field : PW Safe DE TF]
+Use : Name Field
+Set as : "Detailed Expense Report"
+Full Width : Yes
+[Line : PW Safe DE M]
+Field : PW Safe DE MF
+[Field : PW Safe DE MF]
+Use : Name Field
+Set as : "Wrong TDL loaded. F12: load PesoWise-Bootstrap.tdl + PesoWise-Load.tdl from C:\pesowise, quit Tally, restart, Sync again."
+Full Width : Yes
+
+[Report : PW Safe Daily Project List]
+Use : DSP Template
+Form : PW Safe DPR Form
+Title : "Daily Project Report (PesoWise)"
+
+[Form : PW Safe DPR Form]
+Part : PW Safe DPR Part
+Height : 100 % Screen
+Width : 100 % Screen
+
+[Part : PW Safe DPR Part]
+Lines : PW Safe DPR T, PW Safe DPR M
+[Line : PW Safe DPR T]
+Field : PW Safe DPR TF
+[Field : PW Safe DPR TF]
+Use : Name Field
+Set as : "Daily Project Report"
+Full Width : Yes
+[Line : PW Safe DPR M]
+Field : PW Safe DPR MF
+[Field : PW Safe DPR MF]
+Use : Name Field
+Set as : "Wrong TDL loaded. F12: load PesoWise-Bootstrap.tdl + PesoWise-Load.tdl from C:\pesowise, quit Tally, restart, Sync again."
+Full Width : Yes

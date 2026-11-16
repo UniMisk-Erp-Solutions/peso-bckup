@@ -51,8 +51,7 @@ import {
 } from "@/lib/reportExportJobs";
 import { PwtSyncGroup } from "@/components/PwtSyncControl";
 
-/** PesoWise -> TallyPrime "Sync to Tally" control on the four reports; off unless VITE_PWT_SYNC=1. */
-const PWT_SYNC_ENABLED = import.meta.env.VITE_PWT_SYNC === "1";
+import { PWT_BUILD_ENABLED } from "@/lib/pwtSyncGate";
 
 const HISTORY_PAGE_SIZE = 5;
 const PREVIEW_PAGE_SIZE = 50;
@@ -340,6 +339,8 @@ interface ServerReportExportPanelProps {
   selectedWeek?: string;
   /** Admin only: show Sync to Tally (never on team-scoped reports). Needs VITE_PWT_SYNC=1. */
   enableTallySync?: boolean;
+  /** PesoWise-Tally integration is on for this company (build flag + company feature, see pwtSyncGate). Defaults to the build flag. */
+  pwtSyncEnabled?: boolean;
   /** Claim Approval: HO status filter value passed to the sync. */
   hoStatus?: string | null;
   /** Claim reports: custom-field filters passed to the sync. */
@@ -366,6 +367,7 @@ export function ServerReportExportPanel({
   selectedMonth,
   selectedWeek,
   enableTallySync = false,
+  pwtSyncEnabled = PWT_BUILD_ENABLED,
   hoStatus,
   syncCustomFieldFilters,
 }: ServerReportExportPanelProps) {
@@ -381,7 +383,7 @@ export function ServerReportExportPanel({
     setSyncSlot(document.getElementById("pwt-sync-slot"));
     setStatusSlot(document.getElementById("pwt-status-slot"));
   }, []);
-  const syncOn = enableTallySync && PWT_SYNC_ENABLED && reportType === "detailed_expense";
+  const syncOn = enableTallySync && pwtSyncEnabled && reportType === "detailed_expense";
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<ExportHistoryEntry[]>([]);
   const [historyTotal, setHistoryTotal] = useState(0);

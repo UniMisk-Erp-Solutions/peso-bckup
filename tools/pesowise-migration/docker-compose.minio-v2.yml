@@ -1,0 +1,38 @@
+# Dedicated PesoWise migration object storage (NOT production Supabase MinIO).
+name: pesowise-migration-minio
+
+networks:
+  pesowise_migration_internal:
+    external: true
+    name: pesowise_migration_internal
+
+volumes:
+  pesowise_minio_migration_v2_data:
+    name: pesowise_minio_migration_v2_data
+
+services:
+  minio:
+    container_name: pesowise-minio-migration-v2
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MINIO_ROOT_USER: pesowise_migration
+    volumes:
+      - pesowise_minio_migration_v2_data:/data
+    ports:
+      - "127.0.0.1:19000:9000"
+      - "127.0.0.1:19001:9001"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/usr/bin/mc alias set h http://127.0.0.1:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1 && /usr/bin/mc ready h",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pesowise_migration_internal

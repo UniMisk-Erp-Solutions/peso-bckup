@@ -1,0 +1,5 @@
+;; RECOVERY SHELL ONLY — shows placeholder text, NOT live data.
+;; For real Daily Project / Claim reports use PesoWise-Load.tdl + PesoWise-Bootstrap.tdl instead.
+
+[Include : tdl\01-menu-safe.tdl]
+[Include : tdl\00-safe-report-shells.tdl]

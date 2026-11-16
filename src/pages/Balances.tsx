@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { RoleBadgeWithLabels } from "@/components/RoleBadgeWithLabels";
 import { notifyBalanceAdded } from "@/services/NotificationService";
 import { ORGANIZATION_FEATURE_KEYS } from "@/lib/organizationFeatureKeys";
+import { isPwtSyncEnabled } from "@/lib/pwtSyncGate";
 import { fetchOrgMembershipRolesMap } from "@/lib/orgUsers";
 import { BalanceTransferOfferService } from "@/services/BalanceTransferOfferService";
 import { TransferSentOffersPanel } from "@/components/TransferSentOffersPanel";
@@ -41,9 +42,6 @@ import { SyncFromTallyDialog } from "@/components/balances/SyncFromTallyDialog";
 import { TallyHistoryDialog } from "@/components/balances/TallyHistoryDialog";
 import { BalanceCreditHistory } from "@/components/balances/BalanceCreditHistory";
 
-/** Employee payments entered in TallyPrime -> balances. Shown only when the Tally integration is enabled (VITE_PWT_SYNC=1). */
-const TALLY_SYNC_ENABLED = import.meta.env.VITE_PWT_SYNC === "1";
-
 interface ProfileRow {
   user_id: string;
   name: string;
@@ -68,6 +66,8 @@ export default function Balances() {
   const { blocked } = useRequireOperationalCashier();
   const { t, i18n } = useTranslation(["balances", "common", "transfers"]);
   const { userRole, user, organizationId, hasOrganizationFeature } = useAuth();
+  /** Employee payments entered in TallyPrime -> balances. Shown only when the company has the Tally integration on. */
+  const TALLY_SYNC_ENABLED = isPwtSyncEnabled(hasOrganizationFeature);
   const employeeIdFeatureEnabled = hasOrganizationFeature(
     ORGANIZATION_FEATURE_KEYS.employee_id_login,
   );

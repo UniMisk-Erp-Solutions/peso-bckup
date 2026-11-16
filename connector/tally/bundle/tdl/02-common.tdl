@@ -1,0 +1,156 @@
+;; Shared formulas, variables, styles, and shell parts for PesoWise reports v2.
+;; Reports MUST NOT evaluate PESOWISE_METADATA_JSON at runtime (c0000005 risk).
+
+[System : Formula]
+PWFiltClaimVer : $PESOWISE_REPORT_TYPE = "claim_verification"
+[System : Formula]
+PWFiltClaimAp : $PESOWISE_REPORT_TYPE = "claim_approval"
+[System : Formula]
+PWFiltDetailed : $PESOWISE_REPORT_TYPE = "detailed_expense"
+[System : Formula]
+;; DPR rows have a dedicated persisted track-date UDF. Use the built-in NOT
+;; operator so this report does not depend on string-comparison extensions.
+PWFiltDaily : NOT $$IsEmpty:$PESOWISE_DPR_TRACK_DATE
+[System : Formula]
+PWSelLedgerMatch : $Name = ##SVPWLedgerName
+
+;; Read old/imported claim rows from the persisted pipe-delimited flat UDF when
+;; individual claim UDFs are absent in Tally. Token positions are one-based.
+[Function : PWCVFlatToken]
+Parameter : PWCVFlatRow : String
+Parameter : PWCVTokenIndex : Number
+Returns : String
+Variable : PWCVTokenResult : String
+Variable : PWCVTokenCounter : Number
+00 : SET : PWCVTokenResult : ""
+10 : SET : PWCVTokenCounter : 0
+20 : FOR TOKEN : PWCVToken : ##PWCVFlatRow : "|"
+30 : INCREMENT : PWCVTokenCounter
+40 : IF : ##PWCVTokenCounter = ##PWCVTokenIndex
+50 : IF : ##PWCVToken = "__PW_EMPTY__"
+60 : SET : PWCVTokenResult : ""
+70 : ELSE
+80 : IF : ##PWCVToken = "__PW_EMPTY____PW_EMPTY__"
+90 : SET : PWCVTokenResult : "__PW_EMPTY__"
+100 : ELSE
+110 : SET : PWCVTokenResult : ##PWCVToken
+120 : END IF
+130 : END IF
+140 : END IF
+150 : END FOR
+160 : RETURN : ##PWCVTokenResult
+
+
+
+
+
+[Style : PW Title Style]
+Font : Arial Bold
+Height : 12
+
+[Style : PW Subtitle Style]
+Font : Arial
+Height : 10
+
+[Style : PW Col Head Style]
+Font : Arial Bold
+Height : 9
+
+
+[Style : PW List Row Style]
+Font : Arial
+Height : 12
+
+[Style : PW List Head Style]
+Font : Arial Bold
+Height : 11
+[Part : PW Shell Header Part]
+Lines : PW Shell Brand, PW Shell Title, PW Shell Sub, PW Shell Period, PW Shell Rule
+Border : Thin Bottom
+
+[Line : PW Shell Brand]
+Field : PW Shell Brand F
+[Field : PW Shell Brand F]
+Use : Name Field
+Set as : "PesoWise"
+Style : PW Title Style
+Full Width : Yes
+
+[Line : PW Shell Title]
+Field : PW Shell Title F
+[Field : PW Shell Title F]
+Use : Name Field
+Set as : ##PWActiveTitle
+Style : PW Title Style
+Full Width : Yes
+
+[Line : PW Shell Sub]
+Field : PW Shell Sub F
+[Field : PW Shell Sub F]
+Use : Name Field
+Set as : "Synced from PesoWise"
+Style : PW Subtitle Style
+Full Width : Yes
+
+[Line : PW Shell Period]
+Field : PW Shell Period F
+[Field : PW Shell Period F]
+Use : Name Field
+Set as : "Period: As of last sync job in PesoWise"
+Style : PW Subtitle Style
+Full Width : Yes
+
+[Line : PW Shell Rule]
+Field : PW Shell Rule F
+[Field : PW Shell Rule F]
+Use : Name Field
+Set as : " "
+Full Width : Yes
+
+[Part : PW Shell Empty Part]
+Lines : PW Empty Sp1, PW Empty L1, PW Empty L2, PW Empty Sp2
+
+[Line : PW Empty Sp1]
+Field : PW Empty Sp1 F
+[Field : PW Empty Sp1 F]
+Use : Name Field
+Set as : " "
+Full Width : Yes
+
+[Line : PW Empty L1]
+Field : PW Empty L1 F
+[Field : PW Empty L1 F]
+Use : Name Field
+Set as : "No PesoWise data available"
+Style : PW Title Style
+Align : Center
+Full Width : Yes
+
+[Line : PW Empty L2]
+Field : PW Empty L2 F
+[Field : PW Empty L2 F]
+Use : Name Field
+Set as : "Sync this report from PesoWise to view it here."
+Style : PW Subtitle Style
+Align : Center
+Full Width : Yes
+
+[Line : PW Empty Sp2]
+Field : PW Empty Sp2 F
+[Field : PW Empty Sp2 F]
+Use : Name Field
+Set as : " "
+Full Width : Yes
+
+[Line : PW Detail Label Value]
+Fields : PW Detail Label F, PW Detail Value F
+
+[Field : PW Detail Label F]
+Use : Name Field
+Width : 28
+Style : PW Col Head Style
+
+[Field : PW Detail Value F]
+Use : Name Field
+Width : 52
+Full Width : Yes

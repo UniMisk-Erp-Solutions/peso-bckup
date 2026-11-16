@@ -1,0 +1,12 @@
+# Isolated PesoWise migration staging UI (static, API-only).
+name: pesowise-migration-staging-ui
+
+services:
+  ui:
+    container_name: pesowise-frontend-migration-staging
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      - ./staging-ui:/usr/share/nginx/html:ro
+    ports:
+      - "127.0.0.1:5174:80"

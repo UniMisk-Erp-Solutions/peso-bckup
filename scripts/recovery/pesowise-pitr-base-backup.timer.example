@@ -1,0 +1,12 @@
+# Example systemd timer — DISABLED by default. Copy to /etc/systemd/system/ and adjust paths.
+# systemctl enable --now pesowise-pitr-base-backup.timer
+
+[Unit]
+Description=Weekly PesoWise production base backup (PITR)
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

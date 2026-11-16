@@ -1,0 +1,438 @@
+[Report : PW Detailed Expense List]
+Use : DSP Template
+Form : PW DE List Form
+Title : "Detailed Expense Report (PesoWise)"
+
+[Form : PW DE List Form]
+Set : PW Active Title : "Detailed Expense Report"
+Part : PW Shell Header Part, PW DE Col Head Part, PW DE Body Part, PW DE Footer Part
+Height : 100 % Screen
+Width : 100 % Screen
+
+[Part : PW DE Col Head Part]
+Lines : PW DE Col Head Line
+Scroll : Both
+Border : Thin Bottom
+
+[Line : PW DE Col Head Line]
+Fields : PW DE C1, PW DE C2, PW DE C3, PW DE C4, PW DE C5, PW DE C6, PW DE C7, PW DE C8, PW DE C9, PW DE C10, PW DE C11, PW DE C12, PW DE C13, PW DE C14, PW DE C15
+
+[Field : PW DE C1]
+Use : Short Name Field
+Set as : "Employee"
+Style : PW Col Head Style
+Width : 18
+
+[Field : PW DE C2]
+Use : Short Name Field
+Set as : "Employee Code"
+Style : PW Col Head Style
+Width : 14
+
+[Field : PW DE C3]
+Use : Short Name Field
+Set as : "Date"
+Style : PW Col Head Style
+Width : 11
+
+[Field : PW DE C4]
+Use : Short Name Field
+Set as : "Transaction #"
+Style : PW Col Head Style
+Width : 14
+
+[Field : PW DE C5]
+Use : Short Name Field
+Set as : "Title"
+Style : PW Col Head Style
+Width : 22
+
+[Field : PW DE C6]
+Use : Short Name Field
+Set as : "Event"
+Style : PW Col Head Style
+Width : 16
+
+[Field : PW DE C7]
+Use : Short Name Field
+Set as : "Category"
+Style : PW Col Head Style
+Width : 14
+
+[Field : PW DE C8]
+Use : Short Name Field
+Set as : "Purpose"
+Style : PW Col Head Style
+Width : 24
+
+[Field : PW DE C9]
+Use : Short Name Field
+Set as : "Destination"
+Style : PW Col Head Style
+Width : 18
+
+[Field : PW DE C10]
+Use : Short Name Field
+Set as : "Batch Ref"
+Style : PW Col Head Style
+Width : 16
+
+[Field : PW DE C11]
+Use : Short Name Field
+Set as : "Credit"
+Style : PW Col Head Style
+Width : 13
+Align : Right
+
+[Field : PW DE C12]
+Use : Short Name Field
+Set as : "Debit"
+Style : PW Col Head Style
+Width : 13
+Align : Right
+
+[Field : PW DE C13]
+Use : Short Name Field
+Set as : "Note"
+Style : PW Col Head Style
+Width : 24
+
+[Field : PW DE C14]
+Use : Short Name Field
+Set as : "Opening Balance"
+Style : PW Col Head Style
+Width : 14
+Align : Right
+
+[Field : PW DE C15]
+Use : Short Name Field
+Set as : "Closing Balance"
+Style : PW Col Head Style
+Width : 14
+Align : Right
+
+[Part : PW DE Body Part]
+Lines : PW DE Data Line
+Repeat : PW DE Data Line : PW Detailed Latest
+Scroll : Both
+Common Border : Yes
+
+[Line : PW DE Data Line]
+Key : PW DE Line Enter
+Fields : PW DE D1, PW DE D2, PW DE D3, PW DE D4, PW DE D5, PW DE D6, PW DE D7, PW DE D8, PW DE D9, PW DE D10, PW DE D11, PW DE D12, PW DE D13, PW DE D14, PW DE D15
+
+[Field : PW DE D1]
+Use : Name Field
+Set as : $PESOWISE_DE_EMPLOYEE
+Width : 18
+
+[Field : PW DE D2]
+Use : Name Field
+Set as : $PESOWISE_DE_EMPLOYEE_CODE
+Width : 14
+
+[Field : PW DE D3]
+Use : Name Field
+Set as : $PESOWISE_DE_DATE
+Width : 11
+
+[Field : PW DE D4]
+Use : Name Field
+Set as : $PESOWISE_DE_TRANSACTION
+Width : 14
+
+[Field : PW DE D5]
+Use : Name Field
+Set as : $PESOWISE_DE_TITLE
+Width : 22
+
+[Field : PW DE D6]
+Use : Name Field
+Set as : $PESOWISE_DE_EVENT
+Width : 16
+
+[Field : PW DE D7]
+Use : Name Field
+Set as : $PESOWISE_DE_CATEGORY
+Width : 14
+
+[Field : PW DE D8]
+Use : Name Field
+Set as : $PESOWISE_DE_PURPOSE
+Width : 24
+
+[Field : PW DE D9]
+Use : Name Field
+Set as : $PESOWISE_DE_DESTINATION
+Width : 18
+
+[Field : PW DE D10]
+Use : Name Field
+Set as : $PESOWISE_DE_BATCH
+Width : 16
+
+[Field : PW DE D11]
+Use : Amount Field
+Set as : $$Number:$PESOWISE_DE_CREDIT
+Width : 13
+Align : Right
+
+[Field : PW DE D12]
+Use : Amount Field
+Set as : $$Number:$PESOWISE_DE_DEBIT
+Width : 13
+Align : Right
+
+[Field : PW DE D13]
+Use : Name Field
+Set as : $PESOWISE_DE_NOTE
+Width : 24
+
+[Field : PW DE D14]
+Use : Amount Field
+Set as : $$Number:$PESOWISE_DE_OPENING
+Width : 14
+Align : Right
+
+[Field : PW DE D15]
+Use : Amount Field
+Set as : $$Number:$PESOWISE_DE_CLOSING
+Width : 14
+Align : Right
+
+[Part : PW DE Footer Part]
+Lines : PW DE Footer Line
+Border : Thin Top
+
+[Line : PW DE Footer Line]
+Field : PW DE Foot Count
+
+[Field : PW DE Foot Count]
+Use : Name Field
+Set as : "All 15 fixed PesoWise detailed-expense fields. Scroll horizontally and vertically; Enter opens details."
+Width : 100
+
+[Key : PW DE Line Enter]
+Key : Enter
+Action : CALL : PW DE Show Detail
+
+[Function : PW DE Show Detail]
+01 : SET : SV PW Ledger Name : $Name
+02 : Display : PW Detailed Expense Detail
+
+[Report : PW Detailed Expense Detail]
+Use : DSP Template
+Form : PW DE Detail Form
+Title : "Expense Details"
+
+[Form : PW DE Detail Form]
+Part : PW DE Det Head, PW DE Det Body
+Height : 100 % Screen
+Width : 100 % Screen
+
+[Part : PW DE Det Head]
+Lines : PW DE Det Title, PW DE Det Hint
+[Line : PW DE Det Title]
+Field : PW DE Det Title F
+[Field : PW DE Det Title F]
+Use : Name Field
+Set as : "Detailed Expense Details"
+Style : PW Title Style
+Full Width : Yes
+[Line : PW DE Det Hint]
+Field : PW DE Det Hint F
+[Field : PW DE Det Hint F]
+Use : Name Field
+Set as : "Press Esc to return to the list."
+Style : PW Subtitle Style
+Full Width : Yes
+
+[Part : PW DE Det Body]
+Part : PW DE Det Block
+Repeat : PW DE Det Block : PW Selected Ledger One
+Scroll : Vertical
+
+[Part : PW DE Det Block]
+Lines : PW DE Det R1, PW DE Det R2, PW DE Det R3, PW DE Det R4, PW DE Det R5, PW DE Det R6, PW DE Det R7, PW DE Det R8, PW DE Det R9
+Lines : PW DE Det R10, PW DE Det R11, PW DE Det R12, PW DE Det R13, PW DE Det R14, PW DE Det R15
+Border : Thin Box
+
+[Line : PW DE Det R1]
+Fields : PW DE Det L1, PW DE Det V1
+[Field : PW DE Det L1]
+Use : Name Field
+Set as : "Employee"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V1]
+Use : Name Field
+Set as : $PESOWISE_DE_EMPLOYEE
+Width : 52
+
+[Line : PW DE Det R2]
+Fields : PW DE Det L2, PW DE Det V2
+[Field : PW DE Det L2]
+Use : Name Field
+Set as : "Employee Code"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V2]
+Use : Name Field
+Set as : $PESOWISE_DE_EMPLOYEE_CODE
+Width : 52
+
+[Line : PW DE Det R3]
+Fields : PW DE Det L3, PW DE Det V3
+[Field : PW DE Det L3]
+Use : Name Field
+Set as : "Date"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V3]
+Use : Name Field
+Set as : $PESOWISE_DE_DATE
+Width : 52
+
+[Line : PW DE Det R4]
+Fields : PW DE Det L4, PW DE Det V4
+[Field : PW DE Det L4]
+Use : Name Field
+Set as : "Transaction #"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V4]
+Use : Name Field
+Set as : $PESOWISE_DE_TRANSACTION
+Width : 52
+
+[Line : PW DE Det R5]
+Fields : PW DE Det L5, PW DE Det V5
+[Field : PW DE Det L5]
+Use : Name Field
+Set as : "Title"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V5]
+Use : Name Field
+Set as : $PESOWISE_DE_TITLE
+Width : 52
+
+[Line : PW DE Det R6]
+Fields : PW DE Det L6, PW DE Det V6
+[Field : PW DE Det L6]
+Use : Name Field
+Set as : "Event"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V6]
+Use : Name Field
+Set as : $PESOWISE_DE_EVENT
+Width : 52
+
+[Line : PW DE Det R7]
+Fields : PW DE Det L7, PW DE Det V7
+[Field : PW DE Det L7]
+Use : Name Field
+Set as : "Category"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V7]
+Use : Name Field
+Set as : $PESOWISE_DE_CATEGORY
+Width : 52
+
+[Line : PW DE Det R8]
+Fields : PW DE Det L8, PW DE Det V8
+[Field : PW DE Det L8]
+Use : Name Field
+Set as : "Purpose"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V8]
+Use : Name Field
+Set as : $PESOWISE_DE_PURPOSE
+Width : 52
+
+[Line : PW DE Det R9]
+Fields : PW DE Det L9, PW DE Det V9
+[Field : PW DE Det L9]
+Use : Name Field
+Set as : "Destination"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V9]
+Use : Name Field
+Set as : $PESOWISE_DE_DESTINATION
+Width : 52
+
+[Line : PW DE Det R10]
+Fields : PW DE Det L10, PW DE Det V10
+[Field : PW DE Det L10]
+Use : Name Field
+Set as : "Batch Ref"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V10]
+Use : Name Field
+Set as : $PESOWISE_DE_BATCH
+Width : 52
+
+[Line : PW DE Det R11]
+Fields : PW DE Det L11, PW DE Det V11
+[Field : PW DE Det L11]
+Use : Name Field
+Set as : "Credit"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V11]
+Use : Amount Field
+Set as : $$Number:$PESOWISE_DE_CREDIT
+Width : 52
+
+[Line : PW DE Det R12]
+Fields : PW DE Det L12, PW DE Det V12
+[Field : PW DE Det L12]
+Use : Name Field
+Set as : "Debit"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V12]
+Use : Amount Field
+Set as : $$Number:$PESOWISE_DE_DEBIT
+Width : 52
+
+[Line : PW DE Det R13]
+Fields : PW DE Det L13, PW DE Det V13
+[Field : PW DE Det L13]
+Use : Name Field
+Set as : "Note"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V13]
+Use : Name Field
+Set as : $PESOWISE_DE_NOTE
+Width : 52
+
+[Line : PW DE Det R14]
+Fields : PW DE Det L14, PW DE Det V14
+[Field : PW DE Det L14]
+Use : Name Field
+Set as : "Opening Balance"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V14]
+Use : Amount Field
+Set as : $$Number:$PESOWISE_DE_OPENING
+Width : 52
+
+[Line : PW DE Det R15]
+Fields : PW DE Det L15, PW DE Det V15
+[Field : PW DE Det L15]
+Use : Name Field
+Set as : "Closing Balance"
+Width : 28
+Style : PW Col Head Style
+[Field : PW DE Det V15]
+Use : Amount Field
+Set as : $$Number:$PESOWISE_DE_CLOSING
+Width : 52

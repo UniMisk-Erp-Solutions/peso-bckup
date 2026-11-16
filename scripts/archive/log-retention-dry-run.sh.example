@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Log retention helper — DO NOT RUN ON PRODUCTION without export + approval.
+# Application Logflare/analytics logs are NOT stored in archive.archive_* tables.
+set -euo pipefail
+DRY_RUN=1
+BEFORE_DATE=""
+SOURCE="logflare"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1; shift ;;
+    --execute) DRY_RUN=0; shift ;;
+    --before-date) BEFORE_DATE="$2"; shift 2 ;;
+    --source) SOURCE="$2"; shift 2 ;;
+    *) echo "Unknown arg $1"; exit 1 ;;
+  esac
+done
+echo "log-retention example: dry_run=$DRY_RUN source=$SOURCE before=$BEFORE_DATE"
+echo "Implement export to JSONL/Parquet on cold storage before any delete."
+exit 0

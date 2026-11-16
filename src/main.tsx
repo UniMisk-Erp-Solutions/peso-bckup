@@ -1,12 +1,20 @@
+import { Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { HelmetProvider } from "react-helmet-async";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppErrorFallback } from "@/components/AppErrorFallback";
 import { MaintenanceBootstrap } from "@/maintenance/MaintenanceBootstrap";
-import {
-  MaintenanceAdminApplication,
-  isMaintenanceAdminPath,
-} from "@/maintenance/MaintenanceAdminApplication";
+import { isMaintenanceAdminPath } from "@/maintenance/isMaintenanceAdminPath";
+import { lazyWithRetry } from "@/lib/lazyWithRetry";
+
+// Performance: the maintenance admin screens (and the chart library they use) are only
+// needed on /admin/maintenance*, so they load on demand instead of in everyone's
+// startup bundle. The path decision above is unchanged.
+const MaintenanceAdminApplication = lazyWithRetry(() =>
+  import("@/maintenance/MaintenanceAdminApplication").then((m) => ({
+    default: m.MaintenanceAdminApplication,
+  })),
+);
 import {
   capturePwaInstallPromptEarly,
   registerPwaServiceWorker,
@@ -40,7 +48,11 @@ registerPwaServiceWorker();
 // Supabase or on the Cloud maintenance state itself).
 function Root() {
   if (isMaintenanceAdminPath(window.location.pathname)) {
-    return <MaintenanceAdminApplication />;
+    return (
+      <Suspense fallback={null}>
+        <MaintenanceAdminApplication />
+      </Suspense>
+    );
   }
   return <MaintenanceBootstrap />;
 }

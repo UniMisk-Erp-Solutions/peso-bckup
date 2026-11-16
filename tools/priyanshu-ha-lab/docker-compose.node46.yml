@@ -1,0 +1,49 @@
+# ISOLATED HA lab on .46 ONLY — does not use production Supabase/Kong ports.
+name: pesowise-ha-lab-46
+
+services:
+  app46:
+    image: nginx:alpine
+    container_name: pesowise-ha-lab-app46
+    ports:
+      - "18046:80"
+    volumes:
+      - ./apps/app46.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - ha-lab-46
+
+  pg46:
+    image: postgres:15-alpine
+    container_name: pesowise-ha-lab-pg46
+    environment:
+      POSTGRES_PASSWORD: labpass
+      POSTGRES_HOST_AUTH_METHOD: trust
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - hot_standby=on
+      - -c
+      - listen_addresses=*
+    volumes:
+      - pesowise-ha-lab-pg46-data:/var/lib/postgresql/data
+      - ./postgres/primary-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "54346:5432"
+    networks:
+      - ha-lab-46
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pesowise-ha-lab-pg46-data:
+
+networks:
+  ha-lab-46:
+    driver: bridge

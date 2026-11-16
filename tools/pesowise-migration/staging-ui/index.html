@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PesoWise Migration Staging</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1rem; max-width: 960px; }
+    pre { background: #f4f4f4; padding: 0.5rem; overflow: auto; }
+    img { max-width: 100%; border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <h1>PesoWise staging (API only)</h1>
+  <p>API: <code id="apiBase"></code> — no Supabase client in this bundle.</p>
+  <section>
+    <h2>Login</h2>
+    <input id="email" placeholder="email" size="40" />
+    <input id="password" type="password" placeholder="password" />
+    <button id="loginBtn">Login</button>
+    <button id="logoutBtn">Logout</button>
+    <button id="meBtn">Me</button>
+    <pre id="authOut"></pre>
+  </section>
+  <section>
+    <h2>Expenses</h2>
+    <button id="expBtn">Load expenses</button>
+    <pre id="expOut"></pre>
+  </section>
+  <section>
+    <h2>Historical attachment preview</h2>
+    <input id="bucket" value="receipts" size="20" />
+    <input id="objectKey" placeholder="storage_path key" size="60" />
+    <button id="previewBtn">Sign download &amp; preview</button>
+    <div id="preview"></div>
+  </section>
+  <script>
+    const API = window.__PESOWISE_API__ || "http://127.0.0.1:18787";
+    document.getElementById("apiBase").textContent = API;
+    const authOut = document.getElementById("authOut");
+    const expOut = document.getElementById("expOut");
+    async function api(path, init = {}) {
+      const res = await fetch(API + path, {
+        ...init,
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...(init.headers || {}) },
+      });
+      const text = await res.text();
+      let body; try { body = JSON.parse(text); } catch { body = text; }
+      return { status: res.status, body };
+    }
+    document.getElementById("loginBtn").onclick = async () => {
+      const r = await api("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: document.getElementById("email").value,
+          password: document.getElementById("password").value,
+        }),
+      });
+      authOut.textContent = JSON.stringify(r, null, 2);
+    };
+    document.getElementById("logoutBtn").onclick = async () => {
+      authOut.textContent = JSON.stringify(await api("/api/auth/logout", { method: "POST" }), null, 2);
+    };
+    document.getElementById("meBtn").onclick = async () => {
+      authOut.textContent = JSON.stringify(await api("/api/auth/me"), null, 2);
+    };
+    document.getElementById("expBtn").onclick = async () => {
+      expOut.textContent = JSON.stringify(await api("/api/expenses"), null, 2);
+    };
+    document.getElementById("previewBtn").onclick = async () => {
+      const bucket = document.getElementById("bucket").value;
+      const key = encodeURIComponent(document.getElementById("objectKey").value);
+      const r = await api("/api/storage/sign-download?bucket=" + bucket + "&key=" + key);
+      document.getElementById("preview").innerHTML = "";
+      if (r.status !== 200 || !r.body.url) {
+        document.getElementById("preview").textContent = JSON.stringify(r);
+        return;
+      }
+      const img = document.createElement("img");
+      img.src = r.body.url;
+      document.getElementById("preview").appendChild(img);
+    };
+  </script>
+</body>
+</html>

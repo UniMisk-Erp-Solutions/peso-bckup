@@ -1,0 +1,367 @@
+[Report : PW Claim Verification List]
+Use : DSP Template
+Form : PW CV List Form
+Title : "Claim Verification List (PesoWise)"
+
+[Form : PW CV List Form]
+Set : PW Active Title : "Claim Verification List"
+Part : PW Shell Header Part, PW CV Col Head Part, PW CV Body Part, PW CV Empty Wrap, PW CV Footer Part
+Height : 100 % Screen
+Width : 100 % Screen
+
+[Part : PW CV Col Head Part]
+Lines : PW CV Col Head Line
+Border : Thin Bottom
+
+[Line : PW CV Col Head Line]
+Fields : PW CV C Date, PW CV C Trans, PW CV C Emp, PW CV C Cat, PW CV C Amt, PW CV C Stat
+
+[Field : PW CV C Date]
+Use : Short Name Field
+Set as : "Date"
+Style : PW Col Head Style
+Width : 11
+[Field : PW CV C Trans]
+Use : Short Name Field
+Set as : "Transaction #"
+Style : PW Col Head Style
+Width : 12
+[Field : PW CV C Emp]
+Use : Short Name Field
+Set as : "Employee"
+Style : PW Col Head Style
+Width : 20
+[Field : PW CV C Cat]
+Use : Short Name Field
+Set as : "Category"
+Style : PW Col Head Style
+Width : 12
+[Field : PW CV C Amt]
+Use : Short Name Field
+Set as : "Amount"
+Style : PW Col Head Style
+Width : 12
+Align : Right
+[Field : PW CV C Stat]
+Use : Short Name Field
+Set as : "Status"
+Style : PW Col Head Style
+Width : 14
+
+[Part : PW CV Body Part]
+Lines : PW CV Data Line
+Repeat : PW CV Data Line : PW Claim Ver Latest
+Scroll : Vertical
+Common Border : Yes
+
+[Line : PW CV Data Line]
+Key : PW CV Line Enter
+Fields : PW CV D Date, PW CV D Trans, PW CV D Emp, PW CV D Cat, PW CV D Amt, PW CV D Stat
+
+[Field : PW CV D Date]
+Use : Name Field
+Set as : @@PWFlat10
+Width : 11
+[Field : PW CV D Trans]
+Use : Name Field
+Set as : @@PWFlat4
+Width : 12
+[Field : PW CV D Emp]
+Use : Name Field
+Set as : @@PWFlat1
+Width : 20
+[Field : PW CV D Cat]
+Use : Name Field
+Set as : @@PWFlat9
+Width : 12
+[Field : PW CV D Amt]
+Use : Amount Field
+Set as : @@PWCVRowAmount
+Width : 12
+[Field : PW CV D Stat]
+Use : Name Field
+Set as : @@PWFlat13
+Width : 14
+
+[Key : PW CV Line Enter]
+Key : Enter
+Action : CALL : PW CV Show Detail
+
+[Function : PW CV Show Detail]
+01 : SET : SV PW Ledger Name : $Name
+02 : Display : PW Claim Verification Detail
+
+[Part : PW CV Empty Wrap]
+Invisible : $$FilterCount:PW Claim Ver Latest:1
+Lines : PW Empty Sp1, PW Empty L1, PW Empty L2, PW Empty Sp2
+
+[Part : PW CV Footer Part]
+Lines : PW CV Footer Line
+Border : Thin Top
+
+[Line : PW CV Footer Line]
+Fields : PW CV Foot Count, PW CV Foot Total
+
+[Field : PW CV Foot Count]
+Use : Name Field
+Set as : $$String:"Records: " + $$String:$$FilterCount:PW Claim Ver Latest:1
+Width : 40
+
+[Field : PW CV Foot Total]
+Use : Name Field
+Set as : $$String:"Total Amount: " + $$String:$$CollNumTotal:PW Claim Ver Latest:@@PWCVRowAmount
+Width : 40
+Align : Right
+
+[Report : PW Claim Verification Detail]
+Use : DSP Template
+Form : PW CV Detail Form
+Title : "Claim Verification Details"
+
+[Form : PW CV Detail Form]
+Part : PW CV Det Head, PW CV Det Body
+Height : 100 % Screen
+Width : 100 % Screen
+
+[Part : PW CV Det Head]
+Lines : PW CV Det Title, PW CV Det Hint
+[Line : PW CV Det Title]
+Field : PW CV Det Title F
+[Field : PW CV Det Title F]
+Use : Name Field
+Set as : "Claim Verification Details"
+Style : PW Title Style
+Full Width : Yes
+[Line : PW CV Det Hint]
+Field : PW CV Det Hint F
+[Field : PW CV Det Hint F]
+Use : Name Field
+Set as : "Press Esc to return to the list."
+Style : PW Subtitle Style
+Full Width : Yes
+
+[Part : PW CV Det Body]
+Part : PW CV Det Block
+Repeat : PW CV Det Block : PW Selected Ledger One
+Scroll : Vertical
+
+[Part : PW CV Det Block]
+Lines : PW CV Det R1, PW CV Det R2, PW CV Det R3, PW CV Det R4, PW CV Det R5, PW CV Det R6, PW CV Det R7, PW CV Det R8, PW CV Det R9
+Lines : PW CV Det R10, PW CV Det R11, PW CV Det R12, PW CV Det R13, PW CV Det R14, PW CV Det R15, PW CV Det R16, PW CV Det R17, PW CV Det R18
+Border : Thin Box
+
+[Line : PW CV Det R1]
+Fields : PW CV Det L1, PW CV Det V1
+[Field : PW CV Det L1]
+Use : Name Field
+Set as : "Employee"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V1]
+Use : Name Field
+Set as : @@PWFlat1
+Width : 52
+
+[Line : PW CV Det R2]
+Fields : PW CV Det L2, PW CV Det V2
+[Field : PW CV Det L2]
+Use : Name Field
+Set as : "Employee ID"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V2]
+Use : Name Field
+Set as : @@PWFlat2
+Width : 52
+
+[Line : PW CV Det R3]
+Fields : PW CV Det L3, PW CV Det V3
+[Field : PW CV Det L3]
+Use : Name Field
+Set as : "Email"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V3]
+Use : Name Field
+Set as : @@PWFlat3
+Width : 52
+
+[Line : PW CV Det R4]
+Fields : PW CV Det L4, PW CV Det V4
+[Field : PW CV Det L4]
+Use : Name Field
+Set as : "Transaction #"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V4]
+Use : Name Field
+Set as : @@PWFlat4
+Width : 52
+
+[Line : PW CV Det R5]
+Fields : PW CV Det L5, PW CV Det V5
+[Field : PW CV Det L5]
+Use : Name Field
+Set as : "Title"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V5]
+Use : Name Field
+Set as : @@PWFlat5
+Width : 52
+
+[Line : PW CV Det R6]
+Fields : PW CV Det L6, PW CV Det V6
+[Field : PW CV Det L6]
+Use : Name Field
+Set as : "Purpose"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V6]
+Use : Name Field
+Set as : @@PWFlat6
+Width : 52
+
+[Line : PW CV Det R7]
+Fields : PW CV Det L7, PW CV Det V7
+[Field : PW CV Det L7]
+Use : Name Field
+Set as : "Destination"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V7]
+Use : Name Field
+Set as : @@PWFlat7
+Width : 52
+
+[Line : PW CV Det R8]
+Fields : PW CV Det L8, PW CV Det V8
+[Field : PW CV Det L8]
+Use : Name Field
+Set as : "Batch Ref"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V8]
+Use : Name Field
+Set as : @@PWFlat8
+Width : 52
+
+[Line : PW CV Det R9]
+Fields : PW CV Det L9, PW CV Det V9
+[Field : PW CV Det L9]
+Use : Name Field
+Set as : "Category"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V9]
+Use : Name Field
+Set as : @@PWFlat9
+Width : 52
+
+[Line : PW CV Det R10]
+Fields : PW CV Det L10, PW CV Det V10
+[Field : PW CV Det L10]
+Use : Name Field
+Set as : "Trip Start"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V10]
+Use : Name Field
+Set as : @@PWFlat10
+Width : 52
+
+[Line : PW CV Det R11]
+Fields : PW CV Det L11, PW CV Det V11
+[Field : PW CV Det L11]
+Use : Name Field
+Set as : "Trip End"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V11]
+Use : Name Field
+Set as : @@PWFlat11
+Width : 52
+
+[Line : PW CV Det R12]
+Fields : PW CV Det L12, PW CV Det V12
+[Field : PW CV Det L12]
+Use : Name Field
+Set as : "Amount"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V12]
+Use : Amount Field
+Set as : @@PWCVRowAmount
+Width : 52
+
+[Line : PW CV Det R13]
+Fields : PW CV Det L13, PW CV Det V13
+[Field : PW CV Det L13]
+Use : Name Field
+Set as : "Workflow Status"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V13]
+Use : Name Field
+Set as : @@PWFlat13
+Width : 52
+
+[Line : PW CV Det R14]
+Fields : PW CV Det L14, PW CV Det V14
+[Field : PW CV Det L14]
+Use : Name Field
+Set as : "Manager Approval"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V14]
+Use : Name Field
+Set as : @@PWFlat14
+Width : 52
+
+[Line : PW CV Det R15]
+Fields : PW CV Det L15, PW CV Det V15
+[Field : PW CV Det L15]
+Use : Name Field
+Set as : "HO Approval"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V15]
+Use : Name Field
+Set as : @@PWFlat15
+Width : 52
+
+[Line : PW CV Det R16]
+Fields : PW CV Det L16, PW CV Det V16
+[Field : PW CV Det L16]
+Use : Name Field
+Set as : "Created"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V16]
+Use : Name Field
+Set as : @@PWFlat16
+Width : 52
+
+[Line : PW CV Det R17]
+Fields : PW CV Det L17, PW CV Det V17
+[Field : PW CV Det L17]
+Use : Name Field
+Set as : "Opening Balance"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V17]
+Use : Amount Field
+Set as : $$Number:@@PWFlat17
+Width : 52
+
+[Line : PW CV Det R18]
+Fields : PW CV Det L18, PW CV Det V18
+[Field : PW CV Det L18]
+Use : Name Field
+Set as : "Closing Balance"
+Width : 28
+Style : PW Col Head Style
+[Field : PW CV Det V18]
+Use : Amount Field
+Set as : $$Number:@@PWFlat18
+Width : 52

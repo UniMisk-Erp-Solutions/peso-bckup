@@ -1,0 +1,8 @@
+# PesoWise PITR replication access (persisted on supabase-db-config volume)
+# Applied to live /etc/postgresql/pg_hba.conf by apply-pitr-pg_hba-persistent.sh
+# Marker: PESOWISE_PITR_PERSISTED
+
+# PESOWISE_PITR_ADMIN
+local   replication     supabase_admin                          scram-sha-256
+host    replication     supabase_admin      127.0.0.1/32        scram-sha-256
+host    replication     supabase_admin      10.0.4.1/32         scram-sha-256
