@@ -86,12 +86,12 @@ export function FeaturesTab({ orgId, saved, disabled = false, onSave }: Props) {
           const enabledCount = group.features.filter((f) => draft[f.key] === true).length;
           return (
             <section key={group.id} className="rounded-lg border">
-              <header className="flex items-center justify-between gap-3 border-b bg-muted/30 px-4 py-2.5">
+              <header className="flex items-center justify-between gap-3 border-b border-l-4 border-l-primary bg-primary/10 px-4 py-3">
                 <div>
-                  <h3 className="text-sm font-semibold">{group.label}</h3>
+                  <h3 className="text-base font-bold tracking-tight text-primary">{group.label}</h3>
                   <p className="text-xs text-muted-foreground">{group.description}</p>
                 </div>
-                <Badge variant="outline" className="shrink-0 text-xs">
+                <Badge variant="outline" className="shrink-0 bg-background text-xs font-semibold">
                   {enabledCount} / {group.features.length} on
                 </Badge>
               </header>

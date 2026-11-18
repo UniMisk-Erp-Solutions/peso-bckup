@@ -169,3 +169,4 @@ Manual (use a test organization):
 | 2026-11-18 | 1.4 | Claude Code | Message box when blocking; message saved in new `organizations.block_message`; migration `20261118120000` prepared, not applied. |
 | 2026-11-18 | 1.5 | Claude Code | "Block organization" checkbox moved to its own box in the table (later superseded by 1.6). |
 | 2026-11-18 | 1.6 | Claude Code | Master Admin redesign: compact organizations list; per-organization management view with Overview, Features, Plan & Billing, Users, Activity and Security tabs; categorised Features tab with search and Save / Cancel; Block / Unblock in Security with confirmation; compact expandable maintenance notice; tests. No logic, schema or permission change. Branch `ui/master-admin-redesign`, not merged, not deployed. |
+| 2026-11-18 | 1.7 | Claude Code | Features tab category headings (Access & login, Expenses & forms, ...) made bold and highlighted (tinted bar, accent edge, primary-coloured text). Styling only. |

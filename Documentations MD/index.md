@@ -340,6 +340,7 @@
 
 | Date | Change | By |
 |------|--------|-----|
+| 2026-11-18 | DOC-165 rev 1.7: Features tab category headings bold and highlighted (styling only). No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.6: Master Admin redesign (compact list + organization management tabs); DOC-072 note: disabled notice now compact and expandable. No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.4: block message box (message saved per organization, shown on the block screen); migration `20261118120000_organization_block_message.sql` prepared, not applied. No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.3: Organizations table fits one screen, no horizontal scroll (11 columns merged into 6). No new ID. | Claude Code |
