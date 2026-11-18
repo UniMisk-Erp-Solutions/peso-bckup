@@ -71,6 +71,14 @@ export const ORGANIZATION_FEATURE_KEYS = {
    * built with VITE_PWT_SYNC=1 (see src/lib/pwtSyncGate.ts).
    */
   tally_integration: "tally_integration",
+  /**
+   * Organization block switch (DOC-165). Default OFF for every company: no
+   * organization_features row means NOT blocked. When Master Admin turns it ON
+   * the organization is marked blocked. This step only adds the flag and the
+   * Master Admin toggle; login enforcement and the user-facing message are a
+   * later step.
+   */
+  org_blocked: "org_blocked",
 } as const;
 
 export type OrganizationFeatureKey = (typeof ORGANIZATION_FEATURE_KEYS)[keyof typeof ORGANIZATION_FEATURE_KEYS];
@@ -183,6 +191,11 @@ export const MASTER_ADMIN_FEATURE_DEFINITIONS: FeatureDefinition[] = [
   {
     key: ORGANIZATION_FEATURE_KEYS.tally_integration,
     labelKey: "features.tallyIntegration",
+    requiresSubdomain: false,
+  },
+  {
+    key: ORGANIZATION_FEATURE_KEYS.org_blocked,
+    labelKey: "features.orgBlocked",
     requiresSubdomain: false,
   },
 ];
