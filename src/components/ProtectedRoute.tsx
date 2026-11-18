@@ -8,6 +8,8 @@ import {
   TenantRedirectingError,
   verifyTenantSessionForUser,
 } from "@/lib/tenantAccess";
+import { OrgBlockedScreen } from "@/components/OrgBlockedScreen";
+import { isOrganizationBlocked } from "@/lib/orgBlocked";
 import { Loader2 } from "lucide-react";
 
 interface ProtectedRouteProps {
@@ -42,6 +44,7 @@ export function ProtectedRoute({
     tenantSubdomainLabel,
     signOut,
     isAccountantCashier,
+    organizationFeatureFlags,
   } = useAuth();
   const { blocking, initializing: systemInitializing } = useSystemAvailability();
   const location = useLocation();
@@ -185,6 +188,13 @@ export function ProtectedRoute({
 
   if (!user) {
     return <Navigate to="/auth" replace />;
+  }
+
+  // ── Organization block (DOC-165) ──────────────────────────────────────────
+  // Master Admin ticked `org_blocked` for this user's organization: no page and
+  // no Layout renders, only the block screen with a Sign out button.
+  if (!loading && isOrganizationBlocked(organizationFeatureFlags, userRole)) {
+    return <OrgBlockedScreen onSignOut={signOut} />;
   }
 
   if (isTenantHost && !tenantAllowed) {
