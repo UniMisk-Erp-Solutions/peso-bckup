@@ -559,21 +559,18 @@ export default function MasterAdminDashboard() {
               schema if needed (Dashboard → Settings → API → Reload schema).
             </div>
           )}
-          <div className="overflow-x-auto rounded-lg border">
-            <Table>
-              <TableHeader className="bg-muted/50 [&_th]:whitespace-nowrap [&_th]:text-xs [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wide">
+          <div className="overflow-hidden rounded-lg border">
+            <Table noScrollWrapper className="table-fixed [&_td]:px-2 [&_th]:px-2">
+              <TableHeader className="bg-muted/50 [&_th]:text-xs [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wide">
                 <TableRow>
-                  <TableHead>Organization ID</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Slug</TableHead>
-                  {showTenantSubdomain ? <TableHead>Tenant subdomain</TableHead> : null}
-                  {showTenantStrategy ? <TableHead>Strategy</TableHead> : null}
-                  {showTenantFeatures ? <TableHead>Features</TableHead> : null}
-                  <TableHead>Plan</TableHead>
-                  <TableHead>Payment</TableHead>
-                  <TableHead>Users</TableHead>
-                  <TableHead>Last activity</TableHead>
-                  <TableHead>Blocked</TableHead>
+                  <TableHead className="w-[20%]">Organization</TableHead>
+                  {showTenantSubdomain || showTenantStrategy ? (
+                    <TableHead className="w-[15%]">Tenant / Strategy</TableHead>
+                  ) : null}
+                  {showTenantFeatures ? <TableHead className="w-[31%]">Features</TableHead> : null}
+                  <TableHead className="w-[12%]">Plan / Payment</TableHead>
+                  <TableHead className="w-[9%]">Users</TableHead>
+                  <TableHead className="w-[13%]">Activity / Blocked</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -588,21 +585,24 @@ export default function MasterAdminDashboard() {
                     const memberCount = memberCountByOrgId[org.id] ?? 0;
                     return (
                     <TableRow key={org.id} className={org.is_blocked ? "bg-red-50/60 hover:bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/30"}>
-                      <TableCell className="max-w-[180px]">
+                      <TableCell className="align-top">
+                        <div className="font-semibold break-words">{org.name}</div>
+                        <div className="font-mono text-xs text-muted-foreground break-all">{org.slug}</div>
                         <button
                           type="button"
                           onClick={() => copyToClipboard(org.id, "Organization ID")}
-                          className="flex items-center gap-1.5 w-full font-mono text-xs text-muted-foreground truncate text-left hover:text-foreground hover:bg-muted/50 rounded px-1.5 py-1 -mx-1.5 -my-1 transition-colors"
-                          title="Click to copy"
+                          className="mt-1 flex items-center gap-1.5 w-full font-mono text-[11px] text-muted-foreground truncate text-left hover:text-foreground hover:bg-muted/50 rounded px-1 py-0.5 -mx-1 transition-colors"
+                          title="Click to copy organization ID"
                         >
-                          <Copy className="h-3.5 w-3.5 flex-shrink-0" />
+                          <Copy className="h-3 w-3 flex-shrink-0" />
                           <span className="truncate">{org.id}</span>
                         </button>
                       </TableCell>
-                      <TableCell className="font-semibold">{org.name}</TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{org.slug}</TableCell>
+                      {showTenantSubdomain || showTenantStrategy ? (
+                      <TableCell className="align-top">
+                      <div className="flex flex-col gap-2">
                       {showTenantSubdomain ? (
-                      <TableCell className="align-top min-w-[130px]">
+                      <div>
                         <Input
                           type="text"
                           className="h-8 font-mono text-xs mb-1"
@@ -629,13 +629,13 @@ export default function MasterAdminDashboard() {
                           }}
                           disabled={updatingOrgId === org.id}
                         />
-                        <p className="text-[10px] text-muted-foreground truncate max-w-[140px]" title={org.subdomain ? `https://${org.subdomain}.${appBaseDomain}` : ""}>
+                        <p className="text-[10px] text-muted-foreground truncate" title={org.subdomain ? `https://${org.subdomain}.${appBaseDomain}` : ""}>
                           {org.subdomain ? `https://${org.subdomain}.${appBaseDomain}` : "—"}
                         </p>
-                      </TableCell>
+                      </div>
                       ) : null}
                       {showTenantStrategy ? (
-                      <TableCell className="align-top">
+                      <div>
                         <Select
                           value={org.strategy_slug || "standard"}
                           onValueChange={(value) =>
@@ -643,7 +643,7 @@ export default function MasterAdminDashboard() {
                           }
                           disabled={updatingOrgId === org.id || strategiesList.length === 0}
                         >
-                          <SelectTrigger className="h-8 w-[150px]">
+                          <SelectTrigger className="h-8 w-full">
                             <SelectValue placeholder="—" />
                           </SelectTrigger>
                           <SelectContent>
@@ -654,11 +654,14 @@ export default function MasterAdminDashboard() {
                             ))}
                           </SelectContent>
                         </Select>
+                      </div>
+                      ) : null}
+                      </div>
                       </TableCell>
                       ) : null}
                       {showTenantFeatures ? (
                       <TableCell className="align-top">
-                        <div className="flex flex-col gap-1 min-w-[260px] max-h-64 overflow-y-auto rounded-md border bg-muted/30 p-2">
+                        <div className="flex flex-col gap-1 w-full max-h-64 overflow-y-auto rounded-md border bg-muted/30 p-2">
                           {MASTER_ADMIN_FEATURE_DEFINITIONS.map((def) => (
                             <div
                               key={def.key}
@@ -721,7 +724,8 @@ export default function MasterAdminDashboard() {
                         </div>
                       </TableCell>
                       ) : null}
-                      <TableCell>
+                      <TableCell className="align-top">
+                      <div className="flex flex-col gap-2">
                         <Select
                           value={org.plan ?? "__none__"}
                           onValueChange={(value) =>
@@ -731,7 +735,7 @@ export default function MasterAdminDashboard() {
                           }
                           disabled={updatingOrgId === org.id}
                         >
-                          <SelectTrigger className="h-8 w-[120px]">
+                          <SelectTrigger className="h-8 w-full">
                             <SelectValue placeholder="—" />
                           </SelectTrigger>
                           <SelectContent>
@@ -743,8 +747,6 @@ export default function MasterAdminDashboard() {
                             ))}
                           </SelectContent>
                         </Select>
-                      </TableCell>
-                      <TableCell>
                         <Select
                           value={org.payment_status ?? "__none__"}
                           onValueChange={(value) =>
@@ -754,7 +756,7 @@ export default function MasterAdminDashboard() {
                           }
                           disabled={updatingOrgId === org.id}
                         >
-                          <SelectTrigger className="h-8 w-[120px]">
+                          <SelectTrigger className="h-8 w-full">
                             <SelectValue placeholder="—" />
                           </SelectTrigger>
                           <SelectContent>
@@ -766,8 +768,9 @@ export default function MasterAdminDashboard() {
                             ))}
                           </SelectContent>
                         </Select>
+                      </div>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="align-top">
                         <div className="flex flex-col gap-1">
                           <span className="text-muted-foreground text-xs whitespace-nowrap">
                             {memberCount} / {org.max_users == null ? "∞" : org.max_users}
@@ -777,7 +780,7 @@ export default function MasterAdminDashboard() {
                             min={0}
                             step={1}
                             placeholder="Unlimited"
-                            className="h-8 w-[100px]"
+                            className="h-8 w-full"
                             key={`${org.id}-${org.max_users ?? "u"}`}
                             defaultValue={org.max_users == null ? "" : String(org.max_users)}
                             onBlur={(e) => {
@@ -795,17 +798,19 @@ export default function MasterAdminDashboard() {
                           />
                         </div>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {org.last_activity_at
-                          ? format(new Date(org.last_activity_at), "PPp")
-                          : "—"}
-                      </TableCell>
-                      <TableCell>
-                        {org.is_blocked ? (
-                          <Badge variant="destructive">Yes</Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-muted-foreground">No</Badge>
-                        )}
+                      <TableCell className="align-top">
+                        <div className="flex flex-col items-start gap-2">
+                          <span className="text-xs text-muted-foreground">
+                            {org.last_activity_at
+                              ? format(new Date(org.last_activity_at), "PPp")
+                              : "—"}
+                          </span>
+                          {org.is_blocked ? (
+                            <Badge variant="destructive">Blocked: Yes</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-muted-foreground">Blocked: No</Badge>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
