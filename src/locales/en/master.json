@@ -23,6 +23,6 @@
     "expenseFieldMemory": "Expense Field Memory (recently-used title/destination/purpose suggestions per employee)",
     "expenseDateLocking": "Expense Date Locking (admins can block submissions for selected dates/months/ranges)",
     "tallyIntegration": "Tally Integration (sync reports to TallyPrime and import employee payments from Tally; needs the Tally connector)",
-    "orgBlocked": "Block Organization (when ON, this organization is blocked; login enforcement coming soon)"
+    "orgBlocked": "Block Organization (when ON, users of this organization cannot use PesoWise and see your message)"
   }
 }
