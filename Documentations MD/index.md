@@ -340,6 +340,7 @@
 
 | Date | Change | By |
 |------|--------|-----|
+| 2026-11-18 | DOC-165 rev 1.3: Organizations table fits one screen, no horizontal scroll (11 columns merged into 6). No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.2: Master Admin page UI refresh, styling only. No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.1: ticking the flag now blocks the organization in the app (block screen). No new ID. | Claude Code |
 | 2026-11-18 | Registered DOC-165 (organization block feature flag). Flag and Master Admin toggle only; no migration; login enforcement pending. | Claude Code |

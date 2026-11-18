@@ -100,3 +100,4 @@ None. `organization_features.feature_key` is free text (primary key
 | 2026-11-18 | 1.0 | Claude Code | Flag and Master Admin toggle added. No enforcement yet. Not deployed. |
 | 2026-11-18 | 1.1 | Claude Code | Ticking the flag now blocks the organization in the app (block screen via ProtectedRoute, placeholder message, master admin exempt). Client-side gate only. Not deployed. |
 | 2026-11-18 | 1.2 | Claude Code | Master Admin page UI refresh, styling only (`src/pages/MasterAdminDashboard.tsx`); no logic changes. Branch `ui/master-admin-redesign`, not merged, not deployed. |
+| 2026-11-18 | 1.3 | Claude Code | Organizations table made to fit one screen with no horizontal scroll: 11 columns merged into 6 (Organization, Tenant / Strategy, Features, Plan / Payment, Users, Activity / Blocked), fixed-width layout. Same inputs and handlers, only moved. |
