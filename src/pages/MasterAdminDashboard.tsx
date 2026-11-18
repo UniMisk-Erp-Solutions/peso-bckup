@@ -468,15 +468,20 @@ export default function MasterAdminDashboard() {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Master Admin</h1>
-          <p className="text-muted-foreground">Organizations, contact leads, and system metrics</p>
+      <div className="flex flex-col gap-4 rounded-xl border bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+            <ShieldAlert className="h-6 w-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Master Admin</h1>
+            <p className="text-muted-foreground">Organizations, contact leads, and system metrics</p>
+          </div>
         </div>
         <button
           onClick={handleRefresh}
           disabled={refreshing}
-          className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-muted disabled:opacity-50"
         >
           <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
           Refresh
@@ -494,31 +499,37 @@ export default function MasterAdminDashboard() {
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-3">
-        <Card>
+        <Card className="border-l-4 border-l-blue-500 shadow-sm transition-shadow hover:shadow-md">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Organizations</CardTitle>
-            <Building2 className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium text-muted-foreground">Organizations</CardTitle>
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/30">
+              <Building2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{organizations.length}</div>
+            <div className="text-3xl font-bold">{organizations.length}</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-l-4 border-l-emerald-500 shadow-sm transition-shadow hover:shadow-md">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Contact Leads</CardTitle>
-            <MessageSquare className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium text-muted-foreground">Contact Leads</CardTitle>
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
+              <MessageSquare className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{contactLeads.length}</div>
+            <div className="text-3xl font-bold">{contactLeads.length}</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-l-4 border-l-violet-500 shadow-sm transition-shadow hover:shadow-md">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Storage (total)</CardTitle>
-            <HardDrive className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium text-muted-foreground">Storage (total)</CardTitle>
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
+              <HardDrive className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-3xl font-bold">
               {storageMetrics?.total_size_gb != null
                 ? `${storageMetrics.total_size_gb} GB`
                 : "—"}
@@ -528,10 +539,10 @@ export default function MasterAdminDashboard() {
       </div>
 
       {/* Organizations */}
-      <Card>
-        <CardHeader>
+      <Card className="shadow-sm">
+        <CardHeader className="border-b bg-muted/30">
           <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" />
+            <Users className="h-5 w-5 text-primary" />
             Organizations
           </CardTitle>
           <CardDescription>
@@ -540,7 +551,7 @@ export default function MasterAdminDashboard() {
             <span className="font-mono">{"{subdomain}." + appBaseDomain}</span>.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           {(!tenantOrgColumnsMigrated || !strategiesTableMigrated || !featuresTableMigrated) && (
             <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
               <strong>Tenant controls are limited.</strong> Your API returned missing tables/columns (apply migrations
@@ -548,9 +559,9 @@ export default function MasterAdminDashboard() {
               schema if needed (Dashboard → Settings → API → Reload schema).
             </div>
           )}
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-lg border">
             <Table>
-              <TableHeader>
+              <TableHeader className="bg-muted/50 [&_th]:whitespace-nowrap [&_th]:text-xs [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wide">
                 <TableRow>
                   <TableHead>Organization ID</TableHead>
                   <TableHead>Name</TableHead>
@@ -576,7 +587,7 @@ export default function MasterAdminDashboard() {
                   organizations.map((org) => {
                     const memberCount = memberCountByOrgId[org.id] ?? 0;
                     return (
-                    <TableRow key={org.id}>
+                    <TableRow key={org.id} className={org.is_blocked ? "bg-red-50/60 hover:bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/30"}>
                       <TableCell className="max-w-[180px]">
                         <button
                           type="button"
@@ -588,8 +599,8 @@ export default function MasterAdminDashboard() {
                           <span className="truncate">{org.id}</span>
                         </button>
                       </TableCell>
-                      <TableCell className="font-medium">{org.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{org.slug}</TableCell>
+                      <TableCell className="font-semibold">{org.name}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{org.slug}</TableCell>
                       {showTenantSubdomain ? (
                       <TableCell className="align-top min-w-[130px]">
                         <Input
@@ -647,9 +658,16 @@ export default function MasterAdminDashboard() {
                       ) : null}
                       {showTenantFeatures ? (
                       <TableCell className="align-top">
-                        <div className="flex flex-col gap-1.5 min-w-[220px]">
+                        <div className="flex flex-col gap-1 min-w-[260px] max-h-64 overflow-y-auto rounded-md border bg-muted/30 p-2">
                           {MASTER_ADMIN_FEATURE_DEFINITIONS.map((def) => (
-                            <div key={def.key} className="flex items-start gap-2">
+                            <div
+                              key={def.key}
+                              className={`flex items-start gap-2 rounded px-1.5 py-1 ${
+                                def.key === ORGANIZATION_FEATURE_KEYS.org_blocked
+                                  ? "border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30"
+                                  : "hover:bg-background"
+                              }`}
+                            >
                               <Checkbox
                                 id={`${org.id}-${def.key}`}
                                 className="mt-0.5"
@@ -782,7 +800,13 @@ export default function MasterAdminDashboard() {
                           ? format(new Date(org.last_activity_at), "PPp")
                           : "—"}
                       </TableCell>
-                      <TableCell>{org.is_blocked ? "Yes" : "No"}</TableCell>
+                      <TableCell>
+                        {org.is_blocked ? (
+                          <Badge variant="destructive">Yes</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-muted-foreground">No</Badge>
+                        )}
+                      </TableCell>
                     </TableRow>
                   );
                   })
@@ -794,18 +818,18 @@ export default function MasterAdminDashboard() {
       </Card>
 
       {/* Data & backup (master admin) */}
-      <Card>
-        <CardHeader>
+      <Card className="shadow-sm">
+        <CardHeader className="border-b bg-muted/30">
           <CardTitle className="flex items-center gap-2">
-            <Download className="h-5 w-5" />
+            <Download className="h-5 w-5 text-primary" />
             Data & backup
           </CardTitle>
           <CardDescription>
             Worst-case backup: full website data includes <strong>all expenses, users, memberships, settings, locations, categories, and audit logs from every organization</strong>, plus contact leads and master admin list. Use &quot;Download full website data&quot; to get everything in one file. Optionally include receipt files in a ZIP.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-4 items-center">
+        <CardContent className="space-y-4 pt-6">
+          <div className="flex flex-wrap gap-4 items-center rounded-lg border bg-muted/20 p-4">
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="full-include-receipts"
@@ -824,7 +848,7 @@ export default function MasterAdminDashboard() {
               {backupFullLoading ? "Preparing full backup…" : includeReceiptsFull ? "Download full data (ZIP)" : "Download full website data"}
             </button>
           </div>
-          <div className="flex flex-wrap gap-4 items-center">
+          <div className="flex flex-wrap gap-4 items-center rounded-lg border bg-muted/20 p-4">
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="org-include-receipts"
@@ -859,18 +883,18 @@ export default function MasterAdminDashboard() {
       </Card>
 
       {/* Contact leads */}
-      <Card>
-        <CardHeader>
+      <Card className="shadow-sm">
+        <CardHeader className="border-b bg-muted/30">
           <CardTitle className="flex items-center gap-2">
-            <Mail className="h-5 w-5" />
+            <Mail className="h-5 w-5 text-primary" />
             Contact / Inquiry Leads
           </CardTitle>
           <CardDescription>Submissions from the contact form (Tell us about your organization)</CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
+        <CardContent className="pt-6">
+          <div className="overflow-x-auto rounded-lg border">
             <Table>
-              <TableHeader>
+              <TableHeader className="bg-muted/50 [&_th]:whitespace-nowrap [&_th]:text-xs [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wide">
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
@@ -924,25 +948,25 @@ export default function MasterAdminDashboard() {
 
       {/* Storage */}
       {storageMetrics && (
-        <Card>
-          <CardHeader>
+        <Card className="shadow-sm">
+          <CardHeader className="border-b bg-muted/30">
             <CardTitle className="flex items-center gap-2">
-              <Database className="h-5 w-5" />
+              <Database className="h-5 w-5 text-primary" />
               Storage metrics
             </CardTitle>
             <CardDescription>Database and file storage usage</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-6">
             <div className="grid gap-4 sm:grid-cols-3">
-              <div>
+              <div className="rounded-lg border bg-muted/20 p-4">
                 <p className="text-sm text-muted-foreground">Database</p>
                 <p className="text-xl font-semibold">{storageMetrics.database_size_gb ?? "—"} GB</p>
               </div>
-              <div>
+              <div className="rounded-lg border bg-muted/20 p-4">
                 <p className="text-sm text-muted-foreground">Storage buckets</p>
                 <p className="text-xl font-semibold">{storageMetrics.storage_size_gb ?? "—"} GB</p>
               </div>
-              <div>
+              <div className="rounded-lg border bg-muted/20 p-4">
                 <p className="text-sm text-muted-foreground">Total</p>
                 <p className="text-xl font-semibold">{storageMetrics.total_size_gb ?? "—"} GB</p>
               </div>

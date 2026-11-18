@@ -340,6 +340,7 @@
 
 | Date | Change | By |
 |------|--------|-----|
+| 2026-11-18 | DOC-165 rev 1.2: Master Admin page UI refresh, styling only. No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.1: ticking the flag now blocks the organization in the app (block screen). No new ID. | Claude Code |
 | 2026-11-18 | Registered DOC-165 (organization block feature flag). Flag and Master Admin toggle only; no migration; login enforcement pending. | Claude Code |
 | 2026-10-26 | Registered DOC-159 (review attachment state race) on `hotfix/review-attachment-state-race`. Frontend only, plus prepared `get_review_expense_detail_v2` attachment filter and order. Migration not applied. Not merged. Next ID: DOC-160. | Cursor Grok |
