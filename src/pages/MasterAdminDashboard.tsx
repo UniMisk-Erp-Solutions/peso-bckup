@@ -22,6 +22,8 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { ORG_BLOCKED_MESSAGE, ORG_BLOCK_MESSAGE_MAX, validateBlockMessage } from "@/lib/orgBlocked";
 import { Label } from "@/components/ui/label";
 import {
   Building2,
@@ -147,6 +149,58 @@ export default function MasterAdminDashboard() {
     orgName: string;
   } | null>(null);
   const [activityEnableChecked, setActivityEnableChecked] = useState(false);
+
+  /** Pending "block organization" confirmation: Master Admin writes the message users will see. */
+  const [blockPending, setBlockPending] = useState<{ orgId: string; orgName: string } | null>(null);
+  const [blockMessage, setBlockMessage] = useState("");
+  const [blockSaving, setBlockSaving] = useState(false);
+
+  const openBlockDialog = async (orgId: string, orgName: string) => {
+    setBlockMessage(ORG_BLOCKED_MESSAGE);
+    setBlockPending({ orgId, orgName });
+    // Prefill with the message saved last time (best effort: column may not exist yet).
+    try {
+      const { data } = await (supabase as any)
+        .from("organizations")
+        .select("block_message")
+        .eq("id", orgId)
+        .maybeSingle();
+      const saved = (data as { block_message?: string | null } | null)?.block_message;
+      if (saved && saved.trim()) setBlockMessage(saved);
+    } catch {
+      /* keep the default text */
+    }
+  };
+
+  const confirmBlockOrganization = async () => {
+    if (!blockPending) return;
+    const checked = validateBlockMessage(blockMessage);
+    if (checked.ok === false) {
+      toast({ variant: "destructive", title: "Message required", description: checked.error });
+      return;
+    }
+    setBlockSaving(true);
+    try {
+      const { error } = await (supabase as any)
+        .from("organizations")
+        .update({ block_message: checked.message })
+        .eq("id", blockPending.orgId);
+      if (error) {
+        toast({
+          variant: "destructive",
+          title: "Could not save the message",
+          description:
+            "Apply supabase/migrations/20261118120000_organization_block_message.sql, then try again. " +
+            (error.message ?? ""),
+        });
+        return;
+      }
+      await saveOrganizationFeature(blockPending.orgId, ORGANIZATION_FEATURE_KEYS.org_blocked, true);
+      setBlockPending(null);
+    } finally {
+      setBlockSaving(false);
+    }
+  };
 
   const PLAN_OPTIONS = ["starter", "free-trial", "pro"] as const;
   const PAYMENT_OPTIONS = ["active", "pending", "overdue", "suspended", "cancelled"] as const;
@@ -683,6 +737,9 @@ export default function MasterAdminDashboard() {
                                   ) {
                                     setActivityEnableChecked(false);
                                     setActivityEnablePending({ orgId: org.id, orgName: org.name });
+                                  } else if (def.key === ORGANIZATION_FEATURE_KEYS.org_blocked && v === true) {
+                                    // Blocking asks for the message users will see before saving the flag
+                                    void openBlockDialog(org.id, org.name);
                                   } else {
                                     const featureSavePromise = saveOrganizationFeature(org.id, def.key, v === true);
                                     // Audit log for disable action — non-blocking. Requires SQL file 13.
@@ -979,6 +1036,48 @@ export default function MasterAdminDashboard() {
           </CardContent>
         </Card>
       )}
+      {/* ── Block organization: message box ─────────────────────────────── */}
+      <Dialog
+        open={blockPending !== null}
+        onOpenChange={(open) => {
+          if (!open && !blockSaving) setBlockPending(null);
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-red-500 shrink-0" />
+              Block {blockPending?.orgName}
+            </DialogTitle>
+            <DialogDescription>
+              Every user of this organization will be stopped at login and shown this message instead of the app.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="block-message">Message shown to users</Label>
+            <Textarea
+              id="block-message"
+              rows={5}
+              maxLength={ORG_BLOCK_MESSAGE_MAX}
+              value={blockMessage}
+              onChange={(e) => setBlockMessage(e.target.value)}
+              placeholder="e.g. Your subscription has expired. Please contact support to restore access."
+            />
+            <p className="text-xs text-muted-foreground text-right">
+              {blockMessage.length} / {ORG_BLOCK_MESSAGE_MAX}
+            </p>
+          </div>
+          <DialogFooter className="gap-2 pt-2">
+            <Button variant="outline" disabled={blockSaving} onClick={() => setBlockPending(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" disabled={blockSaving} onClick={() => void confirmBlockOrganization()}>
+              {blockSaving ? "Blocking…" : "Block organization"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ── User Activity Insights enable confirmation dialog ───────────── */}
       <Dialog
         open={activityEnablePending !== null}

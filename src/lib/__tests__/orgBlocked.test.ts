@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isOrganizationBlocked } from "@/lib/orgBlocked";
+import { ORG_BLOCK_MESSAGE_MAX, isOrganizationBlocked, validateBlockMessage } from "@/lib/orgBlocked";
 import {
   MASTER_ADMIN_FEATURE_DEFINITIONS,
   ORGANIZATION_FEATURE_KEYS,
@@ -34,5 +34,22 @@ describe("isOrganizationBlocked (DOC-165)", () => {
     expect(
       MASTER_ADMIN_FEATURE_DEFINITIONS.some((d) => d.key === ORGANIZATION_FEATURE_KEYS.org_blocked),
     ).toBe(true);
+  });
+});
+
+describe("validateBlockMessage (DOC-165)", () => {
+  it("requires a non-empty message", () => {
+    expect(validateBlockMessage("").ok).toBe(false);
+    expect(validateBlockMessage("   \n ").ok).toBe(false);
+  });
+
+  it("trims and accepts a normal message", () => {
+    const r = validateBlockMessage("  Subscription expired.  ");
+    expect(r).toEqual({ ok: true, message: "Subscription expired." });
+  });
+
+  it("accepts exactly the max length and rejects one more", () => {
+    expect(validateBlockMessage("a".repeat(ORG_BLOCK_MESSAGE_MAX)).ok).toBe(true);
+    expect(validateBlockMessage("a".repeat(ORG_BLOCK_MESSAGE_MAX + 1)).ok).toBe(false);
   });
 });

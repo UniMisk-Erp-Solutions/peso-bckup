@@ -61,6 +61,8 @@ src/lib/orgBlocked.ts
 src/components/OrgBlockedScreen.tsx
 src/components/ProtectedRoute.tsx
 src/lib/__tests__/orgBlocked.test.ts
+src/pages/MasterAdminDashboard.tsx
+supabase/migrations/20261118120000_organization_block_message.sql
 src/locales/en/master.json
 src/locales/hi/master.json
 src/locales/gu/master.json
@@ -70,8 +72,19 @@ src/locales/gu/master.json
 
 ## 5) Database / migrations
 
-None. `organization_features.feature_key` is free text (primary key
-`organization_id, feature_key`), so the new key needs no schema change.
+- The flag itself needs none: `organization_features.feature_key` is free text.
+- **Block message (rev 1.4):** `supabase/migrations/20261118120000_organization_block_message.sql`
+  adds `organizations.block_message text`. **Run it manually** (user runs SQL), then PostgREST reloads
+  its schema (the file issues `NOTIFY pgrst, 'reload schema'`). Until it is applied, ticking "Block
+  Organization" shows a "Could not save the message" error and does not block; an already blocked
+  organization simply shows the default message.
+
+**Block message box (rev 1.4):** ticking "Block Organization" opens a dialog where Master Admin
+writes the message (required, max 500 characters, prefilled with the last saved text or the default).
+"Block organization" saves the text to `organizations.block_message` and then saves the flag; Cancel
+changes nothing. The block screen reads `block_message` for the user's organization (falls back to the
+default text if empty or unreadable). Unticking keeps the saved message for next time. Validation lives
+in `validateBlockMessage` (`src/lib/orgBlocked.ts`).
 
 ---
 
@@ -81,6 +94,9 @@ None. `organization_features.feature_key` is free text (primary key
 - [ ] A user of that organization logs in -> sees "Organization blocked" with Sign out only.
 - [ ] A user already logged in gets the block screen after a refresh or tab refocus.
 - [ ] Master Admin can still log in and open /master.
+- [ ] Tick the flag -> a message box opens; Cancel leaves it unticked; empty message is refused; "Block organization" saves and ticks.
+- [ ] The blocked user sees exactly the message Master Admin typed (after the migration is applied).
+- [ ] Without the migration: saving shows the migration hint and nothing is blocked.
 - [ ] Untick the flag -> the user can log in and use the app again.
 - [ ] Users of other organizations are unaffected.
 - [ ] `npx vitest run src/lib/__tests__/orgBlocked.test.ts` passes (6 tests).
@@ -100,4 +116,5 @@ None. `organization_features.feature_key` is free text (primary key
 | 2026-11-18 | 1.0 | Claude Code | Flag and Master Admin toggle added. No enforcement yet. Not deployed. |
 | 2026-11-18 | 1.1 | Claude Code | Ticking the flag now blocks the organization in the app (block screen via ProtectedRoute, placeholder message, master admin exempt). Client-side gate only. Not deployed. |
 | 2026-11-18 | 1.2 | Claude Code | Master Admin page UI refresh, styling only (`src/pages/MasterAdminDashboard.tsx`); no logic changes. Branch `ui/master-admin-redesign`, not merged, not deployed. |
+| 2026-11-18 | 1.4 | Claude Code | Message box when blocking (required message, saved in new `organizations.block_message`, shown on the block screen); migration `20261118120000_organization_block_message.sql` prepared, not applied; label text updated. |
 | 2026-11-18 | 1.3 | Claude Code | Organizations table made to fit one screen with no horizontal scroll: 11 columns merged into 6 (Organization, Tenant / Strategy, Features, Plan / Payment, Users, Activity / Blocked), fixed-width layout. Same inputs and handlers, only moved. |
