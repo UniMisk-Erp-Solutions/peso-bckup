@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,7 +12,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -21,7 +20,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ORG_BLOCKED_MESSAGE, ORG_BLOCK_MESSAGE_MAX, validateBlockMessage } from "@/lib/orgBlocked";
 import { Label } from "@/components/ui/label";
@@ -33,10 +31,15 @@ import {
   Users,
   MessageSquare,
   RefreshCw,
-  Copy,
   Download,
   ShieldAlert,
+  ChevronDown,
+  AlertTriangle,
 } from "lucide-react";
+import { OrganizationsTable } from "@/components/master-admin/OrganizationsTable";
+import { OrganizationManagement } from "@/components/master-admin/OrganizationManagement";
+import type { Organization, OrganizationUpdates } from "@/components/master-admin/types";
+import type { FeatureChange } from "@/lib/masterAdminFeatures";
 import {
   Dialog,
   DialogContent,
@@ -47,7 +50,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { fetchFullBackup, downloadFullBackup, downloadFullBackupWithReceipts, fetchOrgBackup, downloadBackup, downloadBackupWithReceipts, fetchReceiptBlobs } from "@/lib/backupData";
-import { MASTER_ADMIN_FEATURE_DEFINITIONS, ORGANIZATION_FEATURE_KEYS, STRATEGY_OPTIONS_FALLBACK } from "@/lib/organizationFeatureKeys";
+import { ORGANIZATION_FEATURE_KEYS, STRATEGY_OPTIONS_FALLBACK } from "@/lib/organizationFeatureKeys";
 import { getAppBaseDomain } from "@/lib/tenantContext";
 import { SystemMaintenanceCard } from "@/components/SystemMaintenanceCard";
 import { SystemBroadcastCard } from "@/components/SystemBroadcastCard";
@@ -55,43 +58,38 @@ import { SYSTEM_STATUS_CONTROL_ENABLED } from "@/config/systemStatusFeature";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
-const SUBDOMAIN_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-
+/** Compact, expandable notice (same wording as before, collapsed by default). */
 function SystemStatusDisabledCard() {
+  const [open, setOpen] = useState(false);
   return (
-    <Card className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
-      <CardHeader>
-        <CardTitle className="text-amber-800 dark:text-amber-200 text-base">
+    <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left"
+      >
+        <span className="flex items-center gap-2 text-sm font-medium">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
           System notices temporarily disabled
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="text-sm text-amber-700 dark:text-amber-300 space-y-1.5">
-        <p>
-          Maintenance scheduling and broadcast announcements are temporarily unavailable
-          while the storage provider is being changed.
-        </p>
-        <ul className="list-disc list-inside space-y-1 mt-2">
-          <li>No maintenance status is currently being read.</li>
-          <li>No users will be blocked by the maintenance system.</li>
-          <li>Existing implementation has been retained for future reactivation.</li>
-        </ul>
-      </CardContent>
-    </Card>
+        </span>
+        <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open ? (
+        <div className="space-y-1.5 border-t border-amber-200 px-4 py-3 text-sm text-amber-700 dark:border-amber-800 dark:text-amber-300">
+          <p>
+            Maintenance scheduling and broadcast announcements are temporarily unavailable
+            while the storage provider is being changed.
+          </p>
+          <ul className="list-disc list-inside space-y-1 mt-2">
+            <li>No maintenance status is currently being read.</li>
+            <li>No users will be blocked by the maintenance system.</li>
+            <li>Existing implementation has been retained for future reactivation.</li>
+          </ul>
+        </div>
+      ) : null}
+    </div>
   );
-}
-
-interface Organization {
-  id: string;
-  name: string;
-  slug: string;
-  plan: string | null;
-  payment_status: string | null;
-  is_blocked: boolean | null;
-  last_activity_at: string | null;
-  created_at: string;
-  max_users: number | null;
-  subdomain?: string | null;
-  strategy_slug?: string;
 }
 
 interface ContactLead {
@@ -160,6 +158,7 @@ export default function MasterAdminDashboard() {
     setBlockPending({ orgId, orgName });
     // Prefill with the message saved last time (best effort: column may not exist yet).
     try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data } = await (supabase as any)
         .from("organizations")
         .select("block_message")
@@ -181,6 +180,7 @@ export default function MasterAdminDashboard() {
     }
     setBlockSaving(true);
     try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error } = await (supabase as any)
         .from("organizations")
         .update({ block_message: checked.message })
@@ -202,24 +202,23 @@ export default function MasterAdminDashboard() {
     }
   };
 
-  const PLAN_OPTIONS = ["starter", "free-trial", "pro"] as const;
-  const PAYMENT_OPTIONS = ["active", "pending", "overdue", "suspended", "cancelled"] as const;
+  /** Pending "unblock organization" confirmation. */
+  const [unblockPending, setUnblockPending] = useState<{ orgId: string; orgName: string } | null>(null);
+
+  /** The organization being managed is kept in the URL (?org=<id>) so refresh and Back work. */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedOrgId = searchParams.get("org");
+  const openOrganization = (orgId: string) => setSearchParams({ org: orgId });
+  const closeOrganization = () => setSearchParams({});
+
   const appBaseDomain = getAppBaseDomain();
   const showTenantSubdomain = tenantOrgColumnsMigrated;
   const showTenantStrategy = tenantOrgColumnsMigrated && strategiesTableMigrated;
   const showTenantFeatures = featuresTableMigrated;
-  const orgTableColSpan =
-    8 + (showTenantSubdomain ? 1 : 0) + (showTenantStrategy ? 1 : 0) + (showTenantFeatures ? 1 : 0);
 
   const updateOrganization = async (
     orgId: string,
-    updates: {
-      plan?: string | null;
-      payment_status?: string | null;
-      max_users?: number | null;
-      subdomain?: string | null;
-      strategy_slug?: string;
-    },
+    updates: OrganizationUpdates,
   ) => {
     if (
       (updates.subdomain !== undefined || updates.strategy_slug !== undefined) &&
@@ -303,6 +302,44 @@ export default function MasterAdminDashboard() {
     } finally {
       setUpdatingOrgId(null);
     }
+  };
+
+  /**
+   * Features tab "Save": applies each changed flag with the same saveOrganizationFeature used
+   * before the redesign, so the behaviour for every flag is unchanged. Enabling
+   * user_activity_insights still goes through the confirmation dialog (which saves it and
+   * writes the audit row); disabling it still writes the "disabled" audit row afterwards.
+   */
+  const saveFeatureChanges = async (orgId: string, orgName: string, changes: FeatureChange[]) => {
+    for (const change of changes) {
+      if (change.key === ORGANIZATION_FEATURE_KEYS.user_activity_insights && change.enabled) {
+        setActivityEnableChecked(false);
+        setActivityEnablePending({ orgId, orgName });
+        continue;
+      }
+      await saveOrganizationFeature(orgId, change.key, change.enabled);
+      if (change.key === ORGANIZATION_FEATURE_KEYS.user_activity_insights && !change.enabled) {
+        // Audit log for disable action — non-blocking. Requires SQL file 13.
+        supabase
+          .rpc("record_user_activity_feature_audit", {
+            p_organization_id: orgId,
+            p_action: "disabled",
+            p_confirmation_version: null,
+            p_confirmation_text: null,
+          })
+          .then(({ error }) => {
+            if (error) {
+              console.warn("[ActivityAudit] disable audit failed (non-blocking):", error.message);
+            }
+          });
+      }
+    }
+  };
+
+  const confirmUnblockOrganization = async () => {
+    if (!unblockPending) return;
+    await saveOrganizationFeature(unblockPending.orgId, ORGANIZATION_FEATURE_KEYS.org_blocked, false);
+    setUnblockPending(null);
   };
 
   const load = async () => {
@@ -520,8 +557,36 @@ export default function MasterAdminDashboard() {
     );
   }
 
+  const selectedOrg = selectedOrgId ? organizations.find((o) => o.id === selectedOrgId) ?? null : null;
+  const blockedByFlag: Record<string, boolean> = {};
+  for (const o of organizations) {
+    blockedByFlag[o.id] = featuresByOrgId[o.id]?.[ORGANIZATION_FEATURE_KEYS.org_blocked] === true;
+  }
+
   return (
     <div className="space-y-8">
+      {selectedOrg ? (
+        <OrganizationManagement
+          org={selectedOrg}
+          memberCount={memberCountByOrgId[selectedOrg.id] ?? 0}
+          flags={featuresByOrgId[selectedOrg.id] ?? {}}
+          blocked={blockedByFlag[selectedOrg.id] === true || Boolean(selectedOrg.is_blocked)}
+          flagBlocked={blockedByFlag[selectedOrg.id] === true}
+          appBaseDomain={appBaseDomain}
+          showTenantSubdomain={showTenantSubdomain}
+          showTenantStrategy={showTenantStrategy}
+          showTenantFeatures={showTenantFeatures}
+          strategiesList={strategiesList}
+          updating={updatingOrgId === selectedOrg.id}
+          onBack={closeOrganization}
+          onCopyId={() => copyToClipboard(selectedOrg.id, "Organization ID")}
+          onUpdate={(updates) => updateOrganization(selectedOrg.id, updates)}
+          onSaveFeatures={(changes) => saveFeatureChanges(selectedOrg.id, selectedOrg.name, changes)}
+          onBlock={() => void openBlockDialog(selectedOrg.id, selectedOrg.name)}
+          onUnblock={() => setUnblockPending({ orgId: selectedOrg.id, orgName: selectedOrg.name })}
+        />
+      ) : (
+        <>
       <div className="flex flex-col gap-4 rounded-xl border bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
@@ -613,269 +678,12 @@ export default function MasterAdminDashboard() {
               schema if needed (Dashboard → Settings → API → Reload schema).
             </div>
           )}
-          <div className="overflow-hidden rounded-lg border">
-            <Table noScrollWrapper className="table-fixed [&_td]:px-2 [&_th]:px-2">
-              <TableHeader className="bg-muted/50 [&_th]:text-xs [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wide">
-                <TableRow>
-                  <TableHead className="w-[20%]">Organization</TableHead>
-                  {showTenantSubdomain || showTenantStrategy ? (
-                    <TableHead className="w-[15%]">Tenant / Strategy</TableHead>
-                  ) : null}
-                  {showTenantFeatures ? <TableHead className="w-[31%]">Features</TableHead> : null}
-                  <TableHead className="w-[12%]">Plan / Payment</TableHead>
-                  <TableHead className="w-[9%]">Users</TableHead>
-                  <TableHead className="w-[13%]">Activity / Blocked</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {organizations.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={orgTableColSpan} className="text-center text-muted-foreground">
-                      No organizations
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  organizations.map((org) => {
-                    const memberCount = memberCountByOrgId[org.id] ?? 0;
-                    return (
-                    <TableRow key={org.id} className={org.is_blocked ? "bg-red-50/60 hover:bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/30"}>
-                      <TableCell className="align-top">
-                        <div className="font-semibold break-words">{org.name}</div>
-                        <div className="font-mono text-xs text-muted-foreground break-all">{org.slug}</div>
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard(org.id, "Organization ID")}
-                          className="mt-1 flex items-center gap-1.5 w-full font-mono text-[11px] text-muted-foreground truncate text-left hover:text-foreground hover:bg-muted/50 rounded px-1 py-0.5 -mx-1 transition-colors"
-                          title="Click to copy organization ID"
-                        >
-                          <Copy className="h-3 w-3 flex-shrink-0" />
-                          <span className="truncate">{org.id}</span>
-                        </button>
-                      </TableCell>
-                      {showTenantSubdomain || showTenantStrategy ? (
-                      <TableCell className="align-top">
-                      <div className="flex flex-col gap-2">
-                      {showTenantSubdomain ? (
-                      <div>
-                        <Input
-                          type="text"
-                          className="h-8 font-mono text-xs mb-1"
-                          defaultValue={org.subdomain ?? ""}
-                          key={`sd-${org.id}-${org.subdomain ?? "x"}`}
-                          placeholder="e.g. ml"
-                          onBlur={(e) => {
-                            const raw = e.target.value.trim().toLowerCase();
-                            if (raw === "") {
-                              if (org.subdomain) void updateOrganization(org.id, { subdomain: null });
-                              return;
-                            }
-                            if (!SUBDOMAIN_RE.test(raw)) {
-                              toast({
-                                variant: "destructive",
-                                title: "Invalid subdomain",
-                                description: "Use lowercase letters, numbers, and hyphens (63 chars max per label).",
-                              });
-                              return;
-                            }
-                            if (raw !== (org.subdomain || "")) {
-                              void updateOrganization(org.id, { subdomain: raw });
-                            }
-                          }}
-                          disabled={updatingOrgId === org.id}
-                        />
-                        <p className="text-[10px] text-muted-foreground truncate" title={org.subdomain ? `https://${org.subdomain}.${appBaseDomain}` : ""}>
-                          {org.subdomain ? `https://${org.subdomain}.${appBaseDomain}` : "—"}
-                        </p>
-                      </div>
-                      ) : null}
-                      {showTenantStrategy ? (
-                      <div>
-                        <Select
-                          value={org.strategy_slug || "standard"}
-                          onValueChange={(value) =>
-                            updateOrganization(org.id, { strategy_slug: value })
-                          }
-                          disabled={updatingOrgId === org.id || strategiesList.length === 0}
-                        >
-                          <SelectTrigger className="h-8 w-full">
-                            <SelectValue placeholder="—" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {strategiesList.map((s) => (
-                              <SelectItem key={s.slug} value={s.slug}>
-                                {s.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      ) : null}
-                      </div>
-                      </TableCell>
-                      ) : null}
-                      {showTenantFeatures ? (
-                      <TableCell className="align-top">
-                        <div className="flex flex-col gap-1 w-full max-h-64 overflow-y-auto rounded-md border bg-muted/30 p-2">
-                          {MASTER_ADMIN_FEATURE_DEFINITIONS.map((def) => (
-                            <div
-                              key={def.key}
-                              className={`flex items-start gap-2 rounded px-1.5 py-1 ${
-                                def.key === ORGANIZATION_FEATURE_KEYS.org_blocked
-                                  ? "border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30"
-                                  : "hover:bg-background"
-                              }`}
-                            >
-                              <Checkbox
-                                id={`${org.id}-${def.key}`}
-                                className="mt-0.5"
-                                checked={featuresByOrgId[org.id]?.[def.key] ?? false}
-                                onCheckedChange={(v) => {
-                                  // Enabling user_activity_insights requires admin confirmation first
-                                  if (
-                                    def.key === ORGANIZATION_FEATURE_KEYS.user_activity_insights &&
-                                    v === true
-                                  ) {
-                                    setActivityEnableChecked(false);
-                                    setActivityEnablePending({ orgId: org.id, orgName: org.name });
-                                  } else if (def.key === ORGANIZATION_FEATURE_KEYS.org_blocked && v === true) {
-                                    // Blocking asks for the message users will see before saving the flag
-                                    void openBlockDialog(org.id, org.name);
-                                  } else {
-                                    const featureSavePromise = saveOrganizationFeature(org.id, def.key, v === true);
-                                    // Audit log for disable action — non-blocking. Requires SQL file 13.
-                                    if (def.key === ORGANIZATION_FEATURE_KEYS.user_activity_insights && v === false) {
-                                      void featureSavePromise.then(() => {
-                                        supabase
-                                          .rpc("record_user_activity_feature_audit", {
-                                            p_organization_id: org.id,
-                                            p_action: "disabled",
-                                            p_confirmation_version: null,
-                                            p_confirmation_text: null,
-                                          })
-                                          .then(({ error }) => {
-                                            if (error) {
-                                              console.warn("[ActivityAudit] disable audit failed (non-blocking):", error.message);
-                                            }
-                                          });
-                                      });
-                                    } else {
-                                      void featureSavePromise;
-                                    }
-                                  }
-                                }}
-                                disabled={updatingOrgId === org.id}
-                              />
-                              <Label
-                                htmlFor={`${org.id}-${def.key}`}
-                                className="text-xs font-normal cursor-pointer leading-snug"
-                              >
-                                {t(def.labelKey)}
-                                {def.requiresSubdomain ? (
-                                  <Badge variant="outline" className="ml-1 text-[10px] px-1 py-0">
-                                    subdomain
-                                  </Badge>
-                                ) : null}
-                              </Label>
-                            </div>
-                          ))}
-                        </div>
-                      </TableCell>
-                      ) : null}
-                      <TableCell className="align-top">
-                      <div className="flex flex-col gap-2">
-                        <Select
-                          value={org.plan ?? "__none__"}
-                          onValueChange={(value) =>
-                            updateOrganization(org.id, {
-                              plan: value === "__none__" ? null : value,
-                            })
-                          }
-                          disabled={updatingOrgId === org.id}
-                        >
-                          <SelectTrigger className="h-8 w-full">
-                            <SelectValue placeholder="—" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">—</SelectItem>
-                            {PLAN_OPTIONS.map((p) => (
-                              <SelectItem key={p} value={p}>
-                                {p}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Select
-                          value={org.payment_status ?? "__none__"}
-                          onValueChange={(value) =>
-                            updateOrganization(org.id, {
-                              payment_status: value === "__none__" ? null : value,
-                            })
-                          }
-                          disabled={updatingOrgId === org.id}
-                        >
-                          <SelectTrigger className="h-8 w-full">
-                            <SelectValue placeholder="—" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">—</SelectItem>
-                            {PAYMENT_OPTIONS.map((p) => (
-                              <SelectItem key={p} value={p}>
-                                {p}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      </TableCell>
-                      <TableCell className="align-top">
-                        <div className="flex flex-col gap-1">
-                          <span className="text-muted-foreground text-xs whitespace-nowrap">
-                            {memberCount} / {org.max_users == null ? "∞" : org.max_users}
-                          </span>
-                          <Input
-                            type="number"
-                            min={0}
-                            step={1}
-                            placeholder="Unlimited"
-                            className="h-8 w-full"
-                            key={`${org.id}-${org.max_users ?? "u"}`}
-                            defaultValue={org.max_users == null ? "" : String(org.max_users)}
-                            onBlur={(e) => {
-                              const raw = e.target.value.trim();
-                              if (raw === "") {
-                                if (org.max_users != null) updateOrganization(org.id, { max_users: null });
-                                return;
-                              }
-                              const n = parseInt(raw, 10);
-                              if (!Number.isNaN(n) && n >= 0 && n !== (org.max_users ?? undefined)) {
-                                updateOrganization(org.id, { max_users: n });
-                              }
-                            }}
-                            disabled={updatingOrgId === org.id}
-                          />
-                        </div>
-                      </TableCell>
-                      <TableCell className="align-top">
-                        <div className="flex flex-col items-start gap-2">
-                          <span className="text-xs text-muted-foreground">
-                            {org.last_activity_at
-                              ? format(new Date(org.last_activity_at), "PPp")
-                              : "—"}
-                          </span>
-                          {org.is_blocked ? (
-                            <Badge variant="destructive">Blocked: Yes</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-muted-foreground">Blocked: No</Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </div>
+          <OrganizationsTable
+            organizations={organizations}
+            memberCountByOrgId={memberCountByOrgId}
+            blockedByFlag={blockedByFlag}
+            onManage={openOrganization}
+          />
         </CardContent>
       </Card>
 
@@ -1036,6 +844,9 @@ export default function MasterAdminDashboard() {
           </CardContent>
         </Card>
       )}
+        </>
+      )}
+
       {/* ── Block organization: message box ─────────────────────────────── */}
       <Dialog
         open={blockPending !== null}
@@ -1073,6 +884,27 @@ export default function MasterAdminDashboard() {
             </Button>
             <Button variant="destructive" disabled={blockSaving} onClick={() => void confirmBlockOrganization()}>
               {blockSaving ? "Blocking…" : "Block organization"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Unblock organization: confirmation ──────────────────────────── */}
+      <Dialog open={unblockPending !== null} onOpenChange={(open) => { if (!open) setUnblockPending(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Unblock {unblockPending?.orgName}?</DialogTitle>
+            <DialogDescription>
+              Users of this organization will be able to log in and use PesoWise again. The saved block message is kept for next time.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 pt-2">
+            <Button variant="outline" onClick={() => setUnblockPending(null)}>Cancel</Button>
+            <Button
+              disabled={updatingOrgId === unblockPending?.orgId}
+              onClick={() => void confirmUnblockOrganization()}
+            >
+              Unblock organization
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -2,7 +2,7 @@
 
 **Doc ID:** DOC-072  
 **Status:** active  
-**Last updated:** 2026-07-28  
+**Last updated:** 2026-11-18  
 **Owner / area:** System maintenance, MasterAdminDashboard, SystemAvailabilityContext, public/master APIs
 
 ---
@@ -188,9 +188,11 @@ No auth, no store read, no store write.
 )}
 ```
 
-`SystemStatusDisabledCard` is a lightweight informational card — no buttons,
-no requests. It explains that maintenance scheduling and broadcast announcements
-are temporarily unavailable.
+`SystemStatusDisabledCard` is a lightweight informational notice — no requests.
+It explains that maintenance scheduling and broadcast announcements are temporarily
+unavailable. Since the Master Admin redesign (DOC-165) it is a compact notice,
+collapsed by default, that expands on click; the wording is unchanged and its only
+control is the expand/collapse toggle.
 
 ---
 
@@ -302,3 +304,4 @@ None. Pure frontend and API change — no SQL, no migrations, no RLS changes.
 | Date | Revision | Author | Notes |
 |------|----------|--------|-------|
 | 2026-07-28 | 1.0 | Mithil Mistry | Initial — kill switch; 2 feature flags; 8 files modified; 56 tests; 1530 total; no SQL |
+| 2026-11-18 | 1.1 | Claude Code | Disabled notice made compact and expandable in the Master Admin redesign (DOC-165); wording and behaviour unchanged. |
