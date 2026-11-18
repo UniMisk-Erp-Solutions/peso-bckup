@@ -373,6 +373,7 @@
 
 | Date | Change | By |
 |------|--------|-----|
+| 2026-11-18 | DOC-165 rev 1.7: Features tab category headings bold and highlighted (styling only). No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.6: Master Admin redesign (compact list + organization management tabs); DOC-072 note: disabled notice now compact and expandable. No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.5: "Block organization" checkbox moved to its own box in the Activity / Blocked column (still opens the message box). No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.4: block message box (message saved per organization, shown on the block screen); migration `20261118120000_organization_block_message.sql` prepared, not applied. No new ID. | Claude Code |
