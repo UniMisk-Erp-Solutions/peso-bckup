@@ -621,10 +621,10 @@ export default function MasterAdminDashboard() {
                   {showTenantSubdomain || showTenantStrategy ? (
                     <TableHead className="w-[15%]">Tenant / Strategy</TableHead>
                   ) : null}
-                  {showTenantFeatures ? <TableHead className="w-[31%]">Features</TableHead> : null}
+                  {showTenantFeatures ? <TableHead className="w-[28%]">Features</TableHead> : null}
                   <TableHead className="w-[12%]">Plan / Payment</TableHead>
                   <TableHead className="w-[9%]">Users</TableHead>
-                  <TableHead className="w-[13%]">Activity / Blocked</TableHead>
+                  <TableHead className="w-[16%]">Activity / Blocked</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -637,8 +637,10 @@ export default function MasterAdminDashboard() {
                 ) : (
                   organizations.map((org) => {
                     const memberCount = memberCountByOrgId[org.id] ?? 0;
+                    const flagBlocked = featuresByOrgId[org.id]?.[ORGANIZATION_FEATURE_KEYS.org_blocked] === true;
+                    const blockedNow = flagBlocked || Boolean(org.is_blocked);
                     return (
-                    <TableRow key={org.id} className={org.is_blocked ? "bg-red-50/60 hover:bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/30"}>
+                    <TableRow key={org.id} className={blockedNow ? "bg-red-50/60 hover:bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/30"}>
                       <TableCell className="align-top">
                         <div className="font-semibold break-words">{org.name}</div>
                         <div className="font-mono text-xs text-muted-foreground break-all">{org.slug}</div>
@@ -716,14 +718,13 @@ export default function MasterAdminDashboard() {
                       {showTenantFeatures ? (
                       <TableCell className="align-top">
                         <div className="flex flex-col gap-1 w-full max-h-64 overflow-y-auto rounded-md border bg-muted/30 p-2">
-                          {MASTER_ADMIN_FEATURE_DEFINITIONS.map((def) => (
+                          {MASTER_ADMIN_FEATURE_DEFINITIONS.filter(
+                            // "Block Organization" has its own box in the Activity / Blocked column
+                            (def) => def.key !== ORGANIZATION_FEATURE_KEYS.org_blocked,
+                          ).map((def) => (
                             <div
                               key={def.key}
-                              className={`flex items-start gap-2 rounded px-1.5 py-1 ${
-                                def.key === ORGANIZATION_FEATURE_KEYS.org_blocked
-                                  ? "border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30"
-                                  : "hover:bg-background"
-                              }`}
+                              className="flex items-start gap-2 rounded px-1.5 py-1 hover:bg-background"
                             >
                               <Checkbox
                                 id={`${org.id}-${def.key}`}
@@ -862,11 +863,39 @@ export default function MasterAdminDashboard() {
                               ? format(new Date(org.last_activity_at), "PPp")
                               : "—"}
                           </span>
-                          {org.is_blocked ? (
+                          {blockedNow ? (
                             <Badge variant="destructive">Blocked: Yes</Badge>
                           ) : (
                             <Badge variant="outline" className="text-muted-foreground">Blocked: No</Badge>
                           )}
+                          <div
+                            className={`flex w-full items-start gap-2 rounded-md border p-2 ${
+                              flagBlocked
+                                ? "border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/30"
+                                : "border-border bg-muted/30"
+                            }`}
+                          >
+                            <Checkbox
+                              id={`${org.id}-${ORGANIZATION_FEATURE_KEYS.org_blocked}`}
+                              className="mt-0.5"
+                              checked={flagBlocked}
+                              onCheckedChange={(v) => {
+                                if (v === true) {
+                                  // Blocking asks for the message users will see before saving the flag
+                                  void openBlockDialog(org.id, org.name);
+                                } else {
+                                  void saveOrganizationFeature(org.id, ORGANIZATION_FEATURE_KEYS.org_blocked, false);
+                                }
+                              }}
+                              disabled={updatingOrgId === org.id}
+                            />
+                            <Label
+                              htmlFor={`${org.id}-${ORGANIZATION_FEATURE_KEYS.org_blocked}`}
+                              className="cursor-pointer text-xs font-semibold leading-snug text-red-700 dark:text-red-300"
+                            >
+                              Block organization
+                            </Label>
+                          </div>
                         </div>
                       </TableCell>
                     </TableRow>
