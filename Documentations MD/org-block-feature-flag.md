@@ -42,6 +42,12 @@ to actually block. The final message text will be provided later.
 session and does not block direct API or RLS access. A database-level block (RLS or a login hook)
 is a separate, later step if required.
 
+**Master Admin UI refresh (rev 1.2, styling only):** the Master Admin page was restyled (header with
+icon, coloured stat cards, bordered tables with a tinted header, Features column in a scrollable
+bordered panel with "Block Organization" highlighted in red, Blocked column as a badge and blocked
+rows tinted, backup and storage tiles in bordered boxes). Only class names and wrapper markup
+changed in `MasterAdminDashboard.tsx`; no state, handler, query or save logic was touched.
+
 Note: `organizations.is_blocked` (2025 master-admin migration) is a separate, read-only column and is
 not used by this feature.
 
@@ -93,3 +99,4 @@ None. `organization_features.feature_key` is free text (primary key
 |------|----------|--------|-------|
 | 2026-11-18 | 1.0 | Claude Code | Flag and Master Admin toggle added. No enforcement yet. Not deployed. |
 | 2026-11-18 | 1.1 | Claude Code | Ticking the flag now blocks the organization in the app (block screen via ProtectedRoute, placeholder message, master admin exempt). Client-side gate only. Not deployed. |
+| 2026-11-18 | 1.2 | Claude Code | Master Admin page UI refresh, styling only (`src/pages/MasterAdminDashboard.tsx`); no logic changes. Branch `ui/master-admin-redesign`, not merged, not deployed. |

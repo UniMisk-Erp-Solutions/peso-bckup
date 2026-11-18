@@ -365,11 +365,13 @@
 |------|-----|--------|-------|
 | 2026-11-18 | 1.0 | Claude Code | `org_blocked` flag and Master Admin toggle added; no enforcement yet; not deployed. |
 | 2026-11-18 | 1.1 | Claude Code | Flag now blocks the organization in the app (block screen via ProtectedRoute); placeholder message; not deployed. |
+| 2026-11-18 | 1.2 | Claude Code | Master Admin page UI refresh (styling only, no logic change) on `ui/master-admin-redesign`; not merged. |
 
 ## Index revision log
 
 | Date | Change | By |
 |------|--------|-----|
+| 2026-11-18 | DOC-165 rev 1.2: Master Admin page UI refresh, styling only. No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.1: ticking the flag now blocks the organization in the app (block screen). No new ID. | Claude Code |
 | 2026-11-18 | Registered DOC-165 (organization block feature flag). Flag and Master Admin toggle only; no migration; login enforcement pending. Next ID: DOC-166. | Claude Code |
 | 2026-10-26 | Registered DOC-159 (review attachment state race) on `hotfix/review-attachment-state-race`. Frontend only, plus prepared `get_review_expense_detail_v2` attachment filter and order. Migration not applied. Not merged. Next ID: DOC-160. | Cursor Grok |
