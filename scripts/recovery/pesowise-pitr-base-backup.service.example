@@ -1,0 +1,11 @@
+[Unit]
+Description=PesoWise PITR base backup (manual/timer triggered)
+After=network-online.target pesowise-pitr-pg-receivewal.service
+
+[Service]
+Type=oneshot
+User=hasto
+Environment=PGPASSFILE=/var/lib/pesowise-pitr-backup/.pgpass
+ExecStart=/bin/bash -c '/path/to/peso-bckup/scripts/recovery/create-base-backup.sh --destination /var/lib/pesowise-pitr-backup/base --host 127.0.0.1 --port 5432 --execute'
+
+# DISABLED BY DEFAULT — pair with pesowise-pitr-base-backup.timer.example

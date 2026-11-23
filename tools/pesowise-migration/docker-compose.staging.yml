@@ -1,0 +1,23 @@
+# Isolated PesoWise migration staging (API + optional frontend build).
+name: pesowise-migration-staging
+
+networks:
+  pesowise_migration_internal:
+    external: true
+    name: pesowise_migration_internal
+
+services:
+  api:
+    container_name: pesowise-api-migration-staging
+    image: node:22-alpine
+    working_dir: /app/backend
+    command: sh -c "npm install && npm run dev"
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    volumes:
+      - ../../backend:/app/backend:ro
+    ports:
+      - "127.0.0.1:18787:8787"
+    networks:
+      - pesowise_migration_internal

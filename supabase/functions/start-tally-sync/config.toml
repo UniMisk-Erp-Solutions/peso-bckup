@@ -1,0 +1,2 @@
+[functions.start-tally-sync]
+verify_jwt = false

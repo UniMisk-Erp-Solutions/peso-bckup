@@ -173,6 +173,10 @@
 | DOC-159 | Review attachment state race | [`review-attachment-state-race.md`](./review-attachment-state-race.md) | 2026-10-26 | in progress | Admin and Review Expenses could paint the previous expense's receipts after a fast switch. Late responses are ignored, previous rows and the preview clear immediately, and a mismatched attachment row is not rendered. `20261101100000_review_detail_v2_active_attachments_ordered.sql` is prepared only (active attachments, stable order). Not applied, not merged. |
 | DOC-165 | Organization block and Master Admin organization management | [`org-block-feature-flag.md`](./org-block-feature-flag.md) | 2026-11-18 | in progress | `org_blocked` flag with a required block message shown to the organization's users; Master Admin redesigned: compact organizations list and a per-organization management view (Overview, Features, Plan & Billing, Users, Activity, Security) with categorised, searchable Features and Save / Cancel; Block / Unblock in Security. No logic or schema change for the redesign; message column migration prepared, not applied. |
 | DOC-166 | Selected expenses total amount | [`selected-expenses-total-amount.md`](./selected-expenses-total-amount.md) | 2026-11-23 | in progress | All Expenses bulk bar now shows the combined amount of all selected expenses next to the count. Frontend only; no migration. |
+| DOC-163 | Automatic PesoWise website restore from Hasto | [`hasto-ip-and-pesowise-backup-site-sync.md`](./hasto-ip-and-pesowise-backup-site-sync.md) | 2026-11-16 | deployed | Additive restore added 323,376 rows and 9,423 files; exact 48-hour timer enabled; Hasto is at .20; Resend emails alert on restore failures and warnings. |
+| DOC-164 | PesoWise × Tally Hindi Instagram Reel (HyperFrames video) | [`pesowise-tally-hindi-reel-video.md`](./pesowise-tally-hindi-reel-video.md) | 2026-11-17 | in progress | 25.2 s 1080×1920 Hindi reel built from the real PesoWise components with fictional data; verified Tally claims (export one click; import = Sync now; employee payments only; connector + open Tally required); project in `video/pesowise-tally-reel/`, no app changes. |
+| DOC-162 | Website startup performance (load rarely-used pages on demand) | [`website-startup-performance.md`](./website-startup-performance.md) | 2026-11-16 | in progress | Startup download -31% (gzip) by lazy-loading marketing/legal pages, rarely used app pages, Review (EngineerReview) and the maintenance admin screens; no feature or behaviour change; not deployed. |
+| DOC-161 | PITR WAL archive copy on the hasto server (PesoWise backup) | [`pitr-wal-archive-copy-hasto.md`](./pitr-wal-archive-copy-hasto.md) | 2026-11-06 | in progress | HDD PITR archive (44.7 GB) copied to the 4 TB disk and verified; read-only check script added; archive ends 2026-10-28, receiver stopped, not repaired. |
 | DOC-160 | Patidar Travels ↔ TallyPrime — analysis and end-to-end rollout plan (plan only) | [`patidar-tally-integration-plan.md`](./patidar-tally-integration-plan.md) | 2026-11-04 | draft | How Patidar expense and balance data is generated, the formats to and from Tally, risks, and a staged plan with confirmation gates; nothing deployed. |
 
 ### Legacy (`docs/`) — migrate when edited
@@ -331,11 +335,40 @@
 |------|-----|--------|-------|
 | 2026-10-08 | 1.0 | Claude Code | Incident analysed, canonical attachment set implemented, retried-draft reconciliation, other screens aligned, tests and documentation added. Not deployed. |
 
+### DOC-162 — Website startup performance
+
+| Date | Rev | Author | Notes |
+|------|-----|--------|-------|
+| 2026-11-16 | 1.0 | Claude Code | Startup bundle 649 KB -> 448 KB gzip; pages loaded on demand; no behaviour change; not deployed. |
+
+### DOC-161 — PITR WAL archive copy on the hasto server
+
+| Date | Rev | Author | Notes |
+|------|-----|--------|-------|
+| 2026-11-06 | 1.1 | Claude Code | Restored and merged 2,985 expenses into the backup stack DB (see doc). |
+| 2026-11-06 | 1.0 | Claude Code | HDD archive (ends 2026-10-28 22:11) copied to the 4 TB disk and verified; read-only check script added; receiver not repaired. |
+
 ### DOC-160 — Patidar Travels ↔ TallyPrime rollout plan
 
 | Date | Rev | Author | Notes |
 |------|-----|--------|-------|
 | 2026-11-04 | 0.1 | Agent | Plan only: data-generation analysis, formats, risks, staged plan with gates, decisions. Live DB not reachable; figures from older docs. |
+
+### DOC-164 — PesoWise × Tally Hindi Instagram Reel
+
+| Date | Change | By |
+|---|---|---|
+| 2026-11-17 | Created: HyperFrames project, real-component UI harness, Hindi voice, synthesized audio, rendered and probed MP4, Tally claim verification (scene 4 wording changed from one click to Sync now). | Agent |
+
+### DOC-165 — Organization block and Master Admin organization management
+
+| Date | Rev | Author | Notes |
+|------|-----|--------|-------|
+| 2026-11-18 | 1.0 | Claude Code | `org_blocked` flag and Master Admin toggle added; no enforcement yet; not deployed. |
+| 2026-11-18 | 1.1 | Claude Code | Flag now blocks the organization in the app (block screen via ProtectedRoute); placeholder message; not deployed. |
+| 2026-11-18 | 1.2 | Claude Code | Master Admin page UI refresh (styling only, no logic change) on `ui/master-admin-redesign`; not merged. |
+| 2026-11-18 | 1.3-1.5 | Claude Code | Table fit to one screen; block message box (migration `20261118120000` prepared, not applied); checkbox box (superseded by 1.6). |
+| 2026-11-18 | 1.6 | Claude Code | Master Admin redesign: compact list, per-organization management view (six tabs), categorised Features tab with search and Save / Cancel, Block / Unblock in Security, compact expandable maintenance notice; tests and docs. No logic, schema or permission change. Not merged. |
 
 ## Index revision log
 
@@ -344,6 +377,7 @@
 | 2026-11-23 | Registered DOC-166 (selected expenses total amount in All Expenses bulk bar; frontend only, no migration). Next ID: DOC-167. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.7: Features tab category headings bold and highlighted (styling only). No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.6: Master Admin redesign (compact list + organization management tabs); DOC-072 note: disabled notice now compact and expandable. No new ID. | Claude Code |
+| 2026-11-18 | DOC-165 rev 1.5: "Block organization" checkbox moved to its own box in the Activity / Blocked column (still opens the message box). No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.4: block message box (message saved per organization, shown on the block screen); migration `20261118120000_organization_block_message.sql` prepared, not applied. No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.3: Organizations table fits one screen, no horizontal scroll (11 columns merged into 6). No new ID. | Claude Code |
 | 2026-11-18 | DOC-165 rev 1.2: Master Admin page UI refresh, styling only. No new ID. | Claude Code |
@@ -601,7 +635,7 @@
 
 ## Next ID
 
-Use **DOC-160** for the next new document in `Documentations MD/`. Upstream (Mithil) has used DOC-149 to DOC-159; this repository's own DOC-139 to DOC-148 are kept as they are, so the numbers DOC-140, DOC-142, DOC-143, DOC-147 and DOC-148 each name two different documents (one from each repository; upstream's rows carry the qualifier "(upstream)"). The Tally documents are DOC-146 / DOC-147 here and DOC-154 / DOC-155 upstream (same files).
+Use **DOC-164** for the next new document in `Documentations MD/`. (DOC-162 is the website startup performance change; DOC-161 is the PITR WAL archive copy on the hasto server.) Upstream (Mithil) has used DOC-149 to DOC-159; this repository's own DOC-139 to DOC-148 are kept as they are, so the numbers DOC-140, DOC-142, DOC-143, DOC-147 and DOC-148 each name two different documents (one from each repository; upstream's rows carry the qualifier "(upstream)"). The Tally documents are DOC-146 / DOC-147 here and DOC-154 / DOC-155 upstream (same files).
 
 Use **DOC-130** for the next new document in `Documentations MD/`. DOC-128 [MicroLink Submitted-Expense Delete/Withdraw Failure] is merged to `main` (`c2d29dd`) and deployed. DOC-129 [Expense Recycle Bin — 30-Day Soft Delete] is registered here, on `feat/expense-recycle-bin-30d` (branched from the updated `main`) — migration applied to the shared DB, branch not yet merged. (DOC-124 is reserved by the unmerged `feature/review-completeness-correction-workflow` branch; DOC-126 is the unmerged `hotfix/submitted-expense-edit-regression` branch; DOC-127 is the unmerged `hotfix/close-singular-expense-review-dialog` branch.) (DOC-118 is reserved by the unmerged `docs/fix-needed-hierarchy-verified-deadend` branch.) DOC-123 [Legacy Transaction-Number Allocation + Post-Deployment Integrity Audit] closes the DOC-117 / DOC-119 / DOC-120 / DOC-121 / DOC-122 custom-field and transaction-number arc.
 
@@ -689,7 +723,7 @@ Use **DOC-113** for the next new document in `Documentations MD/`. DOC-111 [Repo
 | 2026-10-26 | DOC-142 section 11a + DOC-147 rev 1.16: Tally migrations re-applied to the backup database; ready for end-to-end tests. | Agent |
 | 2026-10-26 | DOC-147 revised (1.17): proper, specific error messages for each kind of failure; connector 1.2.7. | Agent |
 
-Use **DOC-148** (DOC-144 to DOC-146 are reserved by `fix/batch-verify-error-translation`) for the next new document in `Documentations MD/`. DOC-143 [Removed attachments reappearing after submission] is registered here on `hotfix/removed-attachments-reappearing` (not merged); DOC-141 and DOC-142 are reserved by the unmerged PR #11 branch. Reconcile against the highest ID across all branches before allocating. DOC-147 (scoped report access) is registered.
+Historical allocator note superseded by the current Next ID notice above; its branch reservation details apply only to the index state at that time.
 | 2026-10-15 | Registered DOC-147 (scoped report access: self + team reports, secure server scope); updated DOC-048 with a pointer. | Claude Code |
 | 2026-10-15 | DOC-131 rev 1.8 (§9h): View Report for managers/employees — preview/history RPC authorization for scoped requesters, explicit View Report button, friendly error states. DOC-147 cross-reference. | Claude Code |
 | 2026-10-16 | DOC-101 rev 1.1 (section 10): Daily Project Report timeouts at 9,000+ rows - group-first paging in report_daily_project_rows_v1, Production plan evidence, safe error mapping, repo/live drift note on the custom-field helper. | Claude Code |
@@ -701,3 +735,10 @@ Use **DOC-148** (DOC-144 to DOC-146 are reserved by `fix/batch-verify-error-tran
 | 2026-10-24 | DOC-158 rev 1.3: PR #26 merged and live; FUTURE_PLANS.md §30 -> IMPLEMENTED — PRODUCTION. | Claude Code |
 | 2026-11-04 | DOC-147 revised (1.3): per-company "Tally integration" feature flag (Master Admin checkbox, default off for every company) gates the Tally menu, page and sync buttons; no migration. No new ID. | Agent |
 | 2026-11-04 | Registered DOC-160 (Patidar Travels ↔ TallyPrime analysis and end-to-end plan, draft, plan only). Next ID: DOC-161. | Agent |
+| 2026-11-06 | Registered DOC-161 (PITR WAL archive copy on the hasto server: HDD archive copied to the 4 TB disk and verified, read-only check script added; archive ends 2026-10-28, receiver stopped, not repaired). Next ID: DOC-162. | Claude Code |
+| 2026-11-06 | DOC-161 rev 1.1: PITR archive restored in an isolated container and 2,985 missing expenses plus related rows merged into the PesoWise backup stack database (38,667 -> 41,652 expenses); 1 expense skipped (transaction number clash); receipt files not recoverable. No new ID. | Claude Code |
+| 2026-11-16 | Registered DOC-162 (website startup performance: marketing/legal pages, rarely used app pages, Review/EngineerReview and the maintenance admin screens now load on demand; startup download 649 KB -> 448 KB gzip; no feature change; not deployed). Next ID: DOC-163. | Claude Code |
+| 2026-11-16 | Registered DOC-163 (automatic additive restore from Hasto completed successfully; exact 48-hour timer enabled; Hasto IP references updated to .20). Next ID: DOC-164. | Agent |
+| 2026-11-16 | DOC-163 rev 1.1: changed from daily checks with a 47-hour gate to a recurring 48-hour timer; first next run scheduled for 2026-11-18 14:22 IST. | Agent |
+| 2026-11-16 | DOC-163 rev 1.2: deployed Resend SMTP alerts for failed and warning restore runs; added systemd failure/post-run hooks, root-only key storage, and verified delivery from Hasto. | Agent |
+| 2026-11-17 | Registered DOC-164 (PesoWise × Tally Hindi reel video project under `video/pesowise-tally-reel/`; no application changes). Next ID: DOC-165. | Agent |

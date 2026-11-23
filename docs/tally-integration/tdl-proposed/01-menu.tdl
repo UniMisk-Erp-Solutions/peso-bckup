@@ -1,0 +1,9 @@
+[#Menu : Gateway of Tally]
+Add : Key Item : PesoWise Reports : O : Menu : PW Reports Menu
+
+[Menu : PW Reports Menu]
+Title : "PesoWise Reports"
+Key Item : Claim Verification List : V : Display : PW Claim Verification List
+Key Item : Claim Approval List : A : Display : PW Claim Approval List
+Key Item : Detailed Expense Report : E : Display : PW Detailed Expense List
+Key Item : Daily Project Report : D : Display : PW Daily Project List

@@ -1,0 +1,19 @@
+# Production cutover frontend — binds public :4173 (replaces Supabase-built pesowise-frontend).
+name: pesowise-production-frontend
+
+services:
+  web:
+    container_name: pesowise-frontend
+    build:
+      context: ../..
+      dockerfile: tools/pesowise-migration/Dockerfile.production-react
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://192.168.23.46:8787}
+        VITE_PUBLIC_SITE_URL: ${VITE_PUBLIC_SITE_URL:-http://192.168.23.46:4173}
+        VITE_APP_BASE_DOMAIN: ${VITE_APP_BASE_DOMAIN:-pesowise.unimisk.com}
+    ports:
+      - "0.0.0.0:4173:80"
+    restart: unless-stopped
+    labels:
+      coolify.projectName: pesowise
+      coolify.name: pesowise-frontend

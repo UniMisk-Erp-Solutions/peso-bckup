@@ -1,0 +1,733 @@
+[Report : PW Daily Project List]
+Use : DSP Template
+Form : PW DPR List Form
+Title : "Daily Project Report (PesoWise)"
+
+[Form : PW DPR List Form]
+Set : PW Active Title : "Daily Project Report"
+Part : PW Shell Header Part, PW DPR Diagnostic Part, PW DPR Grid Part, PW DPR Footer Part
+Height : 100% Screen
+
+;; Visible runtime diagnostic: distinguishes an empty collection from a row-layout issue.
+[Part : PW DPR Diagnostic Part]
+Lines : PW DPR Diagnostic Line
+
+[Line : PW DPR Diagnostic Line]
+Fields : PW DPR Diagnostic Label, PW DPR Diagnostic Count
+
+[Field : PW DPR Diagnostic Label]
+Use : Name Field
+Set as : "Matching Tally ledgers (Daily Project):"
+Width : 38
+
+[Field : PW DPR Diagnostic Count]
+Use : Number Field
+Set as : $$NumItems:PWDPRLatest
+Width : 12
+
+[Part : PW DPR Grid Part]
+Lines : PW DPR Col Head Line, PW DPR Data Line
+Repeat : PW DPR Data Line : PWDPRLatest
+Scroll : Both
+Common Border : Yes
+
+[Line : PW DPR Col Head Line]
+Border : Thin Bottom
+Fields : PW DPR C1, PW DPR C2, PW DPR C3, PW DPR C4, PW DPR C5, PW DPR C6, PW DPR C7, PW DPR C8, PW DPR C9, PW DPR C10, PW DPR C11, PW DPR C12, PW DPR C13, PW DPR C14, PW DPR C15, PW DPR C16, PW DPR C17, PW DPR C18, PW DPR C19, PW DPR C20, PW DPR C21, PW DPR C22, PW DPR C23
+
+[Field : PW DPR C1]
+Use : Short Name Field
+Space Left : 2
+Set as : "Track Date"
+Style : PW List Head Style
+Width : 11
+[Field : PW DPR C2]
+Use : Short Name Field
+Space Left : 2
+Set as : "Voucher No"
+Style : PW List Head Style
+Width : 13
+[Field : PW DPR C3]
+Use : Short Name Field
+Space Left : 2
+Set as : "project id"
+Style : PW List Head Style
+Width : 16
+[Field : PW DPR C4]
+Use : Short Name Field
+Space Left : 2
+Set as : "project name"
+Style : PW List Head Style
+Width : 20
+[Field : PW DPR C5]
+Use : Short Name Field
+Space Left : 2
+Set as : "Employee"
+Style : PW List Head Style
+Width : 18
+[Field : PW DPR C6]
+Use : Short Name Field
+Space Left : 2
+Set as : "Employee Code"
+Style : PW List Head Style
+Width : 14
+[Field : PW DPR C7]
+Use : Short Name Field
+Space Left : 2
+Set as : "Location"
+Style : PW List Head Style
+Width : 16
+[Field : PW DPR C8]
+Use : Short Name Field
+Space Left : 2
+Set as : "Total Resource"
+Style : PW List Head Style
+Width : 14
+[Field : PW DPR C9]
+Use : Short Name Field
+Space Left : 2
+Set as : "Food"
+Style : PW List Head Style
+Width : 10
+[Field : PW DPR C10]
+Use : Short Name Field
+Space Left : 2
+Set as : "Over Time"
+Style : PW List Head Style
+Width : 12
+[Field : PW DPR C11]
+Use : Short Name Field
+Space Left : 2
+Set as : "Presence"
+Style : PW List Head Style
+Width : 10
+[Field : PW DPR C12]
+Use : Short Name Field
+Space Left : 2
+Set as : "Remarks"
+Style : PW List Head Style
+Width : 24
+[Field : PW DPR C13]
+Use : Short Name Field
+Space Left : 2
+Set as : "Other Remarks"
+Style : PW List Head Style
+Width : 24
+[Field : PW DPR C14]
+Use : Short Name Field
+Space Left : 2
+Set as : "Petrol Cost"
+Style : PW List Head Style
+Width : 13
+Align : Right
+
+[Field : PW DPR C15]
+Use : Short Name Field
+Space Left : 2
+Set as : "Material Cost"
+Style : PW List Head Style
+Width : 13
+Align : Right
+
+[Field : PW DPR C16]
+Use : Short Name Field
+Space Left : 2
+Set as : "Travelling Cost"
+Style : PW List Head Style
+Width : 13
+Align : Right
+
+[Field : PW DPR C17]
+Use : Short Name Field
+Space Left : 2
+Set as : "Phone Exp."
+Style : PW List Head Style
+Width : 13
+Align : Right
+
+[Field : PW DPR C18]
+Use : Short Name Field
+Space Left : 2
+Set as : "Hotel Exp."
+Style : PW List Head Style
+Width : 13
+Align : Right
+
+[Field : PW DPR C19]
+Use : Short Name Field
+Space Left : 2
+Set as : "Transport Exp"
+Style : PW List Head Style
+Width : 13
+Align : Right
+
+[Field : PW DPR C20]
+Use : Short Name Field
+Space Left : 2
+Set as : "Contra Bill"
+Style : PW List Head Style
+Width : 13
+Align : Right
+
+[Field : PW DPR C21]
+Use : Short Name Field
+Space Left : 2
+Set as : "Other Exp."
+Style : PW List Head Style
+Width : 13
+Align : Right
+
+[Field : PW DPR C22]
+Use : Short Name Field
+Space Left : 2
+Set as : "Site Id/RO Code"
+Style : PW List Head Style
+Width : 16
+[Field : PW DPR C23]
+Use : Short Name Field
+Space Left : 2
+Set as : "percent"
+Style : PW List Head Style
+Width : 10
+[Line : PW DPR Data Line]
+Key : PW DPR Line Enter
+Fields : PW DPR D1, PW DPR D2, PW DPR D3, PW DPR D4, PW DPR D5, PW DPR D6, PW DPR D7, PW DPR D8, PW DPR D9, PW DPR D10, PW DPR D11, PW DPR D12, PW DPR D13, PW DPR D14, PW DPR D15, PW DPR D16, PW DPR D17, PW DPR D18, PW DPR D19, PW DPR D20, PW DPR D21, PW DPR D22, PW DPR D23
+
+
+[Field : PW DPR D1]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:1
+Width : 11
+Style : PW List Row Style
+
+[Field : PW DPR D2]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:2
+Width : 13
+Style : PW List Row Style
+
+[Field : PW DPR D3]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:3
+Width : 16
+Style : PW List Row Style
+
+[Field : PW DPR D4]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:4
+Width : 20
+Style : PW List Row Style
+
+[Field : PW DPR D5]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:5
+Width : 18
+Style : PW List Row Style
+
+[Field : PW DPR D6]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:6
+Width : 14
+Style : PW List Row Style
+
+[Field : PW DPR D7]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:7
+Width : 16
+Style : PW List Row Style
+
+[Field : PW DPR D8]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:8
+Width : 14
+Style : PW List Row Style
+
+[Field : PW DPR D9]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:9
+Width : 10
+Style : PW List Row Style
+
+[Field : PW DPR D10]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:10
+Width : 12
+Style : PW List Row Style
+
+[Field : PW DPR D11]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:11
+Width : 10
+Style : PW List Row Style
+
+[Field : PW DPR D12]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:12
+Width : 24
+Style : PW List Row Style
+
+[Field : PW DPR D13]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:13
+Width : 24
+Style : PW List Row Style
+
+[Field : PW DPR D14]
+Use : Number Field
+Space Left : 2
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:14) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:14)
+Width : 13
+Style : PW List Row Style
+Align : Right
+
+[Field : PW DPR D15]
+Use : Number Field
+Space Left : 2
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:15) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:15)
+Width : 13
+Style : PW List Row Style
+Align : Right
+
+[Field : PW DPR D16]
+Use : Number Field
+Space Left : 2
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:16) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:16)
+Width : 13
+Style : PW List Row Style
+Align : Right
+
+[Field : PW DPR D17]
+Use : Number Field
+Space Left : 2
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:17) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:17)
+Width : 13
+Style : PW List Row Style
+Align : Right
+
+[Field : PW DPR D18]
+Use : Number Field
+Space Left : 2
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:18) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:18)
+Width : 13
+Style : PW List Row Style
+Align : Right
+
+[Field : PW DPR D19]
+Use : Number Field
+Space Left : 2
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:19) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:19)
+Width : 13
+Style : PW List Row Style
+Align : Right
+
+[Field : PW DPR D20]
+Use : Number Field
+Space Left : 2
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:20) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:20)
+Width : 13
+Style : PW List Row Style
+Align : Right
+
+[Field : PW DPR D21]
+Use : Number Field
+Space Left : 2
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:21) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:21)
+Width : 13
+Style : PW List Row Style
+Align : Right
+
+[Field : PW DPR D22]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:22
+Width : 16
+Style : PW List Row Style
+
+[Field : PW DPR D23]
+Use : Name Field
+Space Left : 2
+Max Display Lines : 2
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:23
+Width : 10
+Style : PW List Row Style
+
+[Part : PW DPR Footer Part]
+Lines : PW DPR Footer Line
+Border : Thin Top
+
+[Line : PW DPR Footer Line]
+Field : PW DPR Foot Count
+
+[Field : PW DPR Foot Count]
+Use : Name Field
+Set as : "All 23 fixed fields from the PesoWise Daily Project report. Scroll horizontally and vertically; Enter opens details."
+Width : 100
+
+[Key : PW DPR Line Enter]
+Key : Enter
+Action : CALL : PW DPR Show Detail
+
+[Function : PW DPR Show Detail]
+01 : SET : SV PW Ledger Name : $Name
+02 : Display : PW Daily Project Detail
+
+[Report : PW Daily Project Detail]
+Use : DSP Template
+Form : PW DPR Detail Form
+Title : "Daily Project Details"
+
+[Form : PW DPR Detail Form]
+Part : PW DPR Det Head, PW DPR Det Body
+Height : 100% Screen
+Width : 100% Screen
+
+[Part : PW DPR Det Head]
+Lines : PW DPR Det Title, PW DPR Det Hint
+[Line : PW DPR Det Title]
+Field : PW DPR Det Title F
+[Field : PW DPR Det Title F]
+Use : Name Field
+Set as : "Daily Project Details"
+Style : PW Title Style
+Full Width : Yes
+[Line : PW DPR Det Hint]
+Field : PW DPR Det Hint F
+[Field : PW DPR Det Hint F]
+Use : Name Field
+Set as : "Press Esc to return to the list."
+Style : PW Subtitle Style
+Full Width : Yes
+
+[Part : PW DPR Det Body]
+Part : PW DPR Det Block
+Repeat : PW DPR Det Block : PW Selected Ledger One
+Scroll : Vertical
+
+[Part : PW DPR Det Block]
+Lines : PW DPR Sec G, PW DPR Det R1, PW DPR Det R2, PW DPR Det R3, PW DPR Det R4, PW DPR Det R5, PW DPR Det R6, PW DPR Det R20, PW DPR Det R21, PW DPR Det R22
+Lines : PW DPR Sec P, PW DPR Det R7, PW DPR Det R8
+Lines : PW DPR Sec E, PW DPR Det R9, PW DPR Det R10, PW DPR Det R11, PW DPR Det R12, PW DPR Det R13, PW DPR Det R14, PW DPR Det R15, PW DPR Det R16, PW DPR Det R17
+Lines : PW DPR Sec O, PW DPR Det R18, PW DPR Det R23, PW DPR Det R24, PW DPR Det R19
+
+[Line : PW DPR Sec G]
+Field : PW DPR Sec G F
+[Field : PW DPR Sec G F]
+Use : Name Field
+Set as : "GENERAL"
+Style : PW Col Head Style
+Full Width : Yes
+
+[Line : PW DPR Sec P]
+Field : PW DPR Sec P F
+[Field : PW DPR Sec P F]
+Use : Name Field
+Set as : "PROJECT"
+Style : PW Col Head Style
+Full Width : Yes
+
+[Line : PW DPR Sec E]
+Field : PW DPR Sec E F
+[Field : PW DPR Sec E F]
+Use : Name Field
+Set as : "EXPENSE BREAKDOWN"
+Style : PW Col Head Style
+Full Width : Yes
+
+[Line : PW DPR Sec O]
+Field : PW DPR Sec O F
+[Field : PW DPR Sec O F]
+Use : Name Field
+Set as : "OTHER"
+Style : PW Col Head Style
+Full Width : Yes
+
+[Line : PW DPR Det R1]
+Fields : PW DPR L1, PW DPR V1
+[Field : PW DPR L1]
+Use : Name Field
+Set as : "Track Date"
+Width : 28
+[Field : PW DPR V1]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:1
+Width : 52
+
+[Line : PW DPR Det R2]
+Fields : PW DPR L2, PW DPR V2
+[Field : PW DPR L2]
+Use : Name Field
+Set as : "Voucher No."
+Width : 28
+[Field : PW DPR V2]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:2
+Width : 52
+
+[Line : PW DPR Det R3]
+Fields : PW DPR L3, PW DPR V3
+[Field : PW DPR L3]
+Use : Name Field
+Set as : "Employee"
+Width : 28
+[Field : PW DPR V3]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:5
+Width : 52
+
+[Line : PW DPR Det R4]
+Fields : PW DPR L4, PW DPR V4
+[Field : PW DPR L4]
+Use : Name Field
+Set as : "Employee Code"
+Width : 28
+[Field : PW DPR V4]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:6
+Width : 52
+
+[Line : PW DPR Det R5]
+Fields : PW DPR L5, PW DPR V5
+[Field : PW DPR L5]
+Use : Name Field
+Set as : "Location"
+Width : 28
+[Field : PW DPR V5]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:7
+Width : 52
+
+[Line : PW DPR Det R6]
+Fields : PW DPR L6, PW DPR V6
+[Field : PW DPR L6]
+Use : Name Field
+Set as : "Presence"
+Width : 28
+[Field : PW DPR V6]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:11
+Width : 52
+
+[Line : PW DPR Det R7]
+Fields : PW DPR L7, PW DPR V7
+[Field : PW DPR L7]
+Use : Name Field
+Set as : "Project ID"
+Width : 28
+[Field : PW DPR V7]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:3
+Width : 52
+
+[Line : PW DPR Det R8]
+Fields : PW DPR L8, PW DPR V8
+[Field : PW DPR L8]
+Use : Name Field
+Set as : "Project Name"
+Width : 28
+[Field : PW DPR V8]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:4
+Width : 52
+
+[Line : PW DPR Det R9]
+Fields : PW DPR L9, PW DPR V9
+[Field : PW DPR L9]
+Use : Name Field
+Set as : "Petrol"
+Width : 28
+[Field : PW DPR V9]
+Use : Number Field
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:14) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:14)
+Width : 52
+
+[Line : PW DPR Det R10]
+Fields : PW DPR L10, PW DPR V10
+[Field : PW DPR L10]
+Use : Name Field
+Set as : "Material"
+Width : 28
+[Field : PW DPR V10]
+Use : Number Field
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:15) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:15)
+Width : 52
+
+[Line : PW DPR Det R11]
+Fields : PW DPR L11, PW DPR V11
+[Field : PW DPR L11]
+Use : Name Field
+Set as : "Travelling"
+Width : 28
+[Field : PW DPR V11]
+Use : Number Field
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:16) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:16)
+Width : 52
+
+[Line : PW DPR Det R12]
+Fields : PW DPR L12, PW DPR V12
+[Field : PW DPR L12]
+Use : Name Field
+Set as : "Phone"
+Width : 28
+[Field : PW DPR V12]
+Use : Number Field
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:17) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:17)
+Width : 52
+
+[Line : PW DPR Det R13]
+Fields : PW DPR L13, PW DPR V13
+[Field : PW DPR L13]
+Use : Name Field
+Set as : "Hotel"
+Width : 28
+[Field : PW DPR V13]
+Use : Number Field
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:18) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:18)
+Width : 52
+
+[Line : PW DPR Det R14]
+Fields : PW DPR L14, PW DPR V14
+[Field : PW DPR L14]
+Use : Name Field
+Set as : "Transport"
+Width : 28
+[Field : PW DPR V14]
+Use : Number Field
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:19) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:19)
+Width : 52
+
+[Line : PW DPR Det R15]
+Fields : PW DPR L15, PW DPR V15
+[Field : PW DPR L15]
+Use : Name Field
+Set as : "Contra Bill"
+Width : 28
+[Field : PW DPR V15]
+Use : Number Field
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:20) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:20)
+Width : 52
+
+[Line : PW DPR Det R16]
+Fields : PW DPR L16, PW DPR V16
+[Field : PW DPR L16]
+Use : Name Field
+Set as : "Other Expense"
+Width : 28
+[Field : PW DPR V16]
+Use : Number Field
+Set as : if $$IsEmpty:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:21) then "" else $$Number:($$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:21)
+Width : 52
+
+[Line : PW DPR Det R17]
+Fields : PW DPR L17, PW DPR V17
+[Field : PW DPR L17]
+Use : Name Field
+Set as : "Total Expense"
+Width : 28
+[Field : PW DPR V17]
+Use : Number Field
+Set as : $$Number:($PESOWISE_DPR_TOTAL_EXPENSE)
+Width : 52
+
+[Line : PW DPR Det R18]
+Fields : PW DPR L18, PW DPR V18
+[Field : PW DPR L18]
+Use : Name Field
+Set as : "Remarks"
+Width : 28
+[Field : PW DPR V18]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:12
+Width : 52
+
+[Line : PW DPR Det R19]
+Fields : PW DPR L19, PW DPR V19
+[Field : PW DPR L19]
+Use : Name Field
+Set as : "Percent"
+Width : 28
+[Field : PW DPR V19]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:23
+Width : 52
+
+[Line : PW DPR Det R20]
+Fields : PW DPR L20, PW DPR V20
+[Field : PW DPR L20]
+Use : Name Field
+Set as : "Total Resource"
+Width : 28
+[Field : PW DPR V20]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:8
+Width : 52
+
+[Line : PW DPR Det R21]
+Fields : PW DPR L21, PW DPR V21
+[Field : PW DPR L21]
+Use : Name Field
+Set as : "Food"
+Width : 28
+[Field : PW DPR V21]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:9
+Width : 52
+
+[Line : PW DPR Det R22]
+Fields : PW DPR L22, PW DPR V22
+[Field : PW DPR L22]
+Use : Name Field
+Set as : "Over Time"
+Width : 28
+[Field : PW DPR V22]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:10
+Width : 52
+
+[Line : PW DPR Det R23]
+Fields : PW DPR L23, PW DPR V23
+[Field : PW DPR L23]
+Use : Name Field
+Set as : "Other Remarks"
+Width : 28
+[Field : PW DPR V23]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:13
+Width : 52
+
+[Line : PW DPR Det R24]
+Fields : PW DPR L24, PW DPR V24
+[Field : PW DPR L24]
+Use : Name Field
+Set as : "Site Id/RO Code"
+Width : 28
+[Field : PW DPR V24]
+Use : Name Field
+Set as : $$PWCVFlatToken:$PESOWISE_REPORT_FLAT_ROW:22
+Width : 52

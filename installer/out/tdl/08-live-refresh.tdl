@@ -1,0 +1,31 @@
+;; Refresh only while a PesoWise report list is open. The list form handles Esc
+;; to stop the timer and return to Gateway; entering any PesoWise list starts it.
+[System : Event]
+PW Auto Refresh Event : TIMER : TRUE : Refresh Data
+
+[Function : PWStopAutoRefreshAndExit]
+00 : STOP TIMER : PW Auto Refresh Event
+10 : FORM DISPLAY REJECT
+
+[Key : PW Stop Auto Refresh]
+Key : Esc
+Action : Call : PWStopAutoRefreshAndExit
+Title : "Exit PesoWise Report"
+
+[#Report : PW Claim Verification List]
+On : Load : Yes : Start Timer : PW Auto Refresh Event : 10
+[#Report : PW Claim Approval List]
+On : Load : Yes : Start Timer : PW Auto Refresh Event : 10
+[#Report : PW Detailed Expense List]
+On : Load : Yes : Start Timer : PW Auto Refresh Event : 10
+[#Report : PW Daily Project List]
+On : Load : Yes : Start Timer : PW Auto Refresh Event : 10
+
+[#Form : PW CV List Form]
+Add : Keys : PW Stop Auto Refresh
+[#Form : PW CA List Form]
+Add : Keys : PW Stop Auto Refresh
+[#Form : PW DE List Form]
+Add : Keys : PW Stop Auto Refresh
+[#Form : PW DPR List Form]
+Add : Keys : PW Stop Auto Refresh

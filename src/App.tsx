@@ -20,30 +20,37 @@ import { PageLoadingSkeleton } from "@/components/PageLoadingSkeleton";
 import Auth from "./pages/Auth";
 import { PwtFeatureGate } from "./components/PwtFeatureGate";
 import HomePage from "./pages/marketing/HomePage";
-import FeaturesPage from "./pages/FeaturesPage";
-import HowItWorksPage from "./pages/HowItWorksPage";
-import SecurityPage from "./pages/SecurityPage";
-import PricingPage from "./pages/PricingPage";
-import ContactPage from "./pages/ContactPage";
-import PrivacyPage from "./pages/legal/PrivacyPage";
-import CookiePolicyPage from "./pages/legal/CookiePolicyPage";
-import TermsPage from "./pages/legal/TermsPage";
-import DisclaimerPage from "./pages/legal/DisclaimerPage";
-import DataProcessingPolicy from "./pages/legal/DataProcessingPolicy";
-import UserActivityInsightsNotice from "./pages/legal/UserActivityInsightsNotice";
-import DataRightsAndGrievance from "./pages/legal/DataRightsAndGrievance";
 import Dashboard from "./pages/Dashboard";
 import Expenses from "./pages/Expenses";
 import ExpenseForm from "./pages/ExpenseForm";
-import ExpenseBatchForm from "./pages/ExpenseBatchForm";
-import BatchExpenseReview from "./pages/BatchExpenseReview";
 import ExpenseDetail from "./pages/ExpenseDetail";
-import ReviewExpenses from "./pages/ReviewExpenses";
 import Notifications from "./pages/Notifications";
 import NotFound from "./pages/NotFound";
-import TransferOffers from "./pages/TransferOffers";
-import NotificationSettings from "./pages/NotificationSettings";
-import HelpTutorial from "./pages/HelpTutorial";
+
+// Performance: pages that are not needed for the first screen load on demand, so the
+// initial download stays small. Behaviour, routes and role checks are unchanged — the
+// only difference is a brief page skeleton the first time one of these is opened.
+// Public marketing / legal pages (the home page stays eager: it is the landing page).
+const FeaturesPage = lazyWithRetry(() => import("./pages/FeaturesPage"));
+const HowItWorksPage = lazyWithRetry(() => import("./pages/HowItWorksPage"));
+const SecurityPage = lazyWithRetry(() => import("./pages/SecurityPage"));
+const PricingPage = lazyWithRetry(() => import("./pages/PricingPage"));
+const ContactPage = lazyWithRetry(() => import("./pages/ContactPage"));
+const PrivacyPage = lazyWithRetry(() => import("./pages/legal/PrivacyPage"));
+const CookiePolicyPage = lazyWithRetry(() => import("./pages/legal/CookiePolicyPage"));
+const TermsPage = lazyWithRetry(() => import("./pages/legal/TermsPage"));
+const DisclaimerPage = lazyWithRetry(() => import("./pages/legal/DisclaimerPage"));
+const DataProcessingPolicy = lazyWithRetry(() => import("./pages/legal/DataProcessingPolicy"));
+const UserActivityInsightsNotice = lazyWithRetry(() => import("./pages/legal/UserActivityInsightsNotice"));
+const DataRightsAndGrievance = lazyWithRetry(() => import("./pages/legal/DataRightsAndGrievance"));
+// App pages used less often than Dashboard / Expenses / the expense form.
+const ExpenseBatchForm = lazyWithRetry(() => import("./pages/ExpenseBatchForm"));
+const BatchExpenseReview = lazyWithRetry(() => import("./pages/BatchExpenseReview"));
+// ReviewExpenses pulls in EngineerReview (the largest page, ~5.5k lines).
+const ReviewExpenses = lazyWithRetry(() => import("./pages/ReviewExpenses"));
+const TransferOffers = lazyWithRetry(() => import("./pages/TransferOffers"));
+const NotificationSettings = lazyWithRetry(() => import("./pages/NotificationSettings"));
+const HelpTutorial = lazyWithRetry(() => import("./pages/HelpTutorial"));
 
 const AdminPanel = lazyWithRetry(() => import("./pages/AdminPanel"));
 const AdminSubmitExpense = lazyWithRetry(() => import("./pages/AdminSubmitExpense"));
@@ -129,18 +136,18 @@ const App = () => (
           <Route path="/auth" element={<Auth />} />
           <Route element={<TenantHostRedirect />}>
             <Route path="/" element={<HomePage />} />
-            <Route path="/features" element={<FeaturesPage />} />
-            <Route path="/how-it-works" element={<HowItWorksPage />} />
-            <Route path="/security" element={<SecurityPage />} />
-            <Route path="/pricing" element={<PricingPage />} />
-            <Route path="/contact" element={<ContactPage />} />
-            <Route path="/privacy" element={<PrivacyPage />} />
-            <Route path="/cookies" element={<CookiePolicyPage />} />
-            <Route path="/toc" element={<TermsPage />} />
-            <Route path="/disclaimer" element={<DisclaimerPage />} />
-            <Route path="/legal/data-processing" element={<DataProcessingPolicy />} />
-            <Route path="/legal/activity-insights" element={<UserActivityInsightsNotice />} />
-            <Route path="/legal/data-rights" element={<DataRightsAndGrievance />} />
+            <Route path="/features" element={<LazyPage><FeaturesPage /></LazyPage>} />
+            <Route path="/how-it-works" element={<LazyPage><HowItWorksPage /></LazyPage>} />
+            <Route path="/security" element={<LazyPage><SecurityPage /></LazyPage>} />
+            <Route path="/pricing" element={<LazyPage><PricingPage /></LazyPage>} />
+            <Route path="/contact" element={<LazyPage><ContactPage /></LazyPage>} />
+            <Route path="/privacy" element={<LazyPage><PrivacyPage /></LazyPage>} />
+            <Route path="/cookies" element={<LazyPage><CookiePolicyPage /></LazyPage>} />
+            <Route path="/toc" element={<LazyPage><TermsPage /></LazyPage>} />
+            <Route path="/disclaimer" element={<LazyPage><DisclaimerPage /></LazyPage>} />
+            <Route path="/legal/data-processing" element={<LazyPage><DataProcessingPolicy /></LazyPage>} />
+            <Route path="/legal/activity-insights" element={<LazyPage><UserActivityInsightsNotice /></LazyPage>} />
+            <Route path="/legal/data-rights" element={<LazyPage><DataRightsAndGrievance /></LazyPage>} />
           </Route>
           <Route
             path="/balances"
@@ -202,7 +209,9 @@ const App = () => (
             element={
               <ProtectedRoute allowedRoles={[...EXPENSE_SUBMITTER_ROLES]} blockAccountantCashier>
                 <Layout>
-                  <ExpenseBatchForm />
+                  <LazyPage>
+                    <ExpenseBatchForm />
+                  </LazyPage>
                 </Layout>
               </ProtectedRoute>
             }
@@ -212,7 +221,9 @@ const App = () => (
             element={
               <ProtectedRoute allowedRoles={["admin", "employee", ...EXPENSE_REVIEW_ROLES]}>
                 <Layout>
-                  <BatchExpenseReview />
+                  <LazyPage>
+                    <BatchExpenseReview />
+                  </LazyPage>
                 </Layout>
               </ProtectedRoute>
             }
@@ -415,7 +426,9 @@ const App = () => (
             element={
               <ProtectedRoute allowedRoles={[...EXPENSE_REVIEW_ROLES]}>
                 <Layout fullWidth>
-                  <ReviewExpenses />
+                  <LazyPage>
+                    <ReviewExpenses />
+                  </LazyPage>
                 </Layout>
               </ProtectedRoute>
             }
@@ -482,7 +495,9 @@ const App = () => (
             element={
               <ProtectedRoute blockAccountantCashier>
                 <Layout>
-                  <TransferOffers />
+                  <LazyPage>
+                    <TransferOffers />
+                  </LazyPage>
                 </Layout>
               </ProtectedRoute>
             }
@@ -502,7 +517,9 @@ const App = () => (
             element={
               <ProtectedRoute allowedRoles={[...STANDARD_APP_ROLES]}>
                 <Layout>
-                  <HelpTutorial />
+                  <LazyPage>
+                    <HelpTutorial />
+                  </LazyPage>
                 </Layout>
               </ProtectedRoute>
             }
@@ -512,7 +529,9 @@ const App = () => (
             element={
               <ProtectedRoute allowedRoles={[...STANDARD_APP_ROLES]}>
                 <Layout>
-                  <NotificationSettings />
+                  <LazyPage>
+                    <NotificationSettings />
+                  </LazyPage>
                 </Layout>
               </ProtectedRoute>
             }

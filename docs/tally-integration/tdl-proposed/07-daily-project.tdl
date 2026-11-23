@@ -1,0 +1,402 @@
+[Report : PW Daily Project List]
+Use : DSP Template
+Form : PW DPR List Form
+Title : "Daily Project Report (PesoWise)"
+
+[Form : PW DPR List Form]
+Set : PW Active Title : "Daily Project Report"
+Part : PW Shell Header Part, PW DPR Col Head Part, PW DPR Body Part, PW DPR Footer Part
+Height : 100 % Screen
+Width : 100 % Screen
+
+[Part : PW DPR Col Head Part]
+Lines : PW DPR Col Head Line
+Border : Thin Bottom
+
+[Line : PW DPR Col Head Line]
+Fields : PW DPR C Date, PW DPR C Vch, PW DPR C Proj, PW DPR C Emp, PW DPR C Loc, PW DPR C Pres, PW DPR C Exp, PW DPR C Rem
+
+[Field : PW DPR C Date]
+Use : Short Name Field
+Set as : "Date"
+Style : PW Col Head Style
+Width : 11
+[Field : PW DPR C Vch]
+Use : Short Name Field
+Set as : "Voucher No."
+Style : PW Col Head Style
+Width : 11
+[Field : PW DPR C Proj]
+Use : Short Name Field
+Set as : "Project"
+Style : PW Col Head Style
+Width : 20
+[Field : PW DPR C Emp]
+Use : Short Name Field
+Set as : "Employee"
+Style : PW Col Head Style
+Width : 18
+[Field : PW DPR C Loc]
+Use : Short Name Field
+Set as : "Location"
+Style : PW Col Head Style
+Width : 14
+[Field : PW DPR C Pres]
+Use : Short Name Field
+Set as : "Presence"
+Style : PW Col Head Style
+Width : 9
+[Field : PW DPR C Exp]
+Use : Short Name Field
+Set as : "Expense"
+Style : PW Col Head Style
+Width : 12
+Align : Right
+[Field : PW DPR C Rem]
+Use : Short Name Field
+Set as : "Remarks"
+Style : PW Col Head Style
+Width : 22
+
+[Part : PW DPR Body Part]
+Lines : PW DPR Data Line
+Repeat : PW DPR Data Line : PW DPR Latest
+Scroll : Vertical
+Common Border : Yes
+
+[Line : PW DPR Data Line]
+Key : PW DPR Line Enter
+Fields : PW DPR D Date, PW DPR D Vch, PW DPR D Proj, PW DPR D Emp, PW DPR D Loc, PW DPR D Pres, PW DPR D Exp, PW DPR D Rem
+
+[Field : PW DPR D Date]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat1:$PESOWISE_DPR_TRACK_DATE:@@PWFlat1
+Width : 11
+[Field : PW DPR D Vch]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat2:$PESOWISE_DPR_VOUCHER_NO:@@PWFlat2
+Width : 11
+[Field : PW DPR D Proj]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat4:$PESOWISE_DPR_PROJECT_NAME:@@PWFlat4
+Width : 20
+[Field : PW DPR D Emp]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat5:$PESOWISE_DPR_EMPLOYEE:@@PWFlat5
+Width : 18
+[Field : PW DPR D Loc]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat7:$PESOWISE_DPR_LOCATION:@@PWFlat7
+Width : 14
+[Field : PW DPR D Pres]
+Use : Name Field
+Set as : @@PWDPRPresenceLabel
+Width : 9
+[Field : PW DPR D Exp]
+Use : Amount Field
+Set as : @@PWDPRRowTotal
+Width : 12
+[Field : PW DPR D Rem]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat8:$PESOWISE_DPR_REMARKS:@@PWFlat8
+Width : 22
+
+[Key : PW DPR Line Enter]
+Key : Enter
+Action : CALL : PW DPR Show Detail
+
+[Function : PW DPR Show Detail]
+01 : SET : SV PW Ledger Name : $Name
+02 : Display : PW Daily Project Detail
+
+[Part : PW DPR Footer Part]
+Lines : PW DPR Footer Line
+Border : Thin Top
+
+[Line : PW DPR Footer Line]
+Fields : PW DPR Foot Hint
+
+[Field : PW DPR Foot Hint]
+Use : Name Field
+Set as : "Select a row and press Enter for expense breakdown. Esc returns from detail."
+Style : PW Subtitle Style
+Full Width : Yes
+
+[Report : PW Daily Project Detail]
+Use : DSP Template
+Form : PW DPR Detail Form
+Title : "Daily Project Details"
+
+[Form : PW DPR Detail Form]
+Part : PW DPR Det Head, PW DPR Det Body
+Height : 100 % Screen
+Width : 100 % Screen
+
+[Part : PW DPR Det Head]
+Lines : PW DPR Det Title, PW DPR Det Hint
+[Line : PW DPR Det Title]
+Field : PW DPR Det Title F
+[Field : PW DPR Det Title F]
+Use : Name Field
+Set as : "Daily Project Details"
+Style : PW Title Style
+Full Width : Yes
+[Line : PW DPR Det Hint]
+Field : PW DPR Det Hint F
+[Field : PW DPR Det Hint F]
+Use : Name Field
+Set as : "Press Esc to return to the list."
+Style : PW Subtitle Style
+Full Width : Yes
+
+[Part : PW DPR Det Body]
+Part : PW DPR Det Block
+Repeat : PW DPR Det Block : PW Selected Ledger One
+Scroll : Vertical
+
+[Part : PW DPR Det Block]
+Lines : PW DPR Sec G, PW DPR Det R1, PW DPR Det R2, PW DPR Det R3, PW DPR Det R4, PW DPR Det R5, PW DPR Det R6
+Lines : PW DPR Sec P, PW DPR Det R7, PW DPR Det R8
+Lines : PW DPR Sec E, PW DPR Det R9, PW DPR Det R10, PW DPR Det R11, PW DPR Det R12, PW DPR Det R13, PW DPR Det R14, PW DPR Det R15, PW DPR Det R16, PW DPR Det R17
+Lines : PW DPR Sec O, PW DPR Det R18, PW DPR Det R19
+
+[Line : PW DPR Sec G]
+Field : PW DPR Sec G F
+[Field : PW DPR Sec G F]
+Use : Name Field
+Set as : "GENERAL"
+Style : PW Col Head Style
+Full Width : Yes
+
+[Line : PW DPR Sec P]
+Field : PW DPR Sec P F
+[Field : PW DPR Sec P F]
+Use : Name Field
+Set as : "PROJECT"
+Style : PW Col Head Style
+Full Width : Yes
+
+[Line : PW DPR Sec E]
+Field : PW DPR Sec E F
+[Field : PW DPR Sec E F]
+Use : Name Field
+Set as : "EXPENSE BREAKDOWN"
+Style : PW Col Head Style
+Full Width : Yes
+
+[Line : PW DPR Sec O]
+Field : PW DPR Sec O F
+[Field : PW DPR Sec O F]
+Use : Name Field
+Set as : "OTHER"
+Style : PW Col Head Style
+Full Width : Yes
+
+[Line : PW DPR Det R1]
+Fields : PW DPR L1, PW DPR V1
+[Field : PW DPR L1]
+Use : Name Field
+Set as : "Track Date"
+Width : 28
+[Field : PW DPR V1]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat1:$PESOWISE_DPR_TRACK_DATE:@@PWFlat1
+Width : 52
+
+[Line : PW DPR Det R2]
+Fields : PW DPR L2, PW DPR V2
+[Field : PW DPR L2]
+Use : Name Field
+Set as : "Voucher No."
+Width : 28
+[Field : PW DPR V2]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat2:$PESOWISE_DPR_VOUCHER_NO:@@PWFlat2
+Width : 52
+
+[Line : PW DPR Det R3]
+Fields : PW DPR L3, PW DPR V3
+[Field : PW DPR L3]
+Use : Name Field
+Set as : "Employee"
+Width : 28
+[Field : PW DPR V3]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat5:$PESOWISE_DPR_EMPLOYEE:@@PWFlat5
+Width : 52
+
+[Line : PW DPR Det R4]
+Fields : PW DPR L4, PW DPR V4
+[Field : PW DPR L4]
+Use : Name Field
+Set as : "Employee Code"
+Width : 28
+[Field : PW DPR V4]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat6:$PESOWISE_DPR_EMPLOYEE_CODE:@@PWFlat6
+Width : 52
+
+[Line : PW DPR Det R5]
+Fields : PW DPR L5, PW DPR V5
+[Field : PW DPR L5]
+Use : Name Field
+Set as : "Location"
+Width : 28
+[Field : PW DPR V5]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat7:$PESOWISE_DPR_LOCATION:@@PWFlat7
+Width : 52
+
+[Line : PW DPR Det R6]
+Fields : PW DPR L6, PW DPR V6
+[Field : PW DPR L6]
+Use : Name Field
+Set as : "Presence"
+Width : 28
+[Field : PW DPR V6]
+Use : Name Field
+Set as : @@PWDPRPresenceLabel
+Width : 52
+
+[Line : PW DPR Det R7]
+Fields : PW DPR L7, PW DPR V7
+[Field : PW DPR L7]
+Use : Name Field
+Set as : "Project ID"
+Width : 28
+[Field : PW DPR V7]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat3:$PESOWISE_DPR_PROJECT_ID:@@PWFlat3
+Width : 52
+
+[Line : PW DPR Det R8]
+Fields : PW DPR L8, PW DPR V8
+[Field : PW DPR L8]
+Use : Name Field
+Set as : "Project Name"
+Width : 28
+[Field : PW DPR V8]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat4:$PESOWISE_DPR_PROJECT_NAME:@@PWFlat4
+Width : 52
+
+[Line : PW DPR Det R9]
+Fields : PW DPR L9, PW DPR V9
+[Field : PW DPR L9]
+Use : Name Field
+Set as : "Petrol"
+Width : 28
+[Field : PW DPR V9]
+Use : Amount Field
+Set as : $$Number:@@PWFlat9
+Width : 52
+
+[Line : PW DPR Det R10]
+Fields : PW DPR L10, PW DPR V10
+[Field : PW DPR L10]
+Use : Name Field
+Set as : "Material"
+Width : 28
+[Field : PW DPR V10]
+Use : Amount Field
+Set as : $$Number:@@PWFlat10
+Width : 52
+
+[Line : PW DPR Det R11]
+Fields : PW DPR L11, PW DPR V11
+[Field : PW DPR L11]
+Use : Name Field
+Set as : "Travelling"
+Width : 28
+[Field : PW DPR V11]
+Use : Amount Field
+Set as : $$Number:@@PWFlat11
+Width : 52
+
+[Line : PW DPR Det R12]
+Fields : PW DPR L12, PW DPR V12
+[Field : PW DPR L12]
+Use : Name Field
+Set as : "Phone"
+Width : 28
+[Field : PW DPR V12]
+Use : Amount Field
+Set as : $$Number:@@PWFlat12
+Width : 52
+
+[Line : PW DPR Det R13]
+Fields : PW DPR L13, PW DPR V13
+[Field : PW DPR L13]
+Use : Name Field
+Set as : "Hotel"
+Width : 28
+[Field : PW DPR V13]
+Use : Amount Field
+Set as : $$Number:@@PWFlat13
+Width : 52
+
+[Line : PW DPR Det R14]
+Fields : PW DPR L14, PW DPR V14
+[Field : PW DPR L14]
+Use : Name Field
+Set as : "Transport"
+Width : 28
+[Field : PW DPR V14]
+Use : Amount Field
+Set as : $$Number:@@PWFlat14
+Width : 52
+
+[Line : PW DPR Det R15]
+Fields : PW DPR L15, PW DPR V15
+[Field : PW DPR L15]
+Use : Name Field
+Set as : "Contra Bill"
+Width : 28
+[Field : PW DPR V15]
+Use : Amount Field
+Set as : $$Number:@@PWFlat15
+Width : 52
+
+[Line : PW DPR Det R16]
+Fields : PW DPR L16, PW DPR V16
+[Field : PW DPR L16]
+Use : Name Field
+Set as : "Other Expense"
+Width : 28
+[Field : PW DPR V16]
+Use : Amount Field
+Set as : $$Number:@@PWFlat16
+Width : 52
+
+[Line : PW DPR Det R17]
+Fields : PW DPR L17, PW DPR V17
+[Field : PW DPR L17]
+Use : Name Field
+Set as : "Total Expense"
+Width : 28
+[Field : PW DPR V17]
+Use : Amount Field
+Set as : @@PWDPRRowTotal
+Width : 52
+
+[Line : PW DPR Det R18]
+Fields : PW DPR L18, PW DPR V18
+[Field : PW DPR L18]
+Use : Name Field
+Set as : "Remarks"
+Width : 28
+[Field : PW DPR V18]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat8:$PESOWISE_DPR_REMARKS:@@PWFlat8
+Width : 52
+
+[Line : PW DPR Det R19]
+Fields : PW DPR L19, PW DPR V19
+[Field : PW DPR L19]
+Use : Name Field
+Set as : "Percent"
+Width : 28
+[Field : PW DPR V19]
+Use : Name Field
+Set as : $$If:$$IsEmpty:@@PWFlat17:$PESOWISE_DPR_PERCENT:@@PWFlat17
+Width : 52

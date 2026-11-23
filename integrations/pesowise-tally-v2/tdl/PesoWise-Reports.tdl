@@ -1,0 +1,12 @@
+;; PesoWise Reports v2 — list + drill-down (modular TDL).
+;; Install: copy tally-extension\ and tally-extension\tdl\ to C:\pesowise\ (keep tdl subfolder).
+;; F12 → Load this file + PesoWise-Bootstrap.tdl → quit & restart Tally.
+;; If c0000005 persists, load PesoWise-Reports-SafeMenu.tdl first (no collections).
+
+[Include : tdl\01-menu.tdl]
+[Include : tdl\02-common.tdl]
+[Include : tdl\03-collections.tdl]
+[Include : tdl\04-claim-verification.tdl]
+[Include : tdl\05-claim-approval.tdl]
+[Include : tdl\06-detailed-expense.tdl]
+[Include : tdl\07-daily-project.tdl]
