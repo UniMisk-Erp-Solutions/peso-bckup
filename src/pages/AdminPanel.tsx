@@ -1097,6 +1097,11 @@ export default function AdminPanel() {
     );
   };
 
+  // Total amount of all currently selected expenses (shown in the bulk action bar)
+  const selectedTotalAmount = expenses
+    .filter((e) => selectedExpenseIds.has(e.id))
+    .reduce((sum, e) => sum + Number(e.total_amount || 0), 0);
+
   const handleSelectExpense = (expenseId: string, checked: boolean) => {
     const newSelected = new Set(selectedExpenseIds);
     if (checked) {
@@ -2283,8 +2288,11 @@ export default function AdminPanel() {
                 )}
                 {selectedExpenseIds.size > 0 && (
                   <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                    <div className="text-sm font-medium text-blue-900">
-                      {selectedExpenseIds.size} expense(s) selected
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm font-medium text-blue-900">
+                      <span>{selectedExpenseIds.size} expense(s) selected</span>
+                      <span className="rounded-md bg-white/70 border border-blue-200 px-2.5 py-1 font-semibold" data-testid="selected-expenses-total">
+                        Total: {formatINR(selectedTotalAmount)}
+                      </span>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button
