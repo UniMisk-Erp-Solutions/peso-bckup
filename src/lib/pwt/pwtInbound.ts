@@ -28,6 +28,10 @@ export interface PwtInboundJob {
   /** The balance import batch this sync created (Import History / reversal) and its status; absent on older servers. */
   batch_id?: string | null;
   batch_status?: string | null;
+  /** Voucher dates this sync was limited to (yyyy-mm-dd); both empty = all dates. Absent on older servers. */
+  date_from?: string | null;
+  date_to?: string | null;
+  out_of_range_count?: number;
 }
 
 export interface PwtInboundProblem {
@@ -82,6 +86,7 @@ export function describeInboundJob(j: PwtInboundJob, connectorOnline?: boolean):
       if (j.skipped_count) parts.push(`${j.skipped_count} skipped`);
       if (j.failed_count) parts.push(`${j.failed_count} failed`);
       if (j.flagged_count) parts.push(`${j.flagged_count} flagged for reconciliation`);
+      if (j.out_of_range_count) parts.push(`${j.out_of_range_count} outside the selected dates (ignored)`);
       return parts.join(" · ");
     }
   }
@@ -91,12 +96,23 @@ type RpcResult<T> = Promise<{ data: T | null; error: { message: string } | null 
 const rpc = <T,>(name: string, args: Record<string, unknown>): RpcResult<T> =>
   (supabase as unknown as { rpc: (n: string, a: Record<string, unknown>) => RpcResult<T> }).rpc(name, args);
 
-export async function startInboundSync(organizationId: string): Promise<{ jobId: string; deduplicated: boolean }> {
-  const { data, error } = await supabase.functions.invoke("pwt-inbound", { body: { action: "start", organization_id: organizationId } });
+/** Optional voucher dates (yyyy-mm-dd). Both empty = every date. */
+export interface InboundRange { from?: string | null; to?: string | null }
+
+export async function startInboundSync(organizationId: string, range: InboundRange = {}): Promise<{ jobId: string; deduplicated: boolean }> {
+  const { data, error } = await supabase.functions.invoke("pwt-inbound", {
+    body: { action: "start", organization_id: organizationId, date_from: range.from || null, date_to: range.to || null },
+  });
   if (error) throw new Error(await functionErrorText(error));
   const p = data as { accepted?: boolean; job_id?: string; deduplicated?: boolean; error?: string } | null;
   if (!p?.accepted || !p.job_id) throw new Error(describePwtError(p?.error, "Sync from Tally could not be started. Try again."));
   return { jobId: p.job_id, deduplicated: p.deduplicated === true };
+}
+
+/** False when the server has not been updated for date selection: starting a sync then would ignore the dates and read EVERYTHING. */
+export async function inboundSupportsDates(): Promise<boolean> {
+  const { data, error } = await rpc<{ date_range?: boolean }>("pwt_inbound_capabilities_v1", {});
+  return !error && data?.date_range === true;
 }
 
 export async function listInboundJobs(organizationId: string, limit = 10): Promise<PwtInboundJob[]> {
@@ -128,4 +144,17 @@ export async function setInboundVoucherType(organizationId: string, voucherType:
   if (!name) throw new Error("Enter the exact voucher type name used in TallyPrime.");
   const { error } = await rpc("pwt_inbound_set_voucher_type_v1", { p_organization_id: organizationId, p_voucher_type: name });
   if (error) throw new Error(describePwtError(error));
+}
+
+const shortDate = (iso: string) => {
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+};
+
+/** "All dates", "From 01 Nov 2026", "Up to 30 Nov 2026" or "01 Nov 2026 – 30 Nov 2026" (voucher dates in Tally). */
+export function describeInboundDates(from?: string | null, to?: string | null): string {
+  if (from && to) return `${shortDate(from)} – ${shortDate(to)}`;
+  if (from) return `From ${shortDate(from)}`;
+  if (to) return `Up to ${shortDate(to)}`;
+  return "All dates";
 }

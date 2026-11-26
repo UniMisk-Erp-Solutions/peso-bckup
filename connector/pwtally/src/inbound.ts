@@ -32,11 +32,17 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").repl
 const dec = (s: string) =>
   s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
 
-/** Read-only: every voucher of the PesoWise Payment type, whatever its date. */
-export function paymentVouchersRequest(company: string, voucherType: string = INBOUND_VOUCHER_TYPE): string {
+/** Tally wants yyyymmdd; an empty or malformed date means "no limit on that side". */
+const tallyDate = (iso: string | null | undefined, open: string): string => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((iso ?? "").trim());
+  return m ? `${m[1]}${m[2]}${m[3]}` : open;
+};
+
+/** Read-only: the vouchers of one Tally voucher type, limited to the voucher dates from..to when given (both empty = every date). */
+export function paymentVouchersRequest(company: string, voucherType: string = INBOUND_VOUCHER_TYPE, dateFrom?: string | null, dateTo?: string | null): string {
   return `<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>PWTInbound</ID></HEADER>` +
     `<BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>${esc(company)}</SVCURRENTCOMPANY>` +
-    `<SVFROMDATE>20000101</SVFROMDATE><SVTODATE>20991231</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE>` +
+    `<SVFROMDATE>${tallyDate(dateFrom, "20000101")}</SVFROMDATE><SVTODATE>${tallyDate(dateTo, "20991231")}</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE>` +
     `<COLLECTION NAME="PWTInbound"><TYPE>Voucher</TYPE>` +
     ["Date", "VoucherNumber", "VoucherTypeName", "Narration", "GUID", "AlterID", "MasterID", "IsCancelled", "IsOptional",
       "AllLedgerEntries.LedgerName", "AllLedgerEntries.Amount"].map((n) => `<NATIVEMETHOD>${n}</NATIVEMETHOD>`).join("") +
@@ -106,6 +112,9 @@ export interface InboundJob {
   tally_company: string;
   /** The exact Tally voucher type to read (organisation setting; default "PesoWise Payment"). */
   voucher_type?: string;
+  /** Optional voucher-date limits (yyyy-mm-dd); the server enforces them again. */
+  date_from?: string | null;
+  date_to?: string | null;
 }
 
 export interface InboundResult {
@@ -131,9 +140,10 @@ export async function runInboundJob(
     }
     const parents = parseLedgerParents(await io.post(ledgerParentsRequest(job.tally_company)));
     const vtype = job.voucher_type || INBOUND_VOUCHER_TYPE;
-    const vouchers = parsePaymentVouchers(await io.post(paymentVouchersRequest(job.tally_company, vtype)), parents);
+    const vouchers = parsePaymentVouchers(await io.post(paymentVouchersRequest(job.tally_company, vtype, job.date_from, job.date_to)), parents);
     total = vouchers.length;
-    log(`Reverse sync: ${total} "${vtype}" voucher(s) read from Tally`);
+    const span = job.date_from || job.date_to ? ` dated ${job.date_from || "the beginning"} to ${job.date_to || "today and later"}` : "";
+    log(`Reverse sync: ${total} "${vtype}" voucher(s)${span} read from Tally`);
     for (let i = 0; i < vouchers.length; i += CHUNK) {
       await api.call({ action: "submit", job_id: job.job_id, seq_start: i, vouchers: vouchers.slice(i, i + CHUNK), total });
     }

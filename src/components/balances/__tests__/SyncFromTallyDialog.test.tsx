@@ -5,6 +5,7 @@ import type { PwtInboundJob } from "@/lib/pwt/pwtInbound";
 const jobs: { current: PwtInboundJob[] } = { current: [] };
 const startInboundSync = vi.fn();
 const getInboundProblems = vi.fn();
+const supportsDates = vi.fn(async () => true);
 
 vi.mock("@/lib/pwt/pwtInbound", async () => {
   const actual = await vi.importActual<typeof import("@/lib/pwt/pwtInbound")>("@/lib/pwt/pwtInbound");
@@ -14,6 +15,7 @@ vi.mock("@/lib/pwt/pwtInbound", async () => {
     getInboundProblems: (...a: unknown[]) => getInboundProblems(...a),
     startInboundSync: (...a: unknown[]) => startInboundSync(...a),
     getInboundVoucherType: vi.fn(async () => "PesoWise Payment"),
+    inboundSupportsDates: () => supportsDates(),
     setInboundVoucherType: vi.fn(async () => undefined),
   };
 });
@@ -36,6 +38,7 @@ describe("SyncFromTallyDialog", () => {
     jobs.current = [];
     startInboundSync.mockReset();
     getInboundProblems.mockReset().mockResolvedValue([]);
+    supportsDates.mockReset().mockResolvedValue(true);
   });
   afterEach(() => vi.useRealTimers());
 
@@ -58,7 +61,7 @@ describe("SyncFromTallyDialog", () => {
     render(<SyncFromTallyDialog open onOpenChange={() => undefined} organizationId="o" onSynced={onSynced} />);
     await waitFor(() => expect(screen.getByTestId("sync-from-tally-start")).toBeTruthy());
     fireEvent.click(screen.getByTestId("sync-from-tally-start"));
-    await waitFor(() => expect(startInboundSync).toHaveBeenCalledWith("o"));
+    await waitFor(() => expect(startInboundSync).toHaveBeenCalledWith("o", { from: expect.stringMatching(/^\d{4}-\d{2}-01$/), to: null }));
     await waitFor(() => expect(screen.getByText(/Sync in progress/)).toBeTruthy());
     expect(onSynced).not.toHaveBeenCalled();
 
@@ -84,5 +87,85 @@ describe("SyncFromTallyDialog", () => {
     (mod.listPwtConnectors as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce([{ id: "c", status: "active", last_seen_at: new Date(Date.now() - 3600_000).toISOString(), tally_company: "Demo", last_active_company: null }]);
     render(<SyncFromTallyDialog open onOpenChange={() => undefined} organizationId="o" onSynced={() => undefined} />);
     await waitFor(() => expect(screen.getByTestId("sync-from-tally-summary").textContent).toMatch(/offline/i));
+  });
+
+  describe("choosing the voucher dates", () => {
+    const start = () => fireEvent.click(screen.getByTestId("sync-from-tally-start"));
+    const open = async () => {
+      render(<SyncFromTallyDialog open onOpenChange={() => undefined} organizationId="o" onSynced={() => undefined} />);
+      await waitFor(() => expect(screen.getByTestId("sync-from-tally-start")).toBeTruthy());
+    };
+
+    it("sends exactly the From and To the admin typed (for example 01-11-2026 to today onwards)", async () => {
+      startInboundSync.mockResolvedValue({ jobId: "j1", deduplicated: false });
+      await open();
+      fireEvent.change(document.getElementById("pwt-date-from") as HTMLInputElement, { target: { value: "2026-11-01" } });
+      fireEvent.change(document.getElementById("pwt-date-to") as HTMLInputElement, { target: { value: "" } });
+      start();
+      await waitFor(() => expect(startInboundSync).toHaveBeenCalledWith("o", { from: "2026-11-01", to: null }));
+    });
+
+    it("Last month fills both dates with the previous calendar month", async () => {
+      await open();
+      fireEvent.click(screen.getByText("Last month"));
+      const from = (document.getElementById("pwt-date-from") as HTMLInputElement).value;
+      const to = (document.getElementById("pwt-date-to") as HTMLInputElement).value;
+      expect(from).toMatch(/^\d{4}-\d{2}-01$/);
+      expect(new Date(`${to}T00:00:00`).getDate()).toBeGreaterThanOrEqual(28);          // the last day of that month
+      expect(new Date(`${to}T00:00:00`).getTime()).toBeLessThan(new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime());
+    });
+
+    it("refuses a start date after the end date and sends nothing", async () => {
+      await open();
+      fireEvent.change(document.getElementById("pwt-date-from") as HTMLInputElement, { target: { value: "2026-12-01" } });
+      fireEvent.change(document.getElementById("pwt-date-to") as HTMLInputElement, { target: { value: "2026-11-01" } });
+      start();
+      await waitFor(() => expect(screen.getByText(/start date is after the end date/i)).toBeTruthy());
+      expect(startInboundSync).not.toHaveBeenCalled();
+    });
+
+    it("needs a date, or the explicit All dates choice with its tick box", async () => {
+      startInboundSync.mockResolvedValue({ jobId: "j1", deduplicated: false });
+      await open();
+      fireEvent.change(document.getElementById("pwt-date-from") as HTMLInputElement, { target: { value: "" } });
+      start();
+      await waitFor(() => expect(screen.getByText(/Choose a start date/)).toBeTruthy());
+      expect(startInboundSync).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByTestId("sync-mode-all"));
+      expect(screen.getByText(/credited again/)).toBeTruthy();                      // the warning is shown
+      start();
+      await waitFor(() => expect(screen.getByText(/Tick the box/)).toBeTruthy());
+      expect(startInboundSync).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByTestId("sync-confirm-all"));
+      start();
+      await waitFor(() => expect(startInboundSync).toHaveBeenCalledWith("o", {}));
+    });
+
+    it("never starts a sync when the server cannot apply dates (it would read every date)", async () => {
+      supportsDates.mockResolvedValue(false);
+      await open();
+      start();
+      await waitFor(() => expect(screen.getByText(/not been updated for date selection/i)).toBeTruthy());
+      expect(startInboundSync).not.toHaveBeenCalled();
+    });
+
+    it("All dates (the old behaviour) still works against a server that has not been updated", async () => {
+      supportsDates.mockResolvedValue(false);
+      startInboundSync.mockResolvedValue({ jobId: "j1", deduplicated: false });
+      await open();
+      fireEvent.click(screen.getByTestId("sync-mode-all"));
+      fireEvent.click(screen.getByTestId("sync-confirm-all"));
+      start();
+      await waitFor(() => expect(startInboundSync).toHaveBeenCalledWith("o", {}));
+    });
+
+    it("shows which dates the last sync read, and how many vouchers were outside them", async () => {
+      jobs.current = [job({ date_from: "2026-11-01", date_to: null, out_of_range_count: 7 })];
+      await open();
+      await waitFor(() => expect(screen.getByTestId("sync-from-tally-dates-read").textContent).toMatch(/From 01 Nov 2026/));
+      expect(screen.getByTestId("sync-from-tally-summary").textContent).toMatch(/7 outside the selected dates/);
+    });
   });
 });

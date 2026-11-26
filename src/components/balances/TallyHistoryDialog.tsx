@@ -13,7 +13,7 @@ import { reverseImportBatchV3 } from "@/services/BalanceLedgerService";
 import { getImportRows, type ImportRowDetail } from "@/services/BalanceImportService";
 import { describePwtError } from "@/lib/pwt/pwtErrors";
 import {
-  describeInboundJob, getInboundProblems, listInboundJobs, PWT_INBOUND_STATE_LABEL, PWT_INBOUND_STATUS_LABEL,
+  describeInboundDates, describeInboundJob, getInboundProblems, listInboundJobs, PWT_INBOUND_STATE_LABEL, PWT_INBOUND_STATUS_LABEL,
   type PwtInboundJob, type PwtInboundProblem,
 } from "@/lib/pwt/pwtInbound";
 
@@ -148,6 +148,7 @@ export function TallyHistoryDialog({ open, onOpenChange, organizationId }: Props
                 <TableRow>
                   <TableHead>Date</TableHead>
                   <TableHead>Company</TableHead>
+                  <TableHead>Voucher dates</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Imported</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
@@ -160,6 +161,7 @@ export function TallyHistoryDialog({ open, onOpenChange, organizationId }: Props
                     <TableRow>
                       <TableCell className="whitespace-nowrap">{new Date(j.created_at).toLocaleString()}</TableCell>
                       <TableCell>{j.tally_company}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs">{j.date_from !== undefined ? describeInboundDates(j.date_from, j.date_to) : "-"}</TableCell>
                       <TableCell>{statusBadge(j)}</TableCell>
                       <TableCell className="text-right">{j.imported_count}</TableCell>
                       <TableCell className="text-right">{formatINR(j.imported_amount)}</TableCell>
@@ -177,7 +179,7 @@ export function TallyHistoryDialog({ open, onOpenChange, organizationId }: Props
 
                     {expanded === j.id && (
                       <TableRow>
-                        <TableCell colSpan={6} className="bg-muted/30">
+                        <TableCell colSpan={7} className="bg-muted/30">
                           <div className="space-y-3 py-1">
                             <p className="text-sm">{describeInboundJob(j)}</p>
                             {reversedCount?.jobId === j.id && (

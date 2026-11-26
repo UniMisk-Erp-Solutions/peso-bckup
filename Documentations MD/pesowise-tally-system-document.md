@@ -2,7 +2,7 @@
 
 **Doc ID:** DOC-147  
 **Status:** in progress  
-**Last updated:** 2026-11-04  
+**Last updated:** 2026-11-26  
 **Owner / area:** Tally integration (system, mapping, operation, build history)  
 
 ---
@@ -263,6 +263,15 @@ Lists every correction with its **Tally company**, the expense, the voucher, and
 
 On **Balances → Sync from Tally** the connector reads the vouchers of the configured payment type from the paired company and uploads them; the server re-validates everything (it never trusts the connector) and credits balances through PesoWise's existing balance engine, in one transaction with a separate sub-transaction per payment. Each voucher is identified by its Tally **GUID**, so it is never imported twice ("already imported"). Imported credits appear in **Balance credit history** marked "Tally sync" and in Import History, where a batch can be reversed.
 
+### 9.1) Choosing the voucher dates (rev 1.18)
+
+The Sync from Tally screen has a **Which payments to read** box (by the **voucher date** in Tally, the date written on the voucher, not the day it was typed):
+- **Date range** (default, From = first day of this month): From and an optional To; presets *This month* and *Last month*. Leave To empty to read from the start date onwards.
+- **All dates (no filter)**: the old behaviour; shows a warning (payments already counted in balances would be credited again) and needs a tick box.
+
+How it is enforced: the connector asks Tally for only that period (`SVFROMDATE/SVTODATE`), and the server re-checks every voucher's date in `_pwt_inbound_process_v1`: a voucher outside the dates is never imported, never flagged, and only counted (`out_of_range_count`). The "Deleted in Tally" check looks only at payments inside the selected dates, so narrowing the dates cannot make older payments look deleted. The website asks the server (`pwt_inbound_capabilities_v1`) before sending dates and refuses to start if the server was not updated, because an old server would ignore the dates and read everything. Tally History shows the dates each sync read. Migration `20261126100000_pwt_inbound_date_range.sql`, edge function `pwt-inbound` (accepts `date_from`/`date_to`), connector 1.2.8.
+Not included yet: a preview of the vouchers before they are credited, and a "created since go-live" filter (by Tally's internal voucher number) for entries back-dated before the start date.
+
 ---
 
 ## 10) The connector and installer
@@ -443,6 +452,7 @@ supabase/tests/pwt_deletion/              database acceptance tests
 | Date | Revision | Author | Notes |
 |------|----------|--------|-------|
 | 2026-11-04 | 1.3 | Agent | Per-company "Tally integration" feature flag (Master Admin checkbox, default off for every company) gates the Tally menu, page and sync buttons together with the build flag; no migration. |
+| 2026-11-26 | 1.18 | Agent | Sync from Tally can read only a chosen range of voucher dates (From / optional To, This month / Last month) or all dates (with a warning and a tick box); the server enforces the dates again, scopes the "deleted in Tally" check to the range, and the website refuses to send dates to a server that has not been updated. Migration 20261126100000_pwt_inbound_date_range.sql (apply manually), pwt-inbound edge function, connector 1.2.8. Applied and tested on the backup instance only. |
 | 2026-10-26 | 1.17 | Agent | Plain, specific error messages for every failure of the Tally features: new `src/lib/pwt/pwtErrors.ts` (`describePwtError`, `functionErrorText`) turns network loss, expired login, no permission, no connector paired, bad/expired pairing code, a sync too large for the server (statement timeout), missing server setup, rate limits, timeouts, TallyPrime offline, wrong company open, voucher conflicts and server errors into one sentence that says what happened and what to do; used by Sync to Tally, Sync from Tally, Tally History, Corrections and the Tally setup page. Connector 1.2.7: network failures name the host and the cause (no internet / name not found / refused / timed out / certificate), and setup gives the right next step per failure. |
 | 2026-10-26 | 1.16 | Agent | The 16 pwt migrations were applied to the backup database after its production restore (it had no Tally tables); schema cache reloaded and checked. See DOC-142 section 11a. |
 | 2026-10-26 | 1.15 | Agent | The TDL generator on main now carries the filter fix (only `PWT PESO/` vouchers and only their employee lines; no manual vouchers or debit lines) that had only existed in the working tree; the published setup exe was rebuilt from main with that TDL and the backup server address (SHA-256 BFEDB4B6…351D). Pushed to the peso-bckup repo only. |

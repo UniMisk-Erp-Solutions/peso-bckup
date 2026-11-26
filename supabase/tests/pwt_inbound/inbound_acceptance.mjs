@@ -30,6 +30,7 @@ await db.exec(readFileSync(M + "20261022160000_pwt_inbound_deleted_same_type.sql
 await db.exec(readFileSync(M + "20261030110000_pwt_inbound_match_by_code.sql", "utf8"));
 await db.exec(readFileSync(M + "20261030120000_pwt_inbound_cash_parent_ci.sql", "utf8"));
 await db.exec(readFileSync(M + "20261030130000_pwt_inbound_list_batch.sql", "utf8"));
+await db.exec(readFileSync(M + "20261126100000_pwt_inbound_date_range.sql", "utf8"));
 
 const ORG = "11111111-1111-1111-1111-111111111111", OTHER_ORG = "99999999-9999-9999-9999-999999999999";
 const ADMIN = "22222222-2222-2222-2222-222222222222", EMPL = "33333333-3333-3333-3333-333333333333";
@@ -63,9 +64,9 @@ const V = (over = {}) => ({
 });
 const pay = (name, amt, bank = "Cash", bp = "Cash-in-Hand") => [{ ledger: name, amount: -amt, parent: "Sundry Debtors" }, { ledger: bank, amount: amt, parent: bp }];
 
-async function runSync(vouchers, { total = vouchers.length, company = "Demo Co" } = {}) {
+async function runSync(vouchers, { total = vouchers.length, company = "Demo Co", from = null, to = null } = {}) {
   await as(ADMIN);
-  const c = (await one("select public.pwt_inbound_create_job_v1($1) r", [ORG])).r;
+  const c = (await one("select public.pwt_inbound_create_job_v1($1,$2,$3) r", [ORG, from, to])).r;
   const claim = (await one("select public.pwt_inbound_claim_v1($1,$2) r", [CONN, company])).r;
   if (!claim || claim.blocked) return { c, claim };
   await db.query("select public.pwt_inbound_submit_v1($1,$2,0,$3::jsonb,$4)", [CONN, claim.job_id, JSON.stringify(vouchers), total]);
@@ -261,3 +262,30 @@ await as(ADMIN);
 const lst = (await one("select public.pwt_inbound_list_jobs_v1($1,50) r", [ORG])).r;
 const withBatch = lst.filter((x) => x.batch_id);
 ok("T11 list returns batch_id and batch_status for jobs that imported", withBatch.length > 0 && withBatch.every((x) => x.batch_status === "applied" || x.batch_status === "reversed"), JSON.stringify(withBatch.slice(0, 1)));
+
+// ---- Test 12: the date range (voucher dates): only vouchers inside it are read; nothing outside is imported or flagged
+await db.query("select public.pwt_inbound_set_voucher_type_v1($1,$2)", [ORG, "PesoWise Payment"]);
+const dv = (date, amt) => V({ date, entries: pay("Amit Test-1001", amt) });
+const dOct = dv("2026-10-20", 101), dNov1 = dv("2026-11-05", 102), dNov2 = dv("2026-11-20", 103), dDec = dv("2026-12-05", 104);
+const b0 = await bal(E.a);
+const rr = await runSync([dOct, dNov1, dNov2, dDec], { from: "2026-11-01", to: "2026-11-30" });
+ok("T12 only the two vouchers inside 01-11..30-11 are imported", rr.job.imported_count === 2 && (await bal(E.a)) === b0 + 102 + 103, `imported=${rr.job.imported_count} bal=${await bal(E.a)}`);
+ok("T12 the other two are counted as outside the dates, not imported or listed", rr.job.out_of_range_count === 2 && (await q("select 1 from public.pwt_inbound_payments where voucher_guid = any($1)", [[dOct.guid, dDec.guid]])).length === 0);
+const jd = await one("select date_from::text f, date_to::text t from public.pwt_inbound_jobs where id = $1", [rr.claim.job_id]);
+ok("T12 the job remembers its dates", jd.f === "2026-11-01" && jd.t === "2026-11-30", JSON.stringify(jd));
+const open = await runSync([dOct, dNov1, dNov2, dDec], { from: "2026-11-01" });
+ok("T12 'from' only (open end) also takes December, never October", open.job.imported_count === 1 && (await bal(E.a)) === b0 + 102 + 103 + 104 && open.job.out_of_range_count === 1);
+// narrowing the dates must not make older, already imported payments look deleted
+const narrow = await runSync([dNov1], { from: "2026-11-01", to: "2026-11-30" });
+const flagged = await q("select voucher_guid, state from public.pwt_inbound_payments where state = 'deleted_in_tally' and voucher_guid = any($1)", [[dNov1.guid, dNov2.guid, dDec.guid]]);
+ok("T12 inside the dates, a payment missing from Tally is flagged; December (outside) is not", flagged.length === 1 && flagged[0].voucher_guid === dNov2.guid, JSON.stringify(flagged));
+const all = await runSync([dOct], { from: null, to: null });
+ok("T12 no dates (all dates) reads everything as before", all.job.imported_count === 1 && all.job.out_of_range_count === 0 && (await bal(E.a)) === b0 + 102 + 103 + 104 + 101);
+let badRange = null;
+try { await runSync([dNov1], { from: "2026-12-01", to: "2026-11-01" }); } catch (e) { badRange = e.message; }
+ok("T12 a start date after the end date is refused", /start date is after the end date/.test(badRange ?? ""), String(badRange));
+
+// ---- Test 13: the capability probe the website uses before it sends dates
+await as(ADMIN);
+const cap = (await one("select public.pwt_inbound_capabilities_v1() r")).r;
+ok("T13 the server says it supports date ranges", cap && cap.date_range === true, JSON.stringify(cap));

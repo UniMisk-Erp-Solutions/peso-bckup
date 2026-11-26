@@ -42,7 +42,12 @@ Deno.serve(async (req) => {
     const user = createClient<any>(url, anon, { global: { headers: { Authorization: `Bearer ${bearer}` } }, auth: { persistSession: false } });
     const { data: u, error: ue } = await user.auth.getUser();
     if (ue || !u?.user) return jsonResponse({ error: "Unauthorized" }, 401);
-    const { data, error } = await user.rpc("pwt_inbound_create_job_v1", { p_organization_id: org });
+    // optional VOUCHER dates (YYYY-MM-DD); empty means "all dates"
+    const isDate = (v: unknown) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
+    const dateFrom = b.date_from == null || b.date_from === "" ? null : b.date_from;
+    const dateTo = b.date_to == null || b.date_to === "" ? null : b.date_to;
+    if ((dateFrom !== null && !isDate(dateFrom)) || (dateTo !== null && !isDate(dateTo))) return jsonResponse({ accepted: false, error: "dates must be written as YYYY-MM-DD" }, 400);
+    const { data, error } = await user.rpc("pwt_inbound_create_job_v1", { p_organization_id: org, p_date_from: dateFrom, p_date_to: dateTo });
     if (error) {
       const forbidden = /not permitted/i.test(error.message);
       return jsonResponse({ accepted: false, error: forbidden ? "Forbidden" : error.message.slice(0, 200) }, forbidden ? 403 : 400);

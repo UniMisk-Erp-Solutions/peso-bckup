@@ -742,3 +742,4 @@ Historical allocator note superseded by the current Next ID notice above; its br
 | 2026-11-16 | DOC-163 rev 1.1: changed from daily checks with a 47-hour gate to a recurring 48-hour timer; first next run scheduled for 2026-11-18 14:22 IST. | Agent |
 | 2026-11-16 | DOC-163 rev 1.2: deployed Resend SMTP alerts for failed and warning restore runs; added systemd failure/post-run hooks, root-only key storage, and verified delivery from Hasto. | Agent |
 | 2026-11-17 | Registered DOC-164 (PesoWise × Tally Hindi reel video project under `video/pesowise-tally-reel/`; no application changes). Next ID: DOC-165. | Agent |
+| 2026-11-26 | DOC-147 revised (1.18): Sync from Tally date range / all dates, enforced on the server; migration 20261126100000 (backup first, production not applied). | Agent |

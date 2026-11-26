@@ -145,3 +145,22 @@ describe("runInboundJob", () => {
     expect(t.requests.every((x) => x.includes("<TALLYREQUEST>Export</TALLYREQUEST>"))).toBe(true);
   });
 });
+
+describe("selected voucher dates", () => {
+  it("asks Tally for exactly that period, and leaves an open side open", () => {
+    const both = paymentVouchersRequest(COMPANY, "Staff Payment", "2026-11-01", "2026-11-30");
+    expect(both).toContain("<SVFROMDATE>20261101</SVFROMDATE><SVTODATE>20261130</SVTODATE>");
+    const fromOnly = paymentVouchersRequest(COMPANY, "Staff Payment", "2026-11-01", null);
+    expect(fromOnly).toContain("<SVFROMDATE>20261101</SVFROMDATE><SVTODATE>20991231</SVTODATE>");
+    const none = paymentVouchersRequest(COMPANY, "Staff Payment");
+    expect(none).toContain("<SVFROMDATE>20000101</SVFROMDATE><SVTODATE>20991231</SVTODATE>");
+    expect(paymentVouchersRequest(COMPANY, "Staff Payment", "garbage", "")).toContain("<SVFROMDATE>20000101</SVFROMDATE><SVTODATE>20991231</SVTODATE>");
+  });
+
+  it("hands the job's dates to the Tally request when it reads", async () => {
+    const t = new FakeTally();
+    t.vouchers = [];
+    await runInboundJob({ job_id: "J", tally_company: COMPANY, voucher_type: "Staff Payment", date_from: "2026-11-01", date_to: null }, t, new FakeApi());
+    expect(t.requests.some((x) => x.includes("<SVFROMDATE>20261101</SVFROMDATE><SVTODATE>20991231</SVTODATE>"))).toBe(true);
+  });
+});
