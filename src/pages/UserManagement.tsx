@@ -3,6 +3,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "@/i18n";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { AuthTurnstile } from "@/components/AuthTurnstile";
+import { buildAuthCaptchaOptions, isTurnstileConfigured } from "@/lib/turnstile";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -231,6 +233,8 @@ export default function UserManagement() {
   const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [resettingPassword, setResettingPassword] = useState(false);
+  const [resetCaptchaToken, setResetCaptchaToken] = useState("");
+  const [resetCaptchaKey, setResetCaptchaKey] = useState(0);
   const [resetPasswordConfirmOpen, setResetPasswordConfirmOpen] = useState(false);
   const [resetPasswordSuccessOpen, setResetPasswordSuccessOpen] = useState(false);
   const [resetPasswordValue, setResetPasswordValue] = useState("");
@@ -1547,7 +1551,11 @@ export default function UserManagement() {
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email: user.email,
         password: adminPassword,
+        options: buildAuthCaptchaOptions(resetCaptchaToken),
       });
+      // A Turnstile token is single use: always request a fresh one for the next attempt.
+      setResetCaptchaToken("");
+      setResetCaptchaKey((k) => k + 1);
 
       if (signInError) {
         toast({
@@ -3750,6 +3758,11 @@ export default function UserManagement() {
                 Minimum 8 characters required
               </p>
             </div>
+            <AuthTurnstile
+              resetKey={resetCaptchaKey}
+              onToken={setResetCaptchaToken}
+              onExpire={() => setResetCaptchaToken("")}
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => {
@@ -3761,7 +3774,7 @@ export default function UserManagement() {
             </Button>
             <Button 
               onClick={handleResetPassword}
-              disabled={!adminPassword || !newUserPassword || newUserPassword.length < 8 || resettingPassword}
+              disabled={!adminPassword || !newUserPassword || newUserPassword.length < 8 || resettingPassword || (isTurnstileConfigured() && !resetCaptchaToken)}
             >
               {resettingPassword ? "Verifying..." : "Continue"}
             </Button>

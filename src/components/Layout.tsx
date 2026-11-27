@@ -4,6 +4,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { AuthTurnstile } from "@/components/AuthTurnstile";
+import { buildAuthCaptchaOptions, isTurnstileConfigured } from "@/lib/turnstile";
 import { registerMyAccountAuditContext } from "@/lib/userAccountAudit";
 import { formatINR } from "@/lib/format";
 import { Wallet, Pencil, Eye, EyeOff, CheckCircle, AlertCircle, CircleHelp } from "lucide-react";
@@ -73,6 +75,8 @@ export function Layout({
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
+  const [pwCaptchaToken, setPwCaptchaToken] = useState("");
+  const [pwCaptchaKey, setPwCaptchaKey] = useState(0);
   
   const { activeNotifications, removeNotification, handleViewNotification } = useNotificationManager();
 
@@ -554,8 +558,14 @@ export function Layout({
 
                 {/* Change Password Button */}
                 {(currentPassword || newPassword || confirmPassword) && (
-                  <Button 
-                    disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword || newPassword.length < 8 || newPassword !== confirmPassword}
+                  <>
+                  <AuthTurnstile
+                    resetKey={pwCaptchaKey}
+                    onToken={setPwCaptchaToken}
+                    onExpire={() => setPwCaptchaToken("")}
+                  />
+                  <Button
+                    disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword || newPassword.length < 8 || newPassword !== confirmPassword || (isTurnstileConfigured() && !pwCaptchaToken)}
                     onClick={async () => {
                       if (!user?.email) return;
                       
@@ -566,7 +576,11 @@ export function Layout({
                         const { error: signInError } = await supabase.auth.signInWithPassword({
                           email: user.email,
                           password: currentPassword,
+                          options: buildAuthCaptchaOptions(pwCaptchaToken),
                         });
+                        // A Turnstile token is single use: request a fresh one for the next attempt.
+                        setPwCaptchaToken("");
+                        setPwCaptchaKey((k) => k + 1);
 
                         if (signInError) {
                           throw new Error(t("currentPasswordIncorrect"));
@@ -606,6 +620,7 @@ export function Layout({
                   >
                     {changingPassword ? t("changingPassword") : t("changePassword")}
                   </Button>
+                  </>
                 )}
               </div>
             </SheetContent>

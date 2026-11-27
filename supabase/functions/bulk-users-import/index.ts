@@ -756,6 +756,8 @@ Deno.serve(async (req) => {
           password: finalPassword,
           email_confirm: true,
           user_metadata: { name, organization_id: organizationId },
+          // Server-only marker trusted by handle_new_user(); see admin-create-user.
+          app_metadata: { pw_provisioned: true },
         });
         if (createError || !created.user?.id) {
           const createMessage = createError?.message || "Failed to create auth user";

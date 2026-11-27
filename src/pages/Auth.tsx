@@ -270,8 +270,9 @@ export default function Auth() {
       setLoading(true);
 
       const validated = signInSchema.parse({ identifier, password });
-      const authEmail = await resolveAuthEmail(validated.identifier);
 
+      // Require the CAPTCHA BEFORE the employee-ID -> e-mail lookup, so the form never
+      // calls that lookup without a solved challenge (security hardening, DOC-167).
       if (isTurnstileConfigured() && !captchaToken) {
         toast({
           variant: "destructive",
@@ -280,6 +281,8 @@ export default function Auth() {
         });
         return;
       }
+
+      const authEmail = await resolveAuthEmail(validated.identifier);
 
       await prepareForPasswordSignIn();
 
@@ -396,7 +399,10 @@ export default function Auth() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <DevTenantSelector />
+          {/* Developer-only tenant picker. Never shipped to production builds: the
+              backing RPC (list_organizations_for_dev_login) is no longer callable
+              by the browser at all (security hardening, DOC-167). */}
+          {import.meta.env.DEV ? <DevTenantSelector /> : null}
           <form onSubmit={handleSignIn} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="signin-identifier">{identifierLabel}</Label>

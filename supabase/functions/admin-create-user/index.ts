@@ -169,6 +169,9 @@ Deno.serve(async (req) => {
         name,
         organization_id: organizationId,
       },
+      // Server-only marker: handle_new_user() trusts user_metadata.organization_id
+      // ONLY when this is set. Self-signup requests cannot set app_metadata.
+      app_metadata: { pw_provisioned: true },
     });
 
     if (createError || !created.user?.id) {

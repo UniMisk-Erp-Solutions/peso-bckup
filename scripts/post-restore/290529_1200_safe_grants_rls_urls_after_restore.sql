@@ -84,12 +84,11 @@ DECLARE
   fn_oid regprocedure;
 BEGIN
   FOREACH fn_sig IN ARRAY ARRAY[
+    -- DOC-167: the e-mail/user tenant-redirect lookups are NOT anonymous any more.
     'public.get_organization_by_subdomain(text)',
     'public.get_organization_feature_enabled(uuid,text)',
     'public.get_employee_auth_email(uuid,text)',
-    'public.email_can_sign_in_on_tenant(text,uuid)',
-    'public.get_tenant_sign_in_subdomain_for_email(text)',
-    'public.get_tenant_sign_in_subdomain_for_user(uuid)'
+    'public.email_can_sign_in_on_tenant(text,uuid)'
   ]
   LOOP
     fn_oid := to_regprocedure(fn_sig);
@@ -102,11 +101,13 @@ BEGIN
 END;
 $grant_anon_rpc$;
 
--- Dev-only helper (omit in strict prod by commenting next block if undesired)
+-- DOC-167: list_organizations_for_dev_login is service_role only (it leaked every
+-- customer to the internet). It must never be granted to anon/authenticated again.
 DO $grant_dev_login$
 BEGIN
   IF to_regprocedure('public.list_organizations_for_dev_login()') IS NOT NULL THEN
-    EXECUTE 'GRANT EXECUTE ON FUNCTION public.list_organizations_for_dev_login() TO anon, authenticated, service_role';
+    EXECUTE 'REVOKE EXECUTE ON FUNCTION public.list_organizations_for_dev_login() FROM PUBLIC, anon, authenticated';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.list_organizations_for_dev_login() TO service_role';
   END IF;
 END;
 $grant_dev_login$;
