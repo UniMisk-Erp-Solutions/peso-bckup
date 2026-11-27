@@ -1,4 +1,4 @@
-/** Cloudflare Turnstile site key (public). Must match Supabase Auth CAPTCHA settings. */
+/** Cloudflare Turnstile site key (public). Must match the Supabase Auth CAPTCHA settings. */
 export function getTurnstileSiteKey(): string | undefined {
   const key = import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined;
   const trimmed = key?.trim();
